@@ -1,0 +1,24 @@
+# Auto-label PRs based on changed file paths
+# Docs: https://github.com/actions/labeler
+
+# Internal changes in internal folder
+internal:
+  - changed-files:
+      - any-glob-to-any-file: 'internal/**'
+
+# Documentation changes in README.md
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'README.md'
+
+# Branch-name based labels
+feature:
+  - head-branch: ['^feature', 'feature']
+
+bug:
+  - head-branch: ['^bug', 'bug']
+
+improvement:
+  - head-branch: ['^improve', 'improve', 'improvement']
+  
