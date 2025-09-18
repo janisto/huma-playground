@@ -135,3 +135,29 @@ func TestMessageOrDefaultFallback(t *testing.T) {
 		t.Fatalf("expected custom message, got %q", got)
 	}
 }
+
+func TestStatus304NotModifiedHasNoBody(t *testing.T) {
+	Install()
+
+	router := chi.NewRouter()
+	router.Use(
+		appmiddleware.RequestID(),
+		chimiddleware.RealIP,
+	)
+	api := humachi.New(router, huma.DefaultConfig("NoBody", "test"))
+	huma.Get(api, "/etag", func(ctx context.Context, _ *struct{}) (*struct{}, error) {
+		return nil, Status304NotModified()
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/etag", nil)
+	req.Header.Set(chimiddleware.RequestIDHeader, "test-304-req")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusNotModified {
+		t.Fatalf("expected 304 got %d", resp.Code)
+	}
+	if resp.Body.Len() != 0 {
+		t.Fatalf("expected empty body for 304 response, got %q", resp.Body.String())
+	}
+}
