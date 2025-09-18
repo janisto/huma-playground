@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	codeOK                = "OK"
 	codeRedirect          = "REDIRECT"
 	codeNotFound          = "NOT_FOUND"
 	msgNotFound           = "resource not found"
@@ -157,9 +156,28 @@ func Recoverer() func(http.Handler) http.Handler {
 	}
 }
 
-// Status304NotModified returns a shared-envelope 304 response.
+// Status304NotModified returns a 304 response without writing a body.
 func Status304NotModified() huma.StatusError {
-	return Error(context.Background(), http.StatusNotModified, statusCodeName(http.StatusNotModified), http.StatusText(http.StatusNotModified), nil)
+	return &noBodyStatusError{status: http.StatusNotModified, message: http.StatusText(http.StatusNotModified)}
+}
+
+// noBodyStatusError is a StatusError implementation that signals consumers to
+// send only the status code. Huma skips marshaling bodies for 204/304, so
+// returning this avoids emitting JSON that would violate the RFC.
+type noBodyStatusError struct {
+	status  int
+	message string
+}
+
+func (e *noBodyStatusError) Error() string {
+	if strings.TrimSpace(e.message) != "" {
+		return e.message
+	}
+	return http.StatusText(e.status)
+}
+
+func (e *noBodyStatusError) GetStatus() int {
+	return e.status
 }
 
 // allowedMethods inspects chi's routing context to discover allowed methods.
