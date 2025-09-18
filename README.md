@@ -86,6 +86,20 @@ cmd/server          # Application entrypoint and HTTP server bootstrap
 go test ./...
 ```
 
+## Trace Logging Check
+
+Start the server with a project ID so Cloud Trace fields get populated:
+```bash
+export PROJECT_ID=test-project-id && go run ./cmd/server
+```
+Hit an endpoint while supplying the trace header:
+```bash
+curl -H 'X-Cloud-Trace-Context: 3d23d071b5bfd6579171efce907685cb/643745351650131537;o=1' http://localhost:8080/health
+```
+Watch the server stdout; the access log for this request should now include `logging.googleapis.com/trace`, `logging.googleapis.com/spanId`, `logging.googleapis.com/trace_sampled`, and still carry the `requestId` / `traceId`.
+
+`X-Cloud-Trace-Context` format: `traceId/spanId;o=sampled`
+
 ## Deployment Notes
 - Production deployments should set the Google Cloud project ID env var so trace links point to the correct project.
 - Logs are JSON on stdout, ready for ingestion by Cloud Run or any log aggregator.
