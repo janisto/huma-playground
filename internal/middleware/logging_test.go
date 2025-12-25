@@ -30,7 +30,8 @@ func TestTraceFields(t *testing.T) {
 	if fields[1].Key != "logging.googleapis.com/spanId" || fields[1].String != "643745351650131537" {
 		t.Fatalf("unexpected span field: %+v", fields[1])
 	}
-	if fields[2].Key != "logging.googleapis.com/trace_sampled" || fields[2].Type != zapcore.BoolType || fields[2].Integer != 1 {
+	if fields[2].Key != "logging.googleapis.com/trace_sampled" || fields[2].Type != zapcore.BoolType ||
+		fields[2].Integer != 1 {
 		t.Fatalf("unexpected sampled field: %+v", fields[2])
 	}
 }
@@ -51,7 +52,8 @@ func TestTraceFieldsWithoutSamplingDirective(t *testing.T) {
 	if fields[1].Key != "logging.googleapis.com/spanId" || fields[1].String != "643745351650131537" {
 		t.Fatalf("unexpected span field: %+v", fields[1])
 	}
-	if fields[2].Key != "logging.googleapis.com/trace_sampled" || fields[2].Type != zapcore.BoolType || fields[2].Integer != 0 {
+	if fields[2].Key != "logging.googleapis.com/trace_sampled" || fields[2].Type != zapcore.BoolType ||
+		fields[2].Integer != 0 {
 		t.Fatalf("expected unsampled trace field, got %+v", fields[2])
 	}
 }

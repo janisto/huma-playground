@@ -34,7 +34,13 @@ var installOnce sync.Once
 func Install() {
 	installOnce.Do(func() {
 		huma.NewError = func(status int, msg string, errs ...error) huma.StatusError {
-			return statusError(context.Background(), status, statusCodeName(status), messageOrDefault(status, msg), issuesFromErrors(errs))
+			return statusError(
+				context.Background(),
+				status,
+				statusCodeName(status),
+				messageOrDefault(status, msg),
+				issuesFromErrors(errs),
+			)
 		}
 
 		huma.NewErrorWithContext = func(hctx huma.Context, status int, msg string, errs ...error) huma.StatusError {
@@ -62,7 +68,13 @@ func Success[T any](ctx context.Context, data T) Body[T] {
 }
 
 // Error returns a status error with the shared envelope + logging semantics.
-func Error(ctx context.Context, status int, code, msg string, issues []apiinternal.FieldIssue, errs ...error) huma.StatusError {
+func Error(
+	ctx context.Context,
+	status int,
+	code, msg string,
+	issues []apiinternal.FieldIssue,
+	errs ...error,
+) huma.StatusError {
 	if code == "" {
 		code = statusCodeName(status)
 	}
@@ -87,7 +99,14 @@ func WriteSuccess[T any](w http.ResponseWriter, ctx context.Context, status int,
 }
 
 // WriteError renders an error envelope with optional issues, logging as needed.
-func WriteError(w http.ResponseWriter, ctx context.Context, status int, code, msg string, issues []apiinternal.FieldIssue, errs ...error) error {
+func WriteError(
+	w http.ResponseWriter,
+	ctx context.Context,
+	status int,
+	code, msg string,
+	issues []apiinternal.FieldIssue,
+	errs ...error,
+) error {
 	se := Error(ctx, status, code, msg, issues, errs...)
 	env, ok := se.(*statusEnvelopeError)
 	if !ok {
@@ -238,7 +257,13 @@ func (e *statusEnvelopeError) GetStatus() int {
 	return e.status
 }
 
-func statusError(ctx context.Context, status int, code, msg string, issues []apiinternal.FieldIssue, errs ...error) huma.StatusError {
+func statusError(
+	ctx context.Context,
+	status int,
+	code, msg string,
+	issues []apiinternal.FieldIssue,
+	errs ...error,
+) huma.StatusError {
 	fields := []zap.Field{
 		zap.Int("status", status),
 		zap.String("code", code),
