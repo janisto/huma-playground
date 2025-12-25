@@ -23,7 +23,7 @@ func captureLogOutput(t *testing.T, logFn func(*zap.Logger)) map[string]any {
 	if err != nil {
 		t.Fatalf("failed to create pipe: %v", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	origStdout := os.Stdout
 	origStderr := os.Stderr
@@ -38,8 +38,8 @@ func captureLogOutput(t *testing.T, logFn func(*zap.Logger)) map[string]any {
 	logFn(logger)
 	_ = logger.Sync()
 
-	if err := w.Close(); err != nil {
-		t.Fatalf("failed to close writer: %v", err)
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("failed to close writer: %v", closeErr)
 	}
 
 	data, err := io.ReadAll(r)

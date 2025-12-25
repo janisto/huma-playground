@@ -13,11 +13,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
+	"go.uber.org/zap"
+
 	"github.com/janisto/huma-playground/internal/common"
 	appmiddleware "github.com/janisto/huma-playground/internal/middleware"
 	"github.com/janisto/huma-playground/internal/respond"
 	"github.com/janisto/huma-playground/internal/routes"
-	"go.uber.org/zap"
 )
 
 // Version can be overridden at build time: -ldflags "-X main.Version=1.2.3"

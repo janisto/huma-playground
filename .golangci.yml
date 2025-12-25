@@ -1,0 +1,61 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+
+    govet:
+      enable:
+        - shadow
+
+    misspell:
+      locale: US
+
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/janisto/huma-playground
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+output:
+  formats:
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
+
+  show-stats: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
