@@ -12,7 +12,6 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-
 	"go.uber.org/zap"
 
 	"github.com/janisto/huma-playground/internal/common"
@@ -88,5 +87,4 @@ func main() {
 		appmiddleware.LogError(ctx, "server shutdown error", err)
 	}
 	appmiddleware.LogInfo(context.Background(), "server exited")
-
 }

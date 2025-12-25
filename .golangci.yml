@@ -7,6 +7,7 @@ linters:
     - copyloopvar
     - errcheck
     - errorlint
+    - gosec
     - govet
     - ineffassign
     - misspell
@@ -21,6 +22,10 @@ linters:
     errcheck:
       check-type-assertions: true
 
+    gosec:
+      excludes:
+        - G104
+
     govet:
       enable:
         - shadow
@@ -33,20 +38,35 @@ linters:
         - all
         - -ST1000
 
+  exclusions:
+    generated: strict
+
 formatters:
   enable:
-    - gofmt
-    - goimports
+    - gci
+    - gofumpt
     - golines
 
   settings:
-    goimports:
-      local-prefixes:
-        - github.com/janisto/huma-playground
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/janisto/huma-playground)
+      custom-order: true
+
+    gofumpt:
+      module-path: github.com/janisto/huma-playground
+      extra-rules: true
 
     golines:
       max-len: 120
       tab-len: 4
+
+  exclusions:
+    generated: strict
+    paths:
+      - ".*_mock.go"
 
 run:
   timeout: 5m

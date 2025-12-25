@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/danielgtaylor/huma/v2"
-
 	"go.uber.org/zap"
 
 	appmiddleware "github.com/janisto/huma-playground/internal/middleware"

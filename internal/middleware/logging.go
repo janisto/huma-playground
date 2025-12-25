@@ -25,8 +25,10 @@ var (
 )
 
 // ctxLoggerKey is used to store the request-specific logger in context.
-type ctxLoggerKey struct{}
-type ctxTraceIDKey struct{}
+type (
+	ctxLoggerKey  struct{}
+	ctxTraceIDKey struct{}
+)
 
 // RequestLogger enriches the request context with a zap logger that embeds Cloud Trace metadata.
 func RequestLogger() func(http.Handler) http.Handler {
