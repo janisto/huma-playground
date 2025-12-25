@@ -10,6 +10,7 @@ linters:
     - govet
     - ineffassign
     - misspell
+    - modernize
     - nilerr
     - staticcheck
     - unconvert
