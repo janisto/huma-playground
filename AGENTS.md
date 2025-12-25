@@ -28,7 +28,7 @@ Keep output and code/doc comments minimal and purposeful.
 - **Ask when unsure** → If requirements are ambiguous, seek clarification rather than guessing.
 - **Well-supported dependencies** → Prefer widely used, well-documented libraries with active maintenance. Ask permission before adding new dependencies.
 - **Security first** → Never exfiltrate secrets; avoid network calls unless explicitly required. Do not log PII or secrets.
-- **After editing code** → Run `go build ./...` and `go test ./...` to ensure build/test compliance.
+- **After editing code** → Run `go build ./...`, `go test ./...`, and `golangci-lint run ./...` to ensure build/test/lint compliance.
 
 ---
 
@@ -107,6 +107,24 @@ Generate coverage report:
 ```bash
 go tool cover -func=coverage.out
 go tool cover -html=coverage.out -o coverage.html
+```
+
+---
+
+## Linting
+
+The project uses [golangci-lint](https://golangci-lint.run/) for static analysis and code formatting. Configuration is defined in `.golangci.yml`.
+
+Run linter:
+
+```bash
+golangci-lint run ./...
+```
+
+Fix formatting issues automatically:
+
+```bash
+golangci-lint run --fix ./...
 ```
 
 ---

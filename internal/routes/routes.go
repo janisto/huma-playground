@@ -4,10 +4,10 @@ import (
 	"context"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.uber.org/zap"
 
 	appmiddleware "github.com/janisto/huma-playground/internal/middleware"
 	"github.com/janisto/huma-playground/internal/respond"
-	"go.uber.org/zap"
 )
 
 // Register wires all HTTP routes into the provided API router.

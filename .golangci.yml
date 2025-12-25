@@ -1,0 +1,87 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - modernize
+    - nilerr
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+
+    gosec:
+      excludes:
+        - G104
+
+    govet:
+      enable:
+        - shadow
+
+    misspell:
+      locale: US
+
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+
+  exclusions:
+    generated: strict
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+    - golines
+
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/janisto/huma-playground)
+      custom-order: true
+
+    gofumpt:
+      module-path: github.com/janisto/huma-playground
+      extra-rules: true
+
+    golines:
+      max-len: 120
+      tab-len: 4
+
+  exclusions:
+    generated: strict
+    paths:
+      - ".*_mock.go"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+output:
+  formats:
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
+
+  show-stats: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

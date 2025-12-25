@@ -86,6 +86,21 @@ cmd/server          # Application entrypoint and HTTP server bootstrap
 go test ./...
 ```
 
+## Linting
+The project uses [golangci-lint](https://golangci-lint.run/) for static analysis and code formatting.
+
+Run linter:
+```bash
+golangci-lint run ./...
+```
+
+Fix formatting issues automatically:
+```bash
+golangci-lint run --fix ./...
+```
+
+Configuration is defined in `.golangci.yml`.
+
 ## Trace Logging Check
 
 Start the server with a project ID so Cloud Trace fields get populated:
