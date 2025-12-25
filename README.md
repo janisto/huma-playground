@@ -87,19 +87,22 @@ go test ./...
 ```
 
 ## Linting
-The project uses [golangci-lint](https://golangci-lint.run/) for static analysis and code formatting.
+The project uses [golangci-lint](https://golangci-lint.run/) v2 for static analysis and code formatting. Configuration is defined in `.golangci.yml`.
 
 Run linter:
 ```bash
 golangci-lint run ./...
 ```
 
-Fix formatting issues automatically:
+Apply formatters (gci, gofumpt, golines) automatically:
+```bash
+golangci-lint fmt ./...
+```
+
+Run linter and apply formatters in one step:
 ```bash
 golangci-lint run --fix ./...
 ```
-
-Configuration is defined in `.golangci.yml`.
 
 ## Trace Logging Check
 
