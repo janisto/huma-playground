@@ -2,6 +2,8 @@
 
 A minimal REST API skeleton built with [Huma](https://github.com/danielgtaylor/huma) running on top of Chi via `humachi`. It demonstrates structured logging, consistent response envelopes, and a modular route layout that is ready to grow into a larger service.
 
+![Gopher](assets/gopher.svg)
+
 ## Features
 - Chi middleware stack with CORS, request IDs, real IP detection, panic recovery, and structured access logs
 - Request-scoped Zap logger that automatically enriches entries with Google Cloud trace metadata when available (accepting Cloud Trace headers with or without the sampling directive) and falls back to the request ID when no trace header exists
