@@ -72,9 +72,6 @@ func Sugar() *zap.SugaredLogger {
 // Sync flushes buffered log entries. Call during shutdown.
 func Sync() error {
 	loggerOnce.Do(initLogger)
-	if baseLogger == nil {
-		return nil
-	}
 	return baseLogger.Sync()
 }
 

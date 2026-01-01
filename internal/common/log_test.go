@@ -165,6 +165,196 @@ func TestSyncWithoutInit(t *testing.T) {
 	}
 }
 
+func TestLoggerSingletonBehavior(t *testing.T) {
+	resetLoggerForTest()
+
+	first := Logger()
+	second := Logger()
+
+	if first != second {
+		t.Fatal("expected Logger() to return the same instance")
+	}
+}
+
+func TestSugarSingletonBehavior(t *testing.T) {
+	resetLoggerForTest()
+
+	first := Sugar()
+	second := Sugar()
+
+	if first != second {
+		t.Fatal("expected Sugar() to return the same instance")
+	}
+}
+
+func TestLoggerAndSugarShareCore(t *testing.T) {
+	resetLoggerForTest()
+
+	logger := Logger()
+	sugar := Sugar()
+
+	desugared := sugar.Desugar()
+	if logger.Core() != desugared.Core() {
+		t.Fatal("expected Logger and Sugar to share the same core")
+	}
+}
+
+func TestLoggerIncludesCallerField(t *testing.T) {
+	payload := captureLogOutput(t, func(l *zap.Logger) {
+		l.Info("caller test")
+	})
+
+	caller, ok := payload["caller"].(string)
+	if !ok {
+		t.Fatal("expected caller field to be a string")
+	}
+
+	if !strings.Contains(caller, "log_test.go") {
+		t.Fatalf("expected caller to reference log_test.go, got %s", caller)
+	}
+}
+
+func TestErrorLevelOutput(t *testing.T) {
+	payload := captureLogOutput(t, func(l *zap.Logger) {
+		l.Error("error occurred", zap.String("component", "db"))
+	})
+
+	if got := payload["severity"]; got != "ERROR" {
+		t.Fatalf("expected severity ERROR, got %v", got)
+	}
+
+	if msg, ok := payload["message"].(string); !ok || msg != "error occurred" {
+		t.Fatalf("expected message 'error occurred', got %v", payload["message"])
+	}
+
+	if comp, ok := payload["component"].(string); !ok || comp != "db" {
+		t.Fatalf("expected component 'db', got %v", payload["component"])
+	}
+}
+
+func TestDebugLevelNotLoggedInProduction(t *testing.T) {
+	resetLoggerForTest()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	origStdout := os.Stdout
+	origStderr := os.Stderr
+	os.Stdout = w
+	os.Stderr = w
+	defer func() {
+		os.Stdout = origStdout
+		os.Stderr = origStderr
+	}()
+
+	logger := Logger()
+	logger.Debug("debug message should not appear")
+	_ = logger.Sync()
+
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("failed to close writer: %v", closeErr)
+	}
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("failed to read output: %v", err)
+	}
+
+	if strings.Contains(string(data), "debug message") {
+		t.Fatal("debug level messages should not be logged in production config")
+	}
+}
+
+func TestWarnLevelOutput(t *testing.T) {
+	payload := captureLogOutput(t, func(l *zap.Logger) {
+		l.Warn("warning occurred")
+	})
+
+	if got := payload["severity"]; got != "WARNING" {
+		t.Fatalf("expected severity WARNING, got %v", got)
+	}
+}
+
+func TestLoggerWithMultipleFields(t *testing.T) {
+	payload := captureLogOutput(t, func(l *zap.Logger) {
+		l.Info("request completed",
+			zap.String("method", "GET"),
+			zap.Int("status", 200),
+			zap.Float64("duration_ms", 15.5),
+			zap.Bool("cached", true),
+		)
+	})
+
+	if method, ok := payload["method"].(string); !ok || method != "GET" {
+		t.Fatalf("expected method 'GET', got %v", payload["method"])
+	}
+
+	if status, ok := payload["status"].(float64); !ok || status != 200 {
+		t.Fatalf("expected status 200, got %v", payload["status"])
+	}
+
+	if duration, ok := payload["duration_ms"].(float64); !ok || duration != 15.5 {
+		t.Fatalf("expected duration_ms 15.5, got %v", payload["duration_ms"])
+	}
+
+	if cached, ok := payload["cached"].(bool); !ok || !cached {
+		t.Fatalf("expected cached true, got %v", payload["cached"])
+	}
+}
+
+func TestSugarLoggerInfof(t *testing.T) {
+	payload := captureLogOutput(t, func(*zap.Logger) {
+		Sugar().Infof("request to %s returned %d", "/api/health", 200)
+	})
+
+	if got := payload["severity"]; got != "INFO" {
+		t.Fatalf("expected severity INFO, got %v", got)
+	}
+
+	msg, ok := payload["message"].(string)
+	if !ok {
+		t.Fatal("expected message to be a string")
+	}
+
+	if !strings.Contains(msg, "/api/health") || !strings.Contains(msg, "200") {
+		t.Fatalf("expected formatted message, got %s", msg)
+	}
+}
+
+func TestErrCalledBeforeLogger(t *testing.T) {
+	resetLoggerForTest()
+
+	err := Err()
+	if err != nil {
+		t.Fatalf("expected nil error when Err() initializes logger, got %v", err)
+	}
+
+	if baseLogger == nil {
+		t.Fatal("expected baseLogger to be initialized after Err()")
+	}
+}
+
+func TestSugarCalledBeforeLogger(t *testing.T) {
+	resetLoggerForTest()
+
+	sugar := Sugar()
+	if sugar == nil {
+		t.Fatal("expected Sugar() to return non-nil logger")
+	}
+
+	logger := Logger()
+	if logger == nil {
+		t.Fatal("expected Logger() to return non-nil logger")
+	}
+
+	if sugar.Desugar().Core() != logger.Core() {
+		t.Fatal("expected Sugar and Logger to share core when Sugar is called first")
+	}
+}
+
 // captureArrayEncoder collects strings appended via the PrimitiveArrayEncoder interface.
 type captureArrayEncoder struct {
 	values []string
