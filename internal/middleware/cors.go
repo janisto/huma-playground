@@ -26,8 +26,14 @@ func CORS() func(http.Handler) http.Handler {
 			"Authorization",
 			"Content-Type",
 			"X-CSRF-Token",
+			"X-Request-ID",
+			"traceparent",
 		},
-		ExposedHeaders: []string{"Link"},
-		MaxAge:         300,
+		ExposedHeaders: []string{
+			"Link",
+			"Location",
+			"X-Request-ID",
+		},
+		MaxAge: 300,
 	})
 }

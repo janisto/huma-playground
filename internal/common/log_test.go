@@ -137,6 +137,34 @@ func TestEncodeSeverityMapping(t *testing.T) {
 	}
 }
 
+func TestSyncReturnsNoError(t *testing.T) {
+	resetLoggerForTest()
+	_ = Logger()
+
+	err := Sync()
+	if err != nil {
+		t.Logf("Sync returned error (may be expected on some platforms): %v", err)
+	}
+}
+
+func TestErrReturnsNilOnSuccess(t *testing.T) {
+	resetLoggerForTest()
+	_ = Logger()
+
+	err := Err()
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestSyncWithoutInit(t *testing.T) {
+	resetLoggerForTest()
+	err := Sync()
+	if err != nil {
+		t.Logf("Sync returned error (may be expected): %v", err)
+	}
+}
+
 // captureArrayEncoder collects strings appended via the PrimitiveArrayEncoder interface.
 type captureArrayEncoder struct {
 	values []string

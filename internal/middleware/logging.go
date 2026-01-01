@@ -15,9 +15,11 @@ import (
 	"github.com/janisto/huma-playground/internal/common"
 )
 
-const cloudTraceHeader = "X-Cloud-Trace-Context"
+const traceparentHeader = "traceparent"
 
-var traceHeaderRe = regexp.MustCompile(`^([0-9a-fA-F]+)/([0-9a-fA-F]+)(?:;o=(\d))?$`)
+// W3C Trace Context format: {version}-{trace-id}-{parent-id}-{trace-flags}
+// Example: 00-ab42124a3c573678d4d8b21ba52df3bf-d21f7bc17caa5aba-01
+var traceHeaderRe = regexp.MustCompile(`^([0-9a-fA-F]{2})-([0-9a-fA-F]{32})-([0-9a-fA-F]{16})-([0-9a-fA-F]{2})$`)
 
 var (
 	projectIDOnce   sync.Once
@@ -34,7 +36,7 @@ type (
 func RequestLogger() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			header := r.Header.Get(cloudTraceHeader)
+			header := r.Header.Get(traceparentHeader)
 			projectID := resolveProjectID()
 			reqID := chimiddleware.GetReqID(r.Context())
 
@@ -164,12 +166,13 @@ func traceFields(header, projectID string) []zap.Field {
 		return nil
 	}
 	matches := traceHeaderRe.FindStringSubmatch(header)
-	if len(matches) != 4 {
+	if len(matches) != 5 {
 		return nil
 	}
-	traceID := matches[1]
-	spanID := matches[2]
-	sampled := matches[3] == "1"
+	traceID := matches[2]
+	spanID := matches[3]
+	flags := matches[4]
+	sampled := flags == "01"
 	resource := fmt.Sprintf("projects/%s/traces/%s", projectID, traceID)
 
 	return []zap.Field{
@@ -184,10 +187,10 @@ func traceResource(header, projectID string) string {
 		return ""
 	}
 	matches := traceHeaderRe.FindStringSubmatch(header)
-	if len(matches) != 4 {
+	if len(matches) != 5 {
 		return ""
 	}
-	return fmt.Sprintf("projects/%s/traces/%s", projectID, matches[1])
+	return fmt.Sprintf("projects/%s/traces/%s", projectID, matches[2])
 }
 
 func firstNonEmpty(values ...string) string {
