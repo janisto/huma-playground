@@ -15,39 +15,59 @@ Keep output and code/doc comments minimal and purposeful.
 - Remove obsolete/stale comments when changing related code.
 - Avoid speculative TODOs; only leave a TODO if it is immediately actionable, clearly scoped, and required. Prefer creating a tracked issue instead.
 - Do not insert review-style remarks ("nit:", "consider:") inside committed files.
-- Keep examples free of progress chatter—only the example code and essential annotations.
+- Keep examples free of progress chatter: only the example code and essential annotations.
 
 ---
 
 ## Workflow Principles
 
-- **Correctness first** → Prioritize correctness, then readability/maintainability, then performance.
-- **Reflect before acting** → After tool results, briefly summarize insights, list next options, and pick the best one.
-- **Parallelize independent steps** → Run unrelated reads/checks in parallel to maximize efficiency.
-- **No leftovers** → Remove temporary files/scripts/debug outputs before finishing. Keep `git status` clean aside from intended changes.
-- **Ask when unsure** → If requirements are ambiguous, seek clarification rather than guessing.
-- **Well-supported dependencies** → Prefer widely used, well-documented libraries with active maintenance. Ask permission before adding new dependencies.
-- **Security first** → Never exfiltrate secrets; avoid network calls unless explicitly required. Do not log PII or secrets.
-- **After editing code** → Run `go build ./...`, `go test ./...`, and `golangci-lint run ./...` to ensure build/test/lint compliance.
+- **Correctness first:** Prioritize correctness, then readability/maintainability, then performance.
+- **Reflect before acting:** After tool results, briefly summarize insights, list next options, and pick the best one.
+- **Parallelize independent steps:** Run unrelated reads/checks in parallel to maximize efficiency.
+- **No leftovers:** Remove temporary files/scripts/debug outputs before finishing. Keep `git status` clean aside from intended changes.
+- **Ask when unsure:** If requirements are ambiguous, seek clarification rather than guessing.
+- **Well-supported dependencies:** Prefer widely used, well-documented libraries with active maintenance. Ask permission before adding new dependencies.
+- **Security first:** Never exfiltrate secrets; avoid network calls unless explicitly required. Do not log PII or secrets.
+- **After editing code:** Run `go build ./...`, `go test ./...`, and `golangci-lint run ./...` to ensure build/test/lint compliance.
 
 ---
 
 ## Project Overview
 
-Huma Playground is a minimal REST API skeleton built with [Huma](https://github.com/danielgtaylor/huma) running on top of Chi via `humachi`. It demonstrates structured logging, consistent response envelopes, and a modular route layout.
+Huma Playground is a minimal REST API skeleton built with [Huma](https://github.com/danielgtaylor/huma) running on top of Chi via `humachi`. It demonstrates structured logging, RFC 9457 Problem Details for errors, and a modular route layout.
 
 ### Key Features
 
-- Chi middleware stack with CORS, request IDs, real IP detection, panic recovery, and structured access logs
+- Chi middleware stack with security headers, CORS, request IDs, real IP detection, request logging, access logging, and panic recovery
 - Request-scoped Zap logger with Google Cloud trace metadata enrichment
-- Consistent `data/meta/error` envelopes for every response via generics
-- Unified response helpers for success, redirects, and errors
+- Plain response bodies with RFC 9457 Problem Details for errors
+- Content negotiation supporting JSON and CBOR formats
+- Cursor-based pagination with RFC 8288 Link headers
 
 ### Tech & Tooling
 
 - Language/runtime: Go 1.25+
 - Frameworks/libs: Huma v2, Chi v5, Zap, go-chi/cors
 - Testing: Go standard `testing` package
+- Task runner: [Just](https://github.com/casey/just) (optional)
+
+---
+
+## Justfile
+
+The project includes a `Justfile` for common development tasks. Run `just` to list available commands.
+
+Key recipes:
+- `just build` - Build the application
+- `just run` - Run the server
+- `just test` - Run all tests
+- `just coverage` - Run tests and generate coverage report
+- `just lint` - Run linter
+- `just fmt` - Apply formatters
+- `just fix` - Run linter and apply formatters
+- `just check` - Full check (build + test + lint)
+
+All commands in this document can be run via their corresponding `just` recipes.
 
 ---
 
@@ -76,9 +96,9 @@ go run ./cmd/server
 ```
 
 The server starts on port 8080 with endpoints:
-- `http://localhost:8080/health` – health probe
-- `http://localhost:8080/docs` – interactive API explorer
-- `http://localhost:8080/openapi.json` – OpenAPI schema
+- `http://localhost:8080/health` - health probe
+- `http://localhost:8080/api-docs` - interactive API explorer
+- `http://localhost:8080/openapi.json` - OpenAPI schema
 
 ---
 
@@ -139,10 +159,10 @@ golangci-lint run --fix ./...
 
 ```
 cmd/server/           # Application entrypoint and HTTP server bootstrap
-internal/api/         # Shared envelope and response types (Envelope, Meta, ErrorBody)
 internal/common/      # Shared logger construction
-internal/middleware/  # Request logging middleware and context helpers
-internal/respond/     # Centralized response helpers for consistent envelopes
+internal/middleware/  # Security headers, CORS, request ID, logging middleware and context helpers
+internal/pagination/  # Cursor-based pagination (Cursor, Params, Link headers)
+internal/respond/     # Panic recovery and Problem Details error handlers
 internal/routes/      # Route registration grouped by domain
 ```
 
@@ -150,27 +170,40 @@ internal/routes/      # Route registration grouped by domain
 
 ## Coding Conventions
 
-### Response Envelopes
+### Response Format
 
-All API responses must use the shared envelope format defined in `internal/api/envelope.go`:
+Responses use plain structs; no custom envelope wrapper:
 
 ```go
-type Envelope[T any] struct {
-    Data  *T         `json:"data"`
-    Meta  Meta       `json:"meta"`
-    Error *ErrorBody `json:"error"`
+type HealthOutput struct {
+    Body HealthData
+}
+
+func registerHealth(api huma.API) {
+    huma.Get(api, "/health", func(ctx context.Context, _ *struct{}) (*HealthOutput, error) {
+        return &HealthOutput{Body: HealthData{Message: "healthy"}}, nil
+    })
 }
 ```
 
-- `data`: primary payload (pointer so `null` is explicit)
-- `meta`: shared metadata including `traceId`
-- `error`: populated only on failure
-
 ### Error Handling
 
-- Use `respond.Error(...)` for error responses to maintain consistency
-- Error messages default to human-friendly text
-- The helper will log with the appropriate level and clone detail slices
+Errors follow RFC 9457 Problem Details and honor content negotiation:
+- `application/problem+json` when JSON is requested (default, RFC 9457 registered)
+- `application/problem+cbor` when CBOR is requested (project extension, follows RFC 6839 suffix convention)
+
+Use Huma's built-in helpers:
+
+```go
+huma.Error400BadRequest("invalid request")
+huma.Error403Forbidden("access denied")
+huma.Error404NotFound("resource not found")
+huma.Error422UnprocessableEntity("validation failed", fieldErrors...)
+huma.Error500InternalServerError("internal error")
+huma.NewError(http.StatusTeapot, "custom message")
+```
+
+Panic recovery and Chi-level handlers use Problem Details via `internal/respond`.
 
 ### Logging
 
@@ -188,28 +221,209 @@ These helpers preserve contextual fields such as trace IDs.
 ### Adding New Routes
 
 1. Create a new file under `internal/routes` (e.g., `users.go`)
-2. Define your handler using Huma and return the appropriate envelope type
+2. Define output struct with `Body` field for the response payload
 3. Add a registration function and call it from `routes.Register`
 4. Log within handlers using context-aware helpers
-5. Return errors with `respond.Error(...)` for consistency
-6. Use `respond.Success` / `respond.WriteRedirect` helpers for responses
+5. Return errors using Huma's error helpers
+6. Use `respond.WriteRedirect()` for redirects
 
 ### Handler Pattern
 
 ```go
-func registerMyRoute(api huma.API) {
-    huma.Get(api, "/my-route", func(ctx context.Context, _ *struct{}) (*respond.Body[myData], error) {
-        appmiddleware.LogInfo(ctx, "my route", zap.String("path", "/my-route"))
-        resp := respond.Success(ctx, myData{...})
-        return &resp, nil
+type UserOutput struct {
+    Body User
+}
+
+func registerUser(api huma.API) {
+    huma.Get(api, "/users/{id}", func(ctx context.Context, input *struct {
+        ID string `path:"id"`
+    }) (*UserOutput, error) {
+        user, err := db.GetUser(ctx, input.ID)
+        if err != nil {
+            return nil, huma.Error404NotFound("user not found")
+        }
+        return &UserOutput{Body: user}, nil
     })
 }
+```
+
+### POST 201 Created Pattern
+
+```go
+type CreateUserOutput struct {
+    Body User
+}
+
+huma.Register(api, huma.Operation{
+    OperationID:   "create-user",
+    Method:        http.MethodPost,
+    Path:          "/users",
+    DefaultStatus: http.StatusCreated,
+}, func(ctx context.Context, input *CreateUserInput) (*CreateUserOutput, error) {
+    user := createUser(input)
+    return &CreateUserOutput{Body: user}, nil
+})
+```
+
+For responses that need a Location header (e.g., resource creation with redirect):
+
+```go
+type CreateUserOutput struct {
+    Location string `header:"Location"`
+    Body     User
+}
+
+huma.Register(api, huma.Operation{
+    OperationID:   "create-user",
+    Method:        http.MethodPost,
+    Path:          "/users",
+    DefaultStatus: http.StatusCreated,
+}, func(ctx context.Context, input *CreateUserInput) (*CreateUserOutput, error) {
+    user := createUser(input)
+    return &CreateUserOutput{
+        Location: fmt.Sprintf("/users/%s", user.ID),
+        Body:     user,
+    }, nil
+})
 ```
 
 ### JSON Encoding
 
 - JSON responses are UTF-8 with HTML escaping disabled
 - Response bodies include a `$schema` pointer to the JSON Schema
+
+---
+
+## REST API Implementation Guidelines
+
+### URI Design
+
+- Use plural nouns for collections (`/users`, not `/user`)
+- Avoid verbs in URIs; let HTTP methods convey the action
+- Nest resources to express relationships (`/posts/{postId}/comments`); limit nesting to one level
+- Use lowercase with hyphens for multi-word segments (`/user-profiles`)
+
+### Input Validation
+
+- Validate all input; never sanitize (reject invalid input, don't transform it)
+- Use Huma's built-in validation tags (`minimum`, `maximum`, `pattern`, `required`)
+- Return 400 for malformed syntax; 422 for validation failures on valid syntax
+
+### HTTP Methods
+
+| Method | Purpose | Success Status |
+|--------|---------|----------------|
+| GET | Retrieve resource(s) | 200 OK |
+| POST | Create a resource | 201 Created |
+| PUT | Replace a resource entirely | 200 OK or 204 No Content |
+| PATCH | Partial update | 200 OK or 204 No Content |
+| DELETE | Remove a resource | 204 No Content |
+
+### Status Codes
+
+| Status | Use Case |
+|--------|----------|
+| 200 OK | Successful GET, PUT, PATCH |
+| 201 Created | Successful POST (include Location header) |
+| 204 No Content | Successful DELETE |
+| 304 Not Modified | Conditional GET with matching ETag |
+| 400 Bad Request | Malformed syntax, missing required fields |
+| 401 Unauthorized | Missing or invalid authentication |
+| 403 Forbidden | Authenticated but not authorized |
+| 404 Not Found | Resource does not exist |
+| 405 Method Not Allowed | HTTP method not supported for resource |
+| 422 Unprocessable Entity | Validation failures on specific fields |
+| 500 Internal Server Error | Unexpected server error |
+
+### Error Responses
+
+All errors use RFC 9457 Problem Details format:
+
+```json
+{
+  "title": "Not Found",
+  "status": 404,
+  "detail": "resource not found"
+}
+```
+
+Use Huma error helpers:
+- `huma.Error400BadRequest("message")`
+- `huma.Error404NotFound("message")`
+- `huma.Error422UnprocessableEntity("message", fieldErrors...)`
+- `huma.NewError(status, "message")`
+
+### Request ID
+
+- `X-Request-ID` header tracks requests end-to-end
+- Propagate to downstream services and include in logs
+- Generated automatically by `RequestID()` middleware if not provided
+
+### Content Types
+
+**Requests:**
+- Set `Content-Type: application/json` for JSON request bodies
+- Set `Content-Type: application/cbor` for CBOR request bodies
+- Huma returns 415 Unsupported Media Type for invalid content types
+
+**Responses:**
+- Default: `application/json` (RFC 8259)
+- Alternate: `application/cbor` (RFC 8949)
+- Errors: `application/problem+json` (RFC 9457) or `application/problem+cbor` (extension)
+- Format selected via `Accept` header
+- Error format is controlled by `Accept` header, not request `Content-Type`
+
+### Timestamps
+
+- Use ISO 8601 format with UTC timezone: `2024-01-15T10:30:00Z`
+- Store and transmit in UTC; convert for display only
+
+### Filtering & Sorting
+
+- Use query parameters: `?status=active&sort=created_at&order=desc`
+- Support multiple values with comma separation: `?status=active,pending`
+- Default sort order should be consistent and documented
+
+### Pagination
+
+Use cursor-based pagination via `internal/pagination`. Invalid cursors must return 400 Bad Request per JSON:API cursor pagination best practices.
+
+```go
+// Input struct with pagination params
+type ListInput struct {
+    pagination.Params
+    Filter string `query:"filter"`
+}
+
+// Output struct with Link header
+type ListOutput struct {
+    Link string `header:"Link" doc:"RFC 8288 pagination links"`
+    Body ListData
+}
+
+const listCursorType = "list"
+
+// In handler - validate cursor before use:
+cursor, err := pagination.DecodeCursor(input.Cursor)
+if err != nil {
+    return nil, huma.Error400BadRequest("invalid cursor format")
+}
+
+if cursor.Type != "" && cursor.Type != listCursorType {
+    return nil, huma.Error400BadRequest("cursor type mismatch")
+}
+
+// Validate cursor references existing item (if applicable)
+if cursor.Value != "" && !itemExists(cursor.Value) {
+    return nil, huma.Error400BadRequest("cursor references unknown item")
+}
+
+// Use Paginate helper for consistent pagination
+result := pagination.Paginate(items, cursor, input.DefaultLimit(), listCursorType, getID, "/items", query)
+return &ListOutput{Link: result.LinkHeader, Body: data}, nil
+```
+
+Links provided via HTTP `Link` header per RFC 8288.
 
 ---
 
@@ -225,7 +439,6 @@ func registerMyRoute(api huma.API) {
 
 ```go
 func TestMyFeature(t *testing.T) {
-    respond.Install()
     router := chi.NewRouter()
     router.Use(
         appmiddleware.RequestID(),
@@ -236,28 +449,44 @@ func TestMyFeature(t *testing.T) {
     api := humachi.New(router, huma.DefaultConfig("Test", "test"))
     routes.Register(api)
 
-    req := httptest.NewRequest(http.MethodGet, "/endpoint", nil)
+    req := httptest.NewRequest(http.MethodGet, "/health", nil)
     req.Header.Set(chimiddleware.RequestIDHeader, "test-trace-id")
     resp := httptest.NewRecorder()
     router.ServeHTTP(resp, req)
 
-    // Verify response
     if resp.Code != http.StatusOK {
         t.Fatalf("expected 200 OK, got %d", resp.Code)
     }
 
-    var env apiinternal.Envelope[myData]
-    if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
-        t.Fatalf("failed to decode envelope: %v", err)
+    var health routes.HealthData
+    if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+        t.Fatalf("failed to decode response: %v", err)
     }
-    // Assert envelope fields...
+    if health.Message != "healthy" {
+        t.Fatalf("unexpected message: %s", health.Message)
+    }
+}
+```
+
+### Error Response Testing
+
+```go
+var problem huma.ErrorModel
+if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
+    t.Fatalf("failed to unmarshal problem: %v", err)
+}
+if problem.Status != http.StatusNotFound {
+    t.Fatalf("expected 404, got %d", problem.Status)
+}
+if problem.Title != "Not Found" {
+    t.Fatalf("unexpected title: %s", problem.Title)
 }
 ```
 
 ### Coverage Requirements
 
 - Tests should cover success paths, error paths, and edge cases
-- Verify response envelopes contain expected data, meta, and error fields
+- Verify error responses use Problem Details format
 - Test trace ID propagation through the request context
 
 ---
@@ -265,7 +494,7 @@ func TestMyFeature(t *testing.T) {
 ## Testing & Testability
 
 - **NEVER add test-related code to production code.** No `if testing` branches, no test flags, no mock injection points.
-- If code is not unit testable, refactor it. Use dependency injection, extract interfaces, or restructure — do not pollute production code with test scaffolding.
+- If code is not unit testable, refactor it. Use dependency injection, extract interfaces, or restructure. Do not pollute production code with test scaffolding.
 - Tests belong in `*_test.go` files; production code must remain test-agnostic.
 
 ---
@@ -284,8 +513,8 @@ func TestMyFeature(t *testing.T) {
 
 - Never commit secrets or sensitive data
 - Do not modify `go.mod` or `go.sum` without explicit request
-- Keep response envelope structure consistent across all endpoints
-- Always use the centralized `respond` package for API responses
+- Use Huma's built-in error helpers for error responses
+- Use `internal/respond` handlers for Chi-level error handling (404, 405, panic recovery)
 - Do not add new dependencies without justification
 
 ---
@@ -295,5 +524,5 @@ func TestMyFeature(t *testing.T) {
 - Reflect on tool results and pick the best next action before proceeding.
 - Prefer batching independent read-only steps in parallel; avoid redundant reads.
 - Clean up temporary files/scripts before finishing a task.
-- Do not invent paths/APIs/commands—verify from repo or tooling.
+- Do not invent paths/APIs/commands. Verify from repo or tooling.
 - For runnable code changes, run minimal tests to validate, report PASS/FAIL succinctly, and iterate up to three targeted fixes if needed.

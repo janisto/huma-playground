@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 )
 
 func TestTraceFields(t *testing.T) {
-	header := "3d23d071b5bfd6579171efce907685cb/643745351650131537;o=1"
+	header := "00-3d23d071b5bfd6579171efce907685cb-08f067aa0ba902b7-01"
 	projectID := "test-project"
 
 	fields := traceFields(header, projectID)
@@ -27,7 +28,7 @@ func TestTraceFields(t *testing.T) {
 	if fields[0].Key != "logging.googleapis.com/trace" || fields[0].String != wantTrace {
 		t.Fatalf("unexpected trace field: %+v", fields[0])
 	}
-	if fields[1].Key != "logging.googleapis.com/spanId" || fields[1].String != "643745351650131537" {
+	if fields[1].Key != "logging.googleapis.com/spanId" || fields[1].String != "08f067aa0ba902b7" {
 		t.Fatalf("unexpected span field: %+v", fields[1])
 	}
 	if fields[2].Key != "logging.googleapis.com/trace_sampled" || fields[2].Type != zapcore.BoolType ||
@@ -36,8 +37,8 @@ func TestTraceFields(t *testing.T) {
 	}
 }
 
-func TestTraceFieldsWithoutSamplingDirective(t *testing.T) {
-	header := "3d23d071b5bfd6579171efce907685cb/643745351650131537"
+func TestTraceFieldsNotSampled(t *testing.T) {
+	header := "00-3d23d071b5bfd6579171efce907685cb-08f067aa0ba902b7-00"
 	projectID := "test-project"
 
 	fields := traceFields(header, projectID)
@@ -49,7 +50,7 @@ func TestTraceFieldsWithoutSamplingDirective(t *testing.T) {
 	if fields[0].Key != "logging.googleapis.com/trace" || fields[0].String != wantTrace {
 		t.Fatalf("unexpected trace field: %+v", fields[0])
 	}
-	if fields[1].Key != "logging.googleapis.com/spanId" || fields[1].String != "643745351650131537" {
+	if fields[1].Key != "logging.googleapis.com/spanId" || fields[1].String != "08f067aa0ba902b7" {
 		t.Fatalf("unexpected span field: %+v", fields[1])
 	}
 	if fields[2].Key != "logging.googleapis.com/trace_sampled" || fields[2].Type != zapcore.BoolType ||
@@ -107,7 +108,7 @@ func TestTraceIDFromContext(t *testing.T) {
 }
 
 func TestLoggerWithTraceAddsCloudFields(t *testing.T) {
-	header := "3d23d071b5bfd6579171efce907685cb/643745351650131537;o=1"
+	header := "00-3d23d071b5bfd6579171efce907685cb-08f067aa0ba902b7-01"
 	core, recorded := observer.New(zapcore.InfoLevel)
 	base := zap.New(core)
 
@@ -128,7 +129,7 @@ func TestLoggerWithTraceAddsCloudFields(t *testing.T) {
 	if f, ok := ctxFields["logging.googleapis.com/trace"]; !ok || f.String != wantTrace {
 		t.Fatalf("trace field mismatch: %+v", ctxFields)
 	}
-	if f, ok := ctxFields["logging.googleapis.com/spanId"]; !ok || f.String != "643745351650131537" {
+	if f, ok := ctxFields["logging.googleapis.com/spanId"]; !ok || f.String != "08f067aa0ba902b7" {
 		t.Fatalf("span field mismatch: %+v", ctxFields)
 	}
 	if f, ok := ctxFields["logging.googleapis.com/trace_sampled"]; !ok || f.Type != zapcore.BoolType || f.Integer != 1 {
@@ -303,4 +304,254 @@ func TestLogFatalAppendsErrorField(t *testing.T) {
 	}()
 
 	LogFatal(ctx, "fatal failure", errors.New("boom"), zap.String("foo", "bar"))
+}
+
+func TestSugarFromContext(t *testing.T) {
+	core, recorded := observer.New(zapcore.InfoLevel)
+	logger := zap.New(core)
+	ctx := contextWithLogger(context.Background(), logger)
+
+	sugar := SugarFromContext(ctx)
+	sugar.Infow("test message", "key", "value")
+
+	entries := recorded.All()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	if entries[0].Message != "test message" {
+		t.Fatalf("unexpected message: %s", entries[0].Message)
+	}
+}
+
+func TestContextWithTraceIDEmpty(t *testing.T) {
+	original := context.Background()
+	ctx := contextWithTraceID(original, "")
+	if ctx != original {
+		t.Fatal("expected same context for empty trace ID")
+	}
+}
+
+func TestLoggerWithTraceNilBase(t *testing.T) {
+	logger := loggerWithTrace(nil, "", "test-project", "req-123")
+	if logger == nil {
+		t.Fatal("expected non-nil logger")
+	}
+}
+
+func TestLoggerWithTraceNoFields(t *testing.T) {
+	core, recorded := observer.New(zapcore.InfoLevel)
+	base := zap.New(core)
+
+	logger := loggerWithTrace(base, "", "", "")
+	logger.Info("test")
+
+	entries := recorded.All()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if len(entries[0].Context) != 0 {
+		t.Fatalf("expected no context fields, got %d", len(entries[0].Context))
+	}
+}
+
+func TestTraceResource(t *testing.T) {
+	header := "00-3d23d071b5bfd6579171efce907685cb-08f067aa0ba902b7-01"
+	projectID := "test-project"
+
+	resource := traceResource(header, projectID)
+	want := "projects/test-project/traces/3d23d071b5bfd6579171efce907685cb"
+	if resource != want {
+		t.Fatalf("expected %s, got %s", want, resource)
+	}
+}
+
+func TestTraceResourceEmptyProjectID(t *testing.T) {
+	resource := traceResource("00-ab42124a3c573678d4d8b21ba52df3bf-d21f7bc17caa5aba-01", "")
+	if resource != "" {
+		t.Fatalf("expected empty string for empty project ID, got %s", resource)
+	}
+}
+
+func TestTraceResourceInvalidHeader(t *testing.T) {
+	resource := traceResource("invalid", "test-project")
+	if resource != "" {
+		t.Fatalf("expected empty string for invalid header, got %s", resource)
+	}
+}
+
+func TestLogErrorNilError(t *testing.T) {
+	core, recorded := observer.New(zapcore.ErrorLevel)
+	logger := zap.New(core)
+	ctx := contextWithLogger(context.Background(), logger)
+
+	LogError(ctx, "no error", nil, zap.String("key", "value"))
+
+	entries := recorded.All()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+
+	for _, f := range entries[0].Context {
+		if f.Key == "error" {
+			t.Fatal("did not expect error field when err is nil")
+		}
+	}
+}
+
+func TestLogFatalNilError(t *testing.T) {
+	core, recorded := observer.New(zapcore.InfoLevel)
+	logger := zap.New(core, zap.WithFatalHook(zapcore.WriteThenPanic))
+	ctx := contextWithLogger(context.Background(), logger)
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic triggered by fatal hook")
+		}
+
+		entries := recorded.All()
+		if len(entries) != 1 {
+			t.Fatalf("expected 1 log entry, got %d", len(entries))
+		}
+
+		for _, f := range entries[0].Context {
+			if f.Key == "error" {
+				t.Fatal("did not expect error field when err is nil")
+			}
+		}
+	}()
+
+	LogFatal(ctx, "fatal without error", nil)
+}
+
+func TestRequestLoggerMiddleware(t *testing.T) {
+	handler := RequestLogger()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger := LoggerFromContext(r.Context())
+		if logger == nil {
+			t.Fatal("expected non-nil logger in context")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+}
+
+func TestRequestLoggerWithTraceHeader(t *testing.T) {
+	origProjectID := cachedProjectID
+	cachedProjectID = "test-project"
+	projectIDOnce = sync.Once{}
+	projectIDOnce.Do(func() {})
+	defer func() {
+		cachedProjectID = origProjectID
+	}()
+
+	handler := RequestLogger()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		traceID := TraceIDFromContext(r.Context())
+		if traceID == nil {
+			t.Fatal("expected trace ID in context")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("traceparent", "00-3d23d071b5bfd6579171efce907685cb-08f067aa0ba902b7-01")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+}
+
+func TestResolveProjectID(t *testing.T) {
+	result := resolveProjectID()
+	if result != cachedProjectID {
+		t.Fatalf("expected cached value %s, got %s", cachedProjectID, result)
+	}
+}
+
+func TestRequestLoggerFallsBackToRequestID(t *testing.T) {
+	origProjectID := cachedProjectID
+	cachedProjectID = ""
+	projectIDOnce = sync.Once{}
+	projectIDOnce.Do(func() {})
+	defer func() {
+		cachedProjectID = origProjectID
+	}()
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		traceID := TraceIDFromContext(r.Context())
+		if traceID == nil {
+			t.Fatal("expected trace ID in context")
+		}
+		if *traceID != "test-request-id" {
+			t.Fatalf("expected trace ID to be request ID 'test-request-id', got %s", *traceID)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := RequestID()(RequestLogger()(inner))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("X-Request-Id", "test-request-id")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+}
+
+func TestLoggerFromContextNilContext(t *testing.T) {
+	logger := LoggerFromContext(nil) //nolint:staticcheck // testing nil context handling
+	if logger == nil {
+		t.Fatal("expected non-nil logger for nil context")
+	}
+}
+
+func TestLoggerFromContextNilLoggerInContext(t *testing.T) {
+	ctx := context.WithValue(context.Background(), ctxLoggerKey{}, (*zap.Logger)(nil))
+	logger := LoggerFromContext(ctx)
+	if logger == nil {
+		t.Fatal("expected non-nil logger when context has nil logger")
+	}
+}
+
+func TestTraceIDFromContextNilContext(t *testing.T) {
+	traceID := TraceIDFromContext(nil) //nolint:staticcheck // testing nil context handling
+	if traceID != nil {
+		t.Fatalf("expected nil trace ID for nil context, got %v", traceID)
+	}
+}
+
+func TestContextWithLoggerNilContext(t *testing.T) {
+	core, recorded := observer.New(zapcore.InfoLevel)
+	logger := zap.New(core)
+
+	ctx := contextWithLogger(nil, logger) //nolint:staticcheck // testing nil context handling
+	if ctx == nil {
+		t.Fatal("expected non-nil context")
+	}
+
+	LoggerFromContext(ctx).Info("test")
+	if len(recorded.All()) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(recorded.All()))
+	}
+}
+
+func TestContextWithTraceIDNilContext(t *testing.T) {
+	ctx := contextWithTraceID(nil, "trace-123") //nolint:staticcheck // testing nil context handling
+	if ctx == nil {
+		t.Fatal("expected non-nil context")
+	}
+
+	traceID := TraceIDFromContext(ctx)
+	if traceID == nil || *traceID != "trace-123" {
+		t.Fatalf("expected trace-123, got %v", traceID)
+	}
 }

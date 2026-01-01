@@ -10,4 +10,8 @@ require (
 	go.uber.org/zap v1.27.1
 )
 
-require go.uber.org/multierr v1.11.0 // indirect
+require (
+	github.com/fxamacker/cbor/v2 v2.8.0
+	github.com/x448/float16 v0.8.4 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
+)
