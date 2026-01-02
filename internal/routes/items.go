@@ -9,18 +9,19 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/janisto/huma-playground/internal/common"
 	"github.com/janisto/huma-playground/internal/pagination"
 )
 
 // Item represents a sample resource for pagination demonstration.
 type Item struct {
-	ID          string    `json:"id"          doc:"Unique identifier"                example:"item-001"`
-	Name        string    `json:"name"        doc:"Display name"                     example:"Alpha Widget"`
-	Category    string    `json:"category"    doc:"Item category"                    example:"electronics"`
-	Price       float64   `json:"price"       doc:"Price in USD"                     example:"29.99"`
-	InStock     bool      `json:"inStock"     doc:"Availability status"              example:"true"`
-	CreatedAt   time.Time `json:"createdAt"   doc:"Creation timestamp"               example:"2024-01-15T10:30:00Z"`
-	Description string    `json:"description" doc:"Detailed description of the item"`
+	ID          string      `json:"id"          doc:"Unique identifier"                example:"item-001"`
+	Name        string      `json:"name"        doc:"Display name"                     example:"Alpha Widget"`
+	Category    string      `json:"category"    doc:"Item category"                    example:"electronics"`
+	Price       float64     `json:"price"       doc:"Price in USD"                     example:"29.99"`
+	InStock     bool        `json:"inStock"     doc:"Availability status"              example:"true"`
+	CreatedAt   common.Time `json:"createdAt"   doc:"Creation timestamp"               example:"2024-01-15T10:30:00.000Z"`
+	Description string      `json:"description" doc:"Detailed description of the item"`
 }
 
 // mockItems provides sample data for pagination demonstration.
@@ -31,7 +32,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       29.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)),
 		Description: "A versatile electronic widget for everyday use",
 	},
 	{
@@ -40,7 +41,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       49.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 16, 11, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 16, 11, 0, 0, 0, time.UTC)),
 		Description: "Advanced gadget with smart features",
 	},
 	{
@@ -49,7 +50,7 @@ var mockItems = []Item{
 		Category:    "tools",
 		Price:       15.50,
 		InStock:     false,
-		CreatedAt:   time.Date(2024, 1, 17, 9, 15, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 17, 9, 15, 0, 0, time.UTC)),
 		Description: "Precision tool for professional work",
 	},
 	{
@@ -58,7 +59,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       8.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 18, 14, 45, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 18, 14, 45, 0, 0, time.UTC)),
 		Description: "Essential component for electronics projects",
 	},
 	{
@@ -67,7 +68,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       34.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 19, 8, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 19, 8, 0, 0, 0, time.UTC)),
 		Description: "High-precision environmental sensor",
 	},
 	{
@@ -76,7 +77,7 @@ var mockItems = []Item{
 		Category:    "accessories",
 		Price:       12.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 20, 16, 30, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 20, 16, 30, 0, 0, time.UTC)),
 		Description: "Premium quality data cable",
 	},
 	{
@@ -85,7 +86,7 @@ var mockItems = []Item{
 		Category:    "accessories",
 		Price:       9.99,
 		InStock:     false,
-		CreatedAt:   time.Date(2024, 1, 21, 10, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 21, 10, 0, 0, 0, time.UTC)),
 		Description: "Universal power adapter",
 	},
 	{
@@ -94,7 +95,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       89.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 22, 11, 30, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 22, 11, 30, 0, 0, time.UTC)),
 		Description: "Development board for prototyping",
 	},
 	{
@@ -103,7 +104,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       5.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 23, 9, 45, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 23, 9, 45, 0, 0, time.UTC)),
 		Description: "Tactile push button switch",
 	},
 	{
@@ -112,7 +113,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       45.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 24, 13, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 24, 13, 0, 0, 0, time.UTC)),
 		Description: "OLED display module",
 	},
 	{
@@ -121,7 +122,7 @@ var mockItems = []Item{
 		Category:    "robotics",
 		Price:       24.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 25, 8, 30, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 25, 8, 30, 0, 0, time.UTC)),
 		Description: "DC motor for robotics projects",
 	},
 	{
@@ -130,7 +131,7 @@ var mockItems = []Item{
 		Category:    "robotics",
 		Price:       18.99,
 		InStock:     false,
-		CreatedAt:   time.Date(2024, 1, 26, 15, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 26, 15, 0, 0, 0, time.UTC)),
 		Description: "High-torque servo motor",
 	},
 	{
@@ -139,7 +140,7 @@ var mockItems = []Item{
 		Category:    "power",
 		Price:       14.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 27, 10, 15, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 27, 10, 15, 0, 0, time.UTC)),
 		Description: "Rechargeable lithium battery pack",
 	},
 	{
@@ -148,7 +149,7 @@ var mockItems = []Item{
 		Category:    "power",
 		Price:       22.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 28, 11, 45, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 28, 11, 45, 0, 0, time.UTC)),
 		Description: "Smart battery charger",
 	},
 	{
@@ -157,7 +158,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       7.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 29, 9, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 29, 9, 0, 0, 0, time.UTC)),
 		Description: "5V relay module",
 	},
 	{
@@ -166,7 +167,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       55.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 1, 30, 14, 30, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 1, 30, 14, 30, 0, 0, time.UTC)),
 		Description: "Microcontroller board",
 	},
 	{
@@ -175,7 +176,7 @@ var mockItems = []Item{
 		Category:    "components",
 		Price:       11.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 1, 8, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 1, 8, 0, 0, 0, time.UTC)),
 		Description: "Assorted resistor pack",
 	},
 	{
@@ -184,7 +185,7 @@ var mockItems = []Item{
 		Category:    "components",
 		Price:       13.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 2, 10, 30, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 2, 10, 30, 0, 0, time.UTC)),
 		Description: "Electrolytic capacitor assortment",
 	},
 	{
@@ -193,7 +194,7 @@ var mockItems = []Item{
 		Category:    "components",
 		Price:       6.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 3, 11, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 3, 11, 0, 0, 0, time.UTC)),
 		Description: "Multi-color LED assortment",
 	},
 	{
@@ -202,7 +203,7 @@ var mockItems = []Item{
 		Category:    "accessories",
 		Price:       8.99,
 		InStock:     false,
-		CreatedAt:   time.Date(2024, 2, 4, 9, 15, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 4, 9, 15, 0, 0, time.UTC)),
 		Description: "Jumper wire kit",
 	},
 	{
@@ -211,7 +212,7 @@ var mockItems = []Item{
 		Category:    "tools",
 		Price:       4.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 5, 13, 45, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 5, 13, 45, 0, 0, time.UTC)),
 		Description: "Solderless breadboard",
 	},
 	{
@@ -220,7 +221,7 @@ var mockItems = []Item{
 		Category:    "tools",
 		Price:       35.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 6, 10, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 6, 10, 0, 0, 0, time.UTC)),
 		Description: "Temperature-controlled soldering station",
 	},
 	{
@@ -229,7 +230,7 @@ var mockItems = []Item{
 		Category:    "tools",
 		Price:       42.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 7, 11, 30, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 7, 11, 30, 0, 0, time.UTC)),
 		Description: "Digital multimeter with auto-ranging",
 	},
 	{
@@ -238,7 +239,7 @@ var mockItems = []Item{
 		Category:    "tools",
 		Price:       299.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 8, 14, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 8, 14, 0, 0, 0, time.UTC)),
 		Description: "Portable digital oscilloscope",
 	},
 	{
@@ -247,7 +248,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       59.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 9, 8, 30, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 9, 8, 30, 0, 0, time.UTC)),
 		Description: "Professional-grade widget with extended features",
 	},
 	{
@@ -256,7 +257,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       79.99,
 		InStock:     false,
-		CreatedAt:   time.Date(2024, 2, 10, 9, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 10, 9, 0, 0, 0, time.UTC)),
 		Description: "Maximum performance gadget",
 	},
 	{
@@ -265,7 +266,7 @@ var mockItems = []Item{
 		Category:    "tools",
 		Price:       25.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 11, 10, 15, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 11, 10, 15, 0, 0, time.UTC)),
 		Description: "Enhanced precision tool",
 	},
 	{
@@ -274,7 +275,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       16.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 12, 11, 45, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 12, 11, 45, 0, 0, time.UTC)),
 		Description: "Ultra-reliable component",
 	},
 	{
@@ -283,7 +284,7 @@ var mockItems = []Item{
 		Category:    "electronics",
 		Price:       54.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 13, 13, 0, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 13, 13, 0, 0, 0, time.UTC)),
 		Description: "High-definition sensor array",
 	},
 	{
@@ -292,7 +293,7 @@ var mockItems = []Item{
 		Category:    "accessories",
 		Price:       19.99,
 		InStock:     true,
-		CreatedAt:   time.Date(2024, 2, 14, 15, 30, 0, 0, time.UTC),
+		CreatedAt:   common.NewTime(time.Date(2024, 2, 14, 15, 30, 0, 0, time.UTC)),
 		Description: "Gold-plated premium cable",
 	},
 }

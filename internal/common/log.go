@@ -2,6 +2,7 @@ package common
 
 import (
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -14,13 +15,18 @@ var (
 	loggerErr   error
 )
 
+// encodeTimeMicros formats timestamps as RFC 3339 with fixed microsecond precision.
+func encodeTimeMicros(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString(t.UTC().Format(RFC3339Micros))
+}
+
 // initLogger lazily constructs the shared zap logger instance.
 func initLogger() {
 	cfg := zap.NewProductionConfig()
 	cfg.OutputPaths = []string{"stdout"}
 	cfg.ErrorOutputPaths = []string{"stdout"}
 	cfg.EncoderConfig.TimeKey = "timestamp"
-	cfg.EncoderConfig.EncodeTime = zapcore.RFC3339NanoTimeEncoder
+	cfg.EncoderConfig.EncodeTime = encodeTimeMicros
 	cfg.EncoderConfig.LevelKey = "severity"
 	cfg.EncoderConfig.EncodeLevel = encodeSeverity
 	cfg.EncoderConfig.MessageKey = "message"

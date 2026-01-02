@@ -28,11 +28,13 @@ func Register(api huma.API) {
 Use plain structs with a `Body` field for the response payload:
 
 ```go
+import "github.com/janisto/huma-playground/internal/common"
+
 // ResourceData models the response payload.
 type ResourceData struct {
-    ID        string    `json:"id"        doc:"Unique identifier"   example:"res-001"`
-    Name      string    `json:"name"      doc:"Display name"        example:"My Resource"`
-    CreatedAt time.Time `json:"createdAt" doc:"Creation timestamp"  example:"2024-01-15T10:30:00Z"`
+    ID        string      `json:"id"        doc:"Unique identifier"   example:"res-001"`
+    Name      string      `json:"name"      doc:"Display name"        example:"My Resource"`
+    CreatedAt common.Time `json:"createdAt" doc:"Creation timestamp"  example:"2024-01-15T10:30:00.000Z"`
 }
 
 // ResourceOutput is the response wrapper.

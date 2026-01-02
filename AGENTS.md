@@ -375,7 +375,10 @@ Use Huma error helpers:
 
 ### Timestamps
 
-- Use ISO 8601 format with UTC timezone: `2024-01-15T10:30:00Z`
+- Use ISO 8601 / RFC 3339 format with UTC timezone and millisecond precision: `2024-01-15T10:30:00.000Z`
+- Use `common.Time` wrapper for JSON responses to ensure consistent `.000Z` output
+- Use `common.RFC3339Millis` constant for formatting: `time.Now().UTC().Format(common.RFC3339Millis)`
+- Go uses a reference time for format strings: `2006-01-02T15:04:05.000Z` (Jan 2, 2006 15:04:05)
 - Store and transmit in UTC; convert for display only
 
 ### Filtering & Sorting
