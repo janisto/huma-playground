@@ -13,7 +13,7 @@ func TestCursorEncodeDecodeRoundTrip(t *testing.T) {
 	}{
 		{"simple", Cursor{Type: "user", Value: "123"}},
 		{"with-uuid", Cursor{Type: "order", Value: "550e8400-e29b-41d4-a716-446655440000"}},
-		{"with-timestamp", Cursor{Type: "event", Value: "2024-01-15T10:30:00Z"}},
+		{"with-timestamp", Cursor{Type: "event", Value: "2024-01-15T10:30:00.000Z"}},
 		{"with-special-chars", Cursor{Type: "item", Value: "abc/def+ghi=jkl"}},
 		{"empty-value", Cursor{Type: "test", Value: ""}},
 	}
@@ -94,7 +94,7 @@ func TestCursorEmptyTypeNonEmptyValue(t *testing.T) {
 }
 
 func TestCursorWithColonInValue(t *testing.T) {
-	cursor := Cursor{Type: "item", Value: "2024-01-15T10:30:00Z"}
+	cursor := Cursor{Type: "item", Value: "2024-01-15T10:30:00.000Z"}
 	encoded := cursor.Encode()
 
 	decoded, err := DecodeCursor(encoded)
@@ -104,7 +104,7 @@ func TestCursorWithColonInValue(t *testing.T) {
 	if decoded.Type != "item" {
 		t.Errorf("type mismatch: got %q", decoded.Type)
 	}
-	if decoded.Value != "2024-01-15T10:30:00Z" {
+	if decoded.Value != "2024-01-15T10:30:00.000Z" {
 		t.Errorf("value mismatch: got %q", decoded.Value)
 	}
 }
