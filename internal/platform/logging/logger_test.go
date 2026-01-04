@@ -1,4 +1,4 @@
-package common
+package logging
 
 import (
 	"encoding/json"
@@ -11,6 +11,8 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/janisto/huma-playground/internal/platform/timeutil"
 )
 
 // captureLogOutput captures a single log entry emitted by logFn and returns it as a map.
@@ -90,7 +92,7 @@ func TestLoggerStructuredOutput(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected timestamp field to be a string, got %T", payload["timestamp"])
 	}
-	if _, err := time.Parse(RFC3339Micros, ts); err != nil {
+	if _, err := time.Parse(timeutil.RFC3339Micros, ts); err != nil {
 		t.Fatalf("timestamp is not RFC3339Micros: %v", err)
 	}
 }
@@ -209,8 +211,8 @@ func TestLoggerIncludesCallerField(t *testing.T) {
 		t.Fatal("expected caller field to be a string")
 	}
 
-	if !strings.Contains(caller, "log_test.go") {
-		t.Fatalf("expected caller to reference log_test.go, got %s", caller)
+	if !strings.Contains(caller, "logger_test.go") {
+		t.Fatalf("expected caller to reference logger_test.go, got %s", caller)
 	}
 }
 
@@ -708,7 +710,7 @@ func TestTimestampAlwaysUTC(t *testing.T) {
 		t.Fatalf("expected UTC timestamp ending with Z, got %q", ts)
 	}
 
-	parsed, err := time.Parse(RFC3339Micros, ts)
+	parsed, err := time.Parse(timeutil.RFC3339Micros, ts)
 	if err != nil {
 		t.Fatalf("failed to parse timestamp: %v", err)
 	}

@@ -14,7 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	appmiddleware "github.com/janisto/huma-playground/internal/middleware"
+	applog "github.com/janisto/huma-playground/internal/platform/logging"
 )
 
 // problemWithSchema wraps huma.ErrorModel to include the $schema field.
@@ -271,7 +271,7 @@ func Recoverer() func(http.Handler) http.Handler {
 					}
 
 					stack := debug.Stack()
-					appmiddleware.LogError(r.Context(), "panic recovered",
+					applog.LogError(r.Context(), "panic recovered",
 						fmt.Errorf("%v", rec),
 						zap.ByteString("stack", stack),
 					)

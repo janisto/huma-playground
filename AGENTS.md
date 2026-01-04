@@ -97,8 +97,8 @@ go run ./cmd/server
 
 The server starts on port 8080 with endpoints:
 - `http://localhost:8080/health` - health probe
-- `http://localhost:8080/api-docs` - interactive API explorer
-- `http://localhost:8080/openapi.json` - OpenAPI schema
+- `http://localhost:8080/v1/api-docs` - interactive API explorer
+- `http://localhost:8080/v1/openapi` - OpenAPI schema
 
 ---
 
@@ -158,13 +158,47 @@ golangci-lint run --fix ./...
 ## Project Structure
 
 ```
-cmd/server/           # Application entrypoint and HTTP server bootstrap
-internal/common/      # Shared logger construction
-internal/middleware/  # Security headers, CORS, request ID, logging middleware and context helpers
-internal/pagination/  # Cursor-based pagination (Cursor, Params, Link headers)
-internal/respond/     # Panic recovery and Problem Details error handlers
-internal/routes/      # Route registration grouped by domain
+cmd/server/            # Application entrypoint and HTTP server bootstrap
+internal/http/         # HTTP transport layer
+  health/              # Health check handler (unversioned)
+  v1/                  # Versioned API (v1)
+    hello/             # Hello endpoint handlers
+    items/             # Items endpoint handlers
+    routes/            # Route registration
+internal/platform/     # Cross-cutting infrastructure
+  logging/             # Structured logging with Zap
+  middleware/          # Security headers, CORS, request ID
+  pagination/          # Cursor-based pagination
+  respond/             # Panic recovery and Problem Details
+  timeutil/            # Time formatting utilities
 ```
+
+---
+
+## Architecture Principles
+
+### Platform Layer
+
+The `internal/platform/` packages provide shared infrastructure used by HTTP handlers. These packages are organized by concern rather than transport:
+
+| Package | Purpose | Dependencies |
+|---------|---------|--------------|
+| `logging` | Structured logging, request-scoped context, trace correlation | Zap, Chi (for HTTP middleware) |
+| `middleware` | HTTP middleware (CORS, security headers, request ID, vary) | Chi, go-chi/cors |
+| `pagination` | Cursor encoding/decoding, link header generation | Standard library only |
+| `respond` | Panic recovery, Problem Details error responses | Chi, Huma (for error types) |
+| `timeutil` | Time formatting constants | Standard library only |
+
+**Truly transport-agnostic packages:**
+- `pagination` - Cursor logic works for any transport
+- `timeutil` - Time formatting has no transport coupling
+
+**HTTP-coupled packages (by design):**
+- `logging` - HTTP middleware for request logging; core helpers (`LogInfo`, `LogError`) are transport-agnostic
+- `middleware` - HTTP-specific (CORS, headers, request ID)
+- `respond` - HTTP error handling with RFC 9457 Problem Details
+
+**Key rule:** Platform packages must not import from `internal/http/` (no circular dependencies). HTTP handlers import platform packages, never the reverse.
 
 ---
 
@@ -175,13 +209,13 @@ internal/routes/      # Route registration grouped by domain
 Responses use plain structs; no custom envelope wrapper:
 
 ```go
-type HealthOutput struct {
-    Body HealthData
+type GetOutput struct {
+    Body Data
 }
 
-func registerHealth(api huma.API) {
-    huma.Get(api, "/health", func(ctx context.Context, _ *struct{}) (*HealthOutput, error) {
-        return &HealthOutput{Body: HealthData{Message: "healthy"}}, nil
+func Register(api huma.API) {
+    huma.Get(api, "/hello", func(ctx context.Context, _ *struct{}) (*GetOutput, error) {
+        return &GetOutput{Body: Data{Message: "Hello, World!"}}, nil
     })
 }
 ```
@@ -203,24 +237,26 @@ huma.Error500InternalServerError("internal error")
 huma.NewError(http.StatusTeapot, "custom message")
 ```
 
-Panic recovery and Chi-level handlers use Problem Details via `internal/respond`.
+Panic recovery and Chi-level handlers use Problem Details via `internal/platform/respond`.
 
 ### Logging
 
-Use context-aware logging helpers from `internal/middleware`:
+Use context-aware logging helpers from `internal/platform/logging`:
 
 ```go
-appmiddleware.LogInfo(ctx, "message", zap.String("key", "value"))
-appmiddleware.LogWarn(ctx, "message", zap.String("key", "value"))
-appmiddleware.LogError(ctx, "message", err, zap.String("key", "value"))
-appmiddleware.LogFatal(ctx, "message", err, zap.String("key", "value"))
+import applog "github.com/janisto/huma-playground/internal/platform/logging"
+
+applog.LogInfo(ctx, "message", zap.String("key", "value"))
+applog.LogWarn(ctx, "message", zap.String("key", "value"))
+applog.LogError(ctx, "message", err, zap.String("key", "value"))
+applog.LogFatal(ctx, "message", err, zap.String("key", "value"))
 ```
 
 These helpers preserve contextual fields such as trace IDs.
 
 ### Adding New Routes
 
-1. Create a new file under `internal/routes` (e.g., `users.go`)
+1. Create a new file under `internal/http/v1` (e.g., `users/handler.go`)
 2. Define output struct with `Body` field for the response payload
 3. Add a registration function and call it from `routes.Register`
 4. Log within handlers using context-aware helpers
@@ -376,8 +412,8 @@ Use Huma error helpers:
 ### Timestamps
 
 - Use ISO 8601 / RFC 3339 format with UTC timezone and millisecond precision: `2024-01-15T10:30:00.000Z`
-- Use `common.Time` wrapper for JSON responses to ensure consistent `.000Z` output
-- Use `common.RFC3339Millis` constant for formatting: `time.Now().UTC().Format(common.RFC3339Millis)`
+- Use `timeutil.Time` wrapper for JSON responses to ensure consistent `.000Z` output
+- Use `timeutil.RFC3339Millis` constant for formatting: `time.Now().UTC().Format(timeutil.RFC3339Millis)`
 - Go uses a reference time for format strings: `2006-01-02T15:04:05.000Z` (Jan 2, 2006 15:04:05)
 - Store and transmit in UTC; convert for display only
 
@@ -393,6 +429,7 @@ Use cursor-based pagination via `internal/pagination`. Invalid cursors must retu
 
 ```go
 // Input struct with pagination params
+// pagination.Params provides Cursor and Limit (default 20, max 100)
 type ListInput struct {
     pagination.Params
     Filter string `query:"filter"`
@@ -441,18 +478,23 @@ Links provided via HTTP `Link` header per RFC 8288.
 ### Test Pattern
 
 ```go
+import (
+    applog "github.com/janisto/huma-playground/internal/platform/logging"
+    appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
+)
+
 func TestMyFeature(t *testing.T) {
     router := chi.NewRouter()
     router.Use(
         appmiddleware.RequestID(),
         chimiddleware.RealIP,
-        appmiddleware.RequestLogger(),
+        applog.RequestLogger(),
         respond.Recoverer(),
     )
     api := humachi.New(router, huma.DefaultConfig("Test", "test"))
     routes.Register(api)
 
-    req := httptest.NewRequest(http.MethodGet, "/health", nil)
+    req := httptest.NewRequest(http.MethodGet, "/hello", nil)
     req.Header.Set(chimiddleware.RequestIDHeader, "test-trace-id")
     resp := httptest.NewRecorder()
     router.ServeHTTP(resp, req)
@@ -461,12 +503,12 @@ func TestMyFeature(t *testing.T) {
         t.Fatalf("expected 200 OK, got %d", resp.Code)
     }
 
-    var health routes.HealthData
-    if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+    var data hello.Data
+    if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
         t.Fatalf("failed to decode response: %v", err)
     }
-    if health.Message != "healthy" {
-        t.Fatalf("unexpected message: %s", health.Message)
+    if data.Message != "Hello, World!" {
+        t.Fatalf("unexpected message: %s", data.Message)
     }
 }
 ```

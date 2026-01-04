@@ -17,9 +17,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
-	appmiddleware "github.com/janisto/huma-playground/internal/middleware"
-	"github.com/janisto/huma-playground/internal/respond"
-	"github.com/janisto/huma-playground/internal/routes"
+	"github.com/janisto/huma-playground/internal/http/health"
+	"github.com/janisto/huma-playground/internal/http/v1/routes"
+	applog "github.com/janisto/huma-playground/internal/platform/logging"
+	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
+	"github.com/janisto/huma-playground/internal/platform/respond"
 )
 
 func testServer() http.Handler {
@@ -29,18 +31,30 @@ func testServer() http.Handler {
 	router.Use(
 		appmiddleware.RequestID(),
 		chimiddleware.RealIP,
-		appmiddleware.RequestLogger(),
+		applog.RequestLogger(),
 		respond.Recoverer(),
 	)
+
+	// Root-level endpoints
+	router.Get("/health", health.Handler)
 	router.Get("/redirect", func(w http.ResponseWriter, r *http.Request) {
 		respond.WriteRedirect(w, r, "/health", http.StatusMovedPermanently)
 	})
-	cfg := huma.DefaultConfig("Huma Playground API", "test")
-	api := humachi.New(router, cfg)
-	routes.Register(api)
-	huma.Get(api, "/panic", func(ctx context.Context, _ *struct{}) (*struct{}, error) {
-		panic("boom")
+
+	// Versioned API
+	router.Route("/v1", func(r chi.Router) {
+		cfg := huma.DefaultConfig("Huma Playground API", "test")
+		cfg.DocsPath = ""
+		cfg.Servers = []*huma.Server{
+			{URL: "/v1"},
+		}
+		api := humachi.New(r, cfg)
+		routes.Register(api)
+		huma.Get(api, "/panic", func(ctx context.Context, _ *struct{}) (*struct{}, error) {
+			panic("boom")
+		})
 	})
+
 	return router
 }
 
@@ -56,13 +70,13 @@ func TestHealth(t *testing.T) {
 		t.Fatalf("expected status 200 got %d", resp.Code)
 	}
 
-	var health routes.HealthData
-	if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+	var h health.Response
+	if err := json.Unmarshal(resp.Body.Bytes(), &h); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	if health.Message != "healthy" {
-		t.Fatalf("expected message 'healthy', got %s", health.Message)
+	if h.Status != "healthy" {
+		t.Fatalf("expected status 'healthy', got %s", h.Status)
 	}
 }
 
@@ -129,7 +143,7 @@ func TestMethodNotAllowedReturnsProblemDetails(t *testing.T) {
 
 func TestRecovererReturnsProblemDetails(t *testing.T) {
 	srv := testServer()
-	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/panic", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "test-500-req")
 	resp := httptest.NewRecorder()
 	srv.ServeHTTP(resp, req)
@@ -179,22 +193,20 @@ func TestFallbackToJSONForUnknownAccept(t *testing.T) {
 	resp := httptest.NewRecorder()
 	srv.ServeHTTP(resp, req)
 
-	// With NoFormatFallback disabled (default), Huma falls back to JSON
-	// when Accept header cannot be satisfied. This is permitted by RFC 9110
-	// section 12.4.1 which allows servers to disregard Accept preferences.
+	// Health endpoint always returns JSON since it's a plain HTTP handler
 	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK with JSON fallback, got %d", resp.Code)
+		t.Fatalf("expected 200 OK, got %d", resp.Code)
 	}
 	if ct := resp.Header().Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("expected application/json content type, got %q", ct)
 	}
 
-	var health routes.HealthData
-	if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+	var h health.Response
+	if err := json.Unmarshal(resp.Body.Bytes(), &h); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
-	if health.Message != "healthy" {
-		t.Fatalf("expected message 'healthy', got %s", health.Message)
+	if h.Status != "healthy" {
+		t.Fatalf("expected status 'healthy', got %s", h.Status)
 	}
 }
 
@@ -226,12 +238,12 @@ func TestWildcardAcceptReturnsJSON(t *testing.T) {
 				t.Fatalf("expected application/json, got %q", ct)
 			}
 
-			var health routes.HealthData
-			if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+			var h health.Response
+			if err := json.Unmarshal(resp.Body.Bytes(), &h); err != nil {
 				t.Fatalf("failed to unmarshal response: %v", err)
 			}
-			if health.Message != "healthy" {
-				t.Fatalf("expected message 'healthy', got %s", health.Message)
+			if h.Status != "healthy" {
+				t.Fatalf("expected status 'healthy', got %s", h.Status)
 			}
 		})
 	}
@@ -302,7 +314,8 @@ func TestServerShutdownOnSignal(t *testing.T) {
 	started := make(chan struct{})
 
 	go func() {
-		ln, err := net.Listen("tcp", srv.Addr)
+		var lc net.ListenConfig
+		ln, err := lc.Listen(context.Background(), "tcp", srv.Addr)
 		if err != nil {
 			listenErr <- err
 			return
@@ -482,7 +495,7 @@ func TestVersionVariable(t *testing.T) {
 
 func TestCBORAcceptHeader(t *testing.T) {
 	srv := testServer()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/hello", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "test-cbor-req")
 	req.Header.Set("Accept", "application/cbor")
 	resp := httptest.NewRecorder()

@@ -11,30 +11,31 @@ For comprehensive coding guidelines, see `AGENTS.md` in the repository root.
 
 ## Router Setup
 
-Create route handlers in `internal/routes/` and register them in `routes.go`:
+Create route handlers in `internal/http/v1/` and register them in `routes.go`:
 
 ```go
-// internal/routes/routes.go
+// internal/http/v1/routes/routes.go
 func Register(api huma.API) {
-    registerHealth(api)
-    registerHello(api)
-    registerItems(api)
-    registerResource(api) // Add new routes here
+    hello.Register(api)
+    items.Register(api)
+    // Add new routes here
 }
 ```
+
+Note: The health endpoint is a plain HTTP handler registered at the root level in `main.go`, not via Huma.
 
 ## Output Struct Pattern
 
 Use plain structs with a `Body` field for the response payload:
 
 ```go
-import "github.com/janisto/huma-playground/internal/common"
+import "github.com/janisto/huma-playground/internal/platform/timeutil"
 
 // ResourceData models the response payload.
 type ResourceData struct {
     ID        string      `json:"id"        doc:"Unique identifier"   example:"res-001"`
     Name      string      `json:"name"      doc:"Display name"        example:"My Resource"`
-    CreatedAt common.Time `json:"createdAt" doc:"Creation timestamp"  example:"2024-01-15T10:30:00.000Z"`
+    CreatedAt timeutil.Time `json:"createdAt" doc:"Creation timestamp"  example:"2024-01-15T10:30:00.000Z"`
 }
 
 // ResourceOutput is the response wrapper.
@@ -179,14 +180,14 @@ Use context-aware logging helpers:
 ```go
 import (
     "go.uber.org/zap"
-    appmiddleware "github.com/janisto/huma-playground/internal/middleware"
+    applog "github.com/janisto/huma-playground/internal/platform/logging"
 )
 
 func handler(ctx context.Context, input *Input) (*Output, error) {
-    appmiddleware.LogInfo(ctx, "processing request", zap.String("id", input.ID))
+    applog.LogInfo(ctx, "processing request", zap.String("id", input.ID))
 
     if err != nil {
-        appmiddleware.LogError(ctx, "operation failed", err, zap.String("id", input.ID))
+        applog.LogError(ctx, "operation failed", err, zap.String("id", input.ID))
         return nil, huma.Error500InternalServerError("operation failed")
     }
 

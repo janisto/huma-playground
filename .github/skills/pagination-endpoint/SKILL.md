@@ -16,7 +16,7 @@ The project uses cursor-based pagination via `internal/pagination`:
 - `pagination.Params` - Embeddable query parameters (cursor, limit)
 - `pagination.Cursor` - Decoded cursor with type and value
 - `pagination.Paginate` - Generic pagination helper
-- `pagination.DecodeCursor` / `EncodeCursor` - Cursor encoding
+- `pagination.DecodeCursor` / `Cursor.Encode()` - Cursor encoding/decoding
 
 ## Input Struct Pattern
 
@@ -32,7 +32,7 @@ type ListResourcesInput struct {
 
 `pagination.Params` provides:
 - `Cursor string` - Opaque pagination cursor
-- `Limit int` - Items per page (default 10, max 100)
+- `Limit int` - Items per page (default 20, max 100)
 - `DefaultLimit()` - Returns limit with default applied
 
 ## Output Struct Pattern
@@ -270,10 +270,10 @@ func TestListResources_CursorTypeMismatch(t *testing.T) {
     router := setupTestRouter()
 
     // Create a cursor with wrong type
-    wrongCursor := pagination.EncodeCursor(pagination.Cursor{
+    wrongCursor := pagination.Cursor{
         Type:  "other-type",
         Value: "item-001",
-    })
+    }.Encode()
 
     req := httptest.NewRequest(http.MethodGet, "/resources?cursor="+wrongCursor, nil)
     resp := httptest.NewRecorder()
@@ -287,4 +287,4 @@ func TestListResources_CursorTypeMismatch(t *testing.T) {
 
 ## Complete Example
 
-See [internal/routes/items.go](internal/routes/items.go) for a complete implementation.
+See [internal/http/v1/items/handler.go](internal/http/v1/items/handler.go) for a complete implementation.

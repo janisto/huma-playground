@@ -15,14 +15,18 @@ Tests are colocated with source files using `_test.go` suffix:
 
 ```
 internal/
-    routes/
-        routes.go
-        routes_test.go
-        items.go
-        items_test.go
-    middleware/
-        logging.go
-        logging_test.go
+    http/
+        v1/
+            routes/
+                routes.go
+                routes_test.go
+            items/
+                handler.go
+                handler_test.go
+    platform/
+        logging/
+            middleware.go
+            middleware_test.go
 ```
 
 ## Test Server Setup
@@ -43,9 +47,11 @@ import (
     "github.com/go-chi/chi/v5"
     chimiddleware "github.com/go-chi/chi/v5/middleware"
 
-    appmiddleware "github.com/janisto/huma-playground/internal/middleware"
-    "github.com/janisto/huma-playground/internal/respond"
-    "github.com/janisto/huma-playground/internal/routes"
+    "github.com/janisto/huma-playground/internal/http/health"
+    "github.com/janisto/huma-playground/internal/http/v1/routes"
+    applog "github.com/janisto/huma-playground/internal/platform/logging"
+    appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
+    "github.com/janisto/huma-playground/internal/platform/respond"
 )
 
 func setupTestRouter() *chi.Mux {
@@ -53,11 +59,18 @@ func setupTestRouter() *chi.Mux {
     router.Use(
         appmiddleware.RequestID(),
         chimiddleware.RealIP,
-        appmiddleware.RequestLogger(),
+        applog.RequestLogger(),
         respond.Recoverer(),
     )
-    api := humachi.New(router, huma.DefaultConfig("Test", "test"))
-    routes.Register(api)
+
+    // Root-level endpoints (unversioned)
+    router.Get("/health", health.Handler)
+
+    // Versioned API
+    router.Route("/v1", func(r chi.Router) {
+        api := humachi.New(r, huma.DefaultConfig("Test", "test"))
+        routes.Register(api)
+    })
     return router
 }
 ```
@@ -78,12 +91,12 @@ func TestHealthEndpoint(t *testing.T) {
         t.Fatalf("expected 200, got %d", resp.Code)
     }
 
-    var body routes.HealthData
+    var body health.Response
     if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
         t.Fatalf("failed to decode response: %v", err)
     }
-    if body.Message != "healthy" {
-        t.Fatalf("unexpected message: %s", body.Message)
+    if body.Status != "healthy" {
+        t.Fatalf("unexpected status: %s", body.Status)
     }
 }
 ```
@@ -125,7 +138,7 @@ func TestCreateResource(t *testing.T) {
     router := setupTestRouter()
 
     body := `{"name": "Test Resource"}`
-    req := httptest.NewRequest(http.MethodPost, "/resources", strings.NewReader(body))
+    req := httptest.NewRequest(http.MethodPost, "/v1/resources", strings.NewReader(body))
     req.Header.Set("Content-Type", "application/json")
     resp := httptest.NewRecorder()
 
@@ -149,7 +162,7 @@ func TestValidationReturns422(t *testing.T) {
     router := setupTestRouter()
 
     body := `{"name": ""}` // Empty name should fail validation
-    req := httptest.NewRequest(http.MethodPost, "/resources", strings.NewReader(body))
+    req := httptest.NewRequest(http.MethodPost, "/v1/resources", strings.NewReader(body))
     req.Header.Set("Content-Type", "application/json")
     resp := httptest.NewRecorder()
 
@@ -183,7 +196,7 @@ func TestListItems(t *testing.T) {
         wantStatus int
         wantItems  int
     }{
-        {"default limit", "", http.StatusOK, 10},
+        {"default limit", "", http.StatusOK, 20},
         {"custom limit", "?limit=5", http.StatusOK, 5},
         {"filter category", "?category=electronics", http.StatusOK, 10},
         {"invalid cursor", "?cursor=invalid", http.StatusBadRequest, 0},
@@ -191,7 +204,7 @@ func TestListItems(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            req := httptest.NewRequest(http.MethodGet, "/items"+tt.query, nil)
+            req := httptest.NewRequest(http.MethodGet, "/v1/items"+tt.query, nil)
             resp := httptest.NewRecorder()
 
             router.ServeHTTP(resp, req)
@@ -212,7 +225,7 @@ For paginated endpoints:
 func TestPaginationLinkHeader(t *testing.T) {
     router := setupTestRouter()
 
-    req := httptest.NewRequest(http.MethodGet, "/items?limit=5", nil)
+    req := httptest.NewRequest(http.MethodGet, "/v1/items?limit=5", nil)
     resp := httptest.NewRecorder()
 
     router.ServeHTTP(resp, req)

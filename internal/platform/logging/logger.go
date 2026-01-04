@@ -1,4 +1,4 @@
-package common
+package logging
 
 import (
 	"sync"
@@ -6,6 +6,8 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/janisto/huma-playground/internal/platform/timeutil"
 )
 
 var (
@@ -17,7 +19,7 @@ var (
 
 // encodeTimeMicros formats timestamps as RFC 3339 with fixed microsecond precision.
 func encodeTimeMicros(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
-	enc.AppendString(t.UTC().Format(RFC3339Micros))
+	enc.AppendString(t.UTC().Format(timeutil.RFC3339Micros))
 }
 
 // initLogger lazily constructs the shared zap logger instance.
