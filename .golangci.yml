@@ -10,9 +10,12 @@ linters:
     - gosec
     - govet
     - ineffassign
+    - intrange
     - misspell
     - modernize
     - nilerr
+    - noctx
+    - perfsprint
     - staticcheck
     - unconvert
     - unparam

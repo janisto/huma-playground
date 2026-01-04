@@ -11,13 +11,13 @@ Perform a comprehensive security review of this Huma/Chi REST API following OWAS
 
 Before analysis, read these files:
 1. `cmd/server/main.go` - Application setup, middleware, and CORS configuration
-2. `internal/middleware/cors.go` - CORS configuration
-3. `internal/middleware/security.go` - Security headers middleware
-4. `internal/middleware/requestid.go` - Request ID middleware
-5. `internal/middleware/logging.go` - Request logging middleware
-6. `internal/respond/respond.go` - Error handling and panic recovery
-7. All files in `internal/routes/` - Endpoint definitions
-8. `internal/common/log.go` - Logger configuration
+2. `internal/platform/middleware/cors.go` - CORS configuration
+3. `internal/platform/middleware/security.go` - Security headers middleware
+4. `internal/platform/middleware/requestid.go` - Request ID middleware
+5. `internal/platform/logging/middleware.go` - Request logging middleware
+6. `internal/platform/respond/respond.go` - Error handling and panic recovery
+7. All files in `internal/http/v1/` - Endpoint definitions
+8. `internal/platform/logging/logger.go` - Logger configuration
 
 ## Security Review Checklist
 

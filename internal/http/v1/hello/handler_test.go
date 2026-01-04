@@ -1,4 +1,4 @@
-package routes
+package hello
 
 import (
 	"bytes"
@@ -15,89 +15,25 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
-	appmiddleware "github.com/janisto/huma-playground/internal/middleware"
-	"github.com/janisto/huma-playground/internal/respond"
+	applog "github.com/janisto/huma-playground/internal/platform/logging"
+	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
+	"github.com/janisto/huma-playground/internal/platform/respond"
 )
-
-func TestRegisterHealthRoute(t *testing.T) {
-	router := chi.NewRouter()
-	router.Use(
-		appmiddleware.RequestID(),
-		chimiddleware.RealIP,
-		appmiddleware.RequestLogger(),
-		respond.Recoverer(),
-	)
-
-	api := humachi.New(router, huma.DefaultConfig("RoutesTest", "test"))
-	Register(api)
-
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "routes-test-trace")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d", resp.Code)
-	}
-
-	var health HealthData
-	if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if health.Message != "healthy" {
-		t.Fatalf("unexpected message: %s", health.Message)
-	}
-}
-
-func TestHealthCBOR(t *testing.T) {
-	router := chi.NewRouter()
-	router.Use(
-		appmiddleware.RequestID(),
-		chimiddleware.RealIP,
-		appmiddleware.RequestLogger(),
-		respond.Recoverer(),
-	)
-
-	api := humachi.New(router, huma.DefaultConfig("RoutesTest", "test"))
-	Register(api)
-
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	req.Header.Set("Accept", "application/cbor")
-	req.Header.Set(chimiddleware.RequestIDHeader, "cbor-test-trace")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.Code)
-	}
-	if ct := resp.Header().Get("Content-Type"); ct != "application/cbor" {
-		t.Errorf("expected application/cbor, got %s", ct)
-	}
-
-	var health HealthData
-	if err := cbor.Unmarshal(resp.Body.Bytes(), &health); err != nil {
-		t.Fatalf("cbor unmarshal: %v", err)
-	}
-	if health.Message != "healthy" {
-		t.Errorf("expected healthy, got %s", health.Message)
-	}
-}
 
 func newTestRouter() chi.Router {
 	router := chi.NewRouter()
 	router.Use(
 		appmiddleware.RequestID(),
 		chimiddleware.RealIP,
-		appmiddleware.RequestLogger(),
+		applog.RequestLogger(),
 		respond.Recoverer(),
 	)
-	api := humachi.New(router, huma.DefaultConfig("RoutesTest", "test"))
+	api := humachi.New(router, huma.DefaultConfig("HelloTest", "test"))
 	Register(api)
 	return router
 }
 
-func TestHelloGetJSON(t *testing.T) {
+func TestGetJSON(t *testing.T) {
 	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
@@ -112,7 +48,7 @@ func TestHelloGetJSON(t *testing.T) {
 		t.Errorf("expected application/json, got %s", ct)
 	}
 
-	var hello HelloData
+	var hello Data
 	if err := json.Unmarshal(resp.Body.Bytes(), &hello); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -121,7 +57,7 @@ func TestHelloGetJSON(t *testing.T) {
 	}
 }
 
-func TestHelloGetCBOR(t *testing.T) {
+func TestGetCBOR(t *testing.T) {
 	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
@@ -137,7 +73,7 @@ func TestHelloGetCBOR(t *testing.T) {
 		t.Errorf("expected application/cbor, got %s", ct)
 	}
 
-	var hello HelloData
+	var hello Data
 	if err := cbor.Unmarshal(resp.Body.Bytes(), &hello); err != nil {
 		t.Fatalf("cbor unmarshal: %v", err)
 	}
@@ -146,7 +82,7 @@ func TestHelloGetCBOR(t *testing.T) {
 	}
 }
 
-func TestHelloPostJSONSuccess(t *testing.T) {
+func TestPostJSONSuccess(t *testing.T) {
 	router := newTestRouter()
 
 	body := `{"name":"Test"}`
@@ -163,7 +99,7 @@ func TestHelloPostJSONSuccess(t *testing.T) {
 		t.Errorf("expected application/json, got %s", ct)
 	}
 
-	var hello HelloData
+	var hello Data
 	if err := json.Unmarshal(resp.Body.Bytes(), &hello); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -172,7 +108,7 @@ func TestHelloPostJSONSuccess(t *testing.T) {
 	}
 }
 
-func TestHelloPostCBORSuccess(t *testing.T) {
+func TestPostCBORSuccess(t *testing.T) {
 	router := newTestRouter()
 
 	cborBody, err := cbor.Marshal(map[string]string{"name": "CBOR"})
@@ -193,7 +129,7 @@ func TestHelloPostCBORSuccess(t *testing.T) {
 		t.Errorf("expected application/cbor, got %s", ct)
 	}
 
-	var hello HelloData
+	var hello Data
 	if err := cbor.Unmarshal(resp.Body.Bytes(), &hello); err != nil {
 		t.Fatalf("cbor unmarshal: %v", err)
 	}
@@ -202,7 +138,7 @@ func TestHelloPostCBORSuccess(t *testing.T) {
 	}
 }
 
-func TestHelloPostJSONValidationErrorDefaultsToJSON(t *testing.T) {
+func TestPostJSONValidationErrorDefaultsToJSON(t *testing.T) {
 	router := newTestRouter()
 
 	body := `{"name":""}`
@@ -231,7 +167,7 @@ func TestHelloPostJSONValidationErrorDefaultsToJSON(t *testing.T) {
 	}
 }
 
-func TestHelloPostJSONValidationErrorWithCBORAccept(t *testing.T) {
+func TestPostJSONValidationErrorWithCBORAccept(t *testing.T) {
 	router := newTestRouter()
 
 	body := `{"name":""}`
@@ -258,7 +194,7 @@ func TestHelloPostJSONValidationErrorWithCBORAccept(t *testing.T) {
 	}
 }
 
-func TestHelloPostCBORValidationErrorDefaultsToJSON(t *testing.T) {
+func TestPostCBORValidationErrorDefaultsToJSON(t *testing.T) {
 	router := newTestRouter()
 
 	cborBody, err := cbor.Marshal(map[string]string{"name": ""})
@@ -287,7 +223,7 @@ func TestHelloPostCBORValidationErrorDefaultsToJSON(t *testing.T) {
 	}
 }
 
-func TestHelloPostCBORValidationErrorWithCBORAccept(t *testing.T) {
+func TestPostCBORValidationErrorWithCBORAccept(t *testing.T) {
 	router := newTestRouter()
 
 	cborBody, err := cbor.Marshal(map[string]string{"name": ""})

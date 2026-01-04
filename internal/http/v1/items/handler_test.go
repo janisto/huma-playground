@@ -1,4 +1,4 @@
-package routes
+package items
 
 import (
 	"encoding/json"
@@ -14,17 +14,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
-	appmiddleware "github.com/janisto/huma-playground/internal/middleware"
-	"github.com/janisto/huma-playground/internal/pagination"
-	"github.com/janisto/huma-playground/internal/respond"
+	applog "github.com/janisto/huma-playground/internal/platform/logging"
+	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
+	"github.com/janisto/huma-playground/internal/platform/pagination"
+	"github.com/janisto/huma-playground/internal/platform/respond"
 )
 
-func newItemsTestRouter() chi.Router {
+func newTestRouter() chi.Router {
 	router := chi.NewRouter()
 	router.Use(
 		appmiddleware.RequestID(),
 		chimiddleware.RealIP,
-		appmiddleware.RequestLogger(),
+		applog.RequestLogger(),
 		respond.Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("ItemsTest", "test"))
@@ -32,8 +33,8 @@ func newItemsTestRouter() chi.Router {
 	return router
 }
 
-func TestItemsListFirstPage(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListFirstPage(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-first-page")
@@ -44,7 +45,7 @@ func TestItemsListFirstPage(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -68,8 +69,8 @@ func TestItemsListFirstPage(t *testing.T) {
 	}
 }
 
-func TestItemsListWithLimit(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListWithLimit(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?limit=5", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-limit-5")
@@ -80,7 +81,7 @@ func TestItemsListWithLimit(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -95,8 +96,8 @@ func TestItemsListWithLimit(t *testing.T) {
 	}
 }
 
-func TestItemsListMiddlePage(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListMiddlePage(t *testing.T) {
+	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "item-010"}.Encode()
 	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
@@ -108,7 +109,7 @@ func TestItemsListMiddlePage(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -129,8 +130,8 @@ func TestItemsListMiddlePage(t *testing.T) {
 	}
 }
 
-func TestItemsListLastPage(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListLastPage(t *testing.T) {
+	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "item-025"}.Encode()
 	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor+"&limit=10", nil)
@@ -142,7 +143,7 @@ func TestItemsListLastPage(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -163,8 +164,8 @@ func TestItemsListLastPage(t *testing.T) {
 	}
 }
 
-func TestItemsListWithCategoryFilter(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListWithCategoryFilter(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?category=tools", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-category-filter")
@@ -175,7 +176,7 @@ func TestItemsListWithCategoryFilter(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -191,8 +192,8 @@ func TestItemsListWithCategoryFilter(t *testing.T) {
 	}
 }
 
-func TestItemsListCategoryPreservedInLink(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListCategoryPreservedInLink(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?category=electronics&limit=5", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-category-link")
@@ -209,8 +210,8 @@ func TestItemsListCategoryPreservedInLink(t *testing.T) {
 	}
 }
 
-func TestItemsListInvalidCursor(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListInvalidCursor(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?cursor=invalid!!!", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-invalid-cursor")
@@ -231,8 +232,8 @@ func TestItemsListInvalidCursor(t *testing.T) {
 	}
 }
 
-func TestItemsListCursorTypeMismatch(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListCursorTypeMismatch(t *testing.T) {
+	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "wrongtype", Value: "item-001"}.Encode()
 	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor, nil)
@@ -254,8 +255,8 @@ func TestItemsListCursorTypeMismatch(t *testing.T) {
 	}
 }
 
-func TestItemsListCursorUnknownItem(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListCursorUnknownItem(t *testing.T) {
+	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "nonexistent"}.Encode()
 	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor, nil)
@@ -277,8 +278,8 @@ func TestItemsListCursorUnknownItem(t *testing.T) {
 	}
 }
 
-func TestItemsListCBOR(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListCBOR(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?limit=3", nil)
 	req.Header.Set("Accept", "application/cbor")
@@ -294,7 +295,7 @@ func TestItemsListCBOR(t *testing.T) {
 		t.Errorf("expected application/cbor, got %s", ct)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := cbor.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("cbor unmarshal: %v", err)
 	}
@@ -304,8 +305,8 @@ func TestItemsListCBOR(t *testing.T) {
 	}
 }
 
-func TestItemsListInvalidCategory(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListInvalidCategory(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?category=nonexistent", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-invalid-category")
@@ -326,8 +327,8 @@ func TestItemsListInvalidCategory(t *testing.T) {
 	}
 }
 
-func TestItemsListPaginationRoundTrip(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListPaginationRoundTrip(t *testing.T) {
+	router := newTestRouter()
 	collectedIDs := make(map[string]bool)
 	limit := 7
 
@@ -340,7 +341,7 @@ func TestItemsListPaginationRoundTrip(t *testing.T) {
 		t.Fatalf("first page: expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -392,8 +393,8 @@ func TestItemsListPaginationRoundTrip(t *testing.T) {
 	}
 }
 
-func TestItemsListValidateLimitRange(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListValidateLimitRange(t *testing.T) {
+	router := newTestRouter()
 
 	tests := []struct {
 		name     string
@@ -421,8 +422,8 @@ func TestItemsListValidateLimitRange(t *testing.T) {
 	}
 }
 
-func TestItemsListCursorAtFirstItem(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListCursorAtFirstItem(t *testing.T) {
+	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "item-001"}.Encode()
 	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
@@ -434,7 +435,7 @@ func TestItemsListCursorAtFirstItem(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -449,8 +450,8 @@ func TestItemsListCursorAtFirstItem(t *testing.T) {
 	}
 }
 
-func TestItemsListCursorAtLastItem(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListCursorAtLastItem(t *testing.T) {
+	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "item-030"}.Encode()
 	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
@@ -462,7 +463,7 @@ func TestItemsListCursorAtLastItem(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -480,8 +481,8 @@ func TestItemsListCursorAtLastItem(t *testing.T) {
 	}
 }
 
-func TestItemsListSingleItemPage(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListSingleItemPage(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?limit=1", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-single")
@@ -492,7 +493,7 @@ func TestItemsListSingleItemPage(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -510,8 +511,8 @@ func TestItemsListSingleItemPage(t *testing.T) {
 	}
 }
 
-func TestItemsListLimitPreservedInLink(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListLimitPreservedInLink(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?limit=7", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-limit-link")
@@ -528,8 +529,8 @@ func TestItemsListLimitPreservedInLink(t *testing.T) {
 	}
 }
 
-func TestItemsListBackwardsNavigation(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListBackwardsNavigation(t *testing.T) {
+	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "item-005"}.Encode()
 	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
@@ -556,7 +557,7 @@ func TestItemsListBackwardsNavigation(t *testing.T) {
 		t.Fatalf("prev page: expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -566,8 +567,8 @@ func TestItemsListBackwardsNavigation(t *testing.T) {
 	}
 }
 
-func TestItemsListExactPageBoundary(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListExactPageBoundary(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?limit=30", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-exact-boundary")
@@ -578,7 +579,7 @@ func TestItemsListExactPageBoundary(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -596,8 +597,8 @@ func TestItemsListExactPageBoundary(t *testing.T) {
 	}
 }
 
-func TestItemsListCategoryFilterWithPagination(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListCategoryFilterWithPagination(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?category=electronics&limit=3", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-category-pagination")
@@ -608,7 +609,7 @@ func TestItemsListCategoryFilterWithPagination(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -632,8 +633,8 @@ func TestItemsListCategoryFilterWithPagination(t *testing.T) {
 	}
 }
 
-func TestItemsListValidCategory(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListValidCategory(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?category=electronics", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-valid-category")
@@ -644,7 +645,7 @@ func TestItemsListValidCategory(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -660,8 +661,8 @@ func TestItemsListValidCategory(t *testing.T) {
 	}
 }
 
-func TestItemsListValidationErrors422(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListValidationErrors422(t *testing.T) {
+	router := newTestRouter()
 
 	tests := []struct {
 		name       string
@@ -758,8 +759,8 @@ func TestItemsListValidationErrors422(t *testing.T) {
 	}
 }
 
-func TestItemsListEmptyCategoryReturnsAll(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListEmptyCategoryReturnsAll(t *testing.T) {
+	router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/items?category=", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-empty-category")
@@ -770,7 +771,7 @@ func TestItemsListEmptyCategoryReturnsAll(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 
-	var data ItemsData
+	var data ListData
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -780,8 +781,8 @@ func TestItemsListEmptyCategoryReturnsAll(t *testing.T) {
 	}
 }
 
-func TestItemsListCursorErrors400(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListCursorErrors400(t *testing.T) {
+	router := newTestRouter()
 
 	tests := []struct {
 		name        string
@@ -805,7 +806,7 @@ func TestItemsListCursorErrors400(t *testing.T) {
 		},
 		{
 			name:        "malformed-cursor-no-separator",
-			cursor:      "dGVzdA", // base64("test") - no colon separator
+			cursor:      "dGVzdA",
 			wantMessage: "invalid cursor",
 		},
 	}
@@ -842,8 +843,8 @@ func TestItemsListCursorErrors400(t *testing.T) {
 	}
 }
 
-func TestItemsListAllValidCategories(t *testing.T) {
-	router := newItemsTestRouter()
+func TestListAllValidCategories(t *testing.T) {
+	router := newTestRouter()
 
 	categories := []string{"electronics", "tools", "accessories", "robotics", "power", "components"}
 
@@ -858,7 +859,7 @@ func TestItemsListAllValidCategories(t *testing.T) {
 				t.Fatalf("expected 200 for category %s, got %d", category, resp.Code)
 			}
 
-			var data ItemsData
+			var data ListData
 			if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 				t.Fatalf("json unmarshal: %v", err)
 			}

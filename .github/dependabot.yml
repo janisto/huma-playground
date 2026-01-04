@@ -6,15 +6,21 @@ updates:
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "sunday"
+      interval: "quarterly"
       time: "09:00"
       timezone: "Europe/Helsinki"
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "sunday"
+      interval: "quarterly"
       time: "09:00"
       timezone: "Europe/Helsinki"
+    groups:
+      all-actions:
+        patterns:
+          - "*"

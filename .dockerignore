@@ -1,0 +1,39 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build artifacts
+*.exe
+*.out
+coverage.out
+coverage.html
+
+# Documentation
+*.md
+!README.md
+LICENSE
+
+# Functions (separate deployment)
+functions/
+
+# Plans and assets
+plans/
+assets/
+
+# Local env files
+.env
+.env.*
+!.env.example
+
+# Go workspace (local development only)
+go.work
+go.work.sum
+
+# Justfile (local development only)
+Justfile

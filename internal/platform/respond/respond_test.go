@@ -16,7 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
-	appmiddleware "github.com/janisto/huma-playground/internal/middleware"
+	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 )
 
 // testProblem is used for testing to capture $schema field.
