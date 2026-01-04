@@ -18,8 +18,6 @@ A minimal REST API skeleton built with [Huma](https://github.com/danielgtaylor/h
 
 ## API Design Principles
 
-This API follows Resource-Oriented Architecture (ROA) and RESTful conventions:
-
 ### URI Design
 
 - Use plural nouns for collections (`/users`, not `/user`)
@@ -62,6 +60,21 @@ Errors follow [RFC 9457 Problem Details](https://www.rfc-editor.org/rfc/rfc9457.
 
 - Go 1.25+
 - [Just](https://github.com/casey/just) command runner (optional)
+
+## Go Workspace
+
+This project uses a [Go workspace](https://go.dev/doc/tutorial/workspaces) (`go.work`) to manage multiple modules:
+
+```go
+go 1.25.5
+
+use (
+    .
+    ./functions
+)
+```
+
+The workspace allows simultaneous development across modules. Commands like `go build`, `go test`, and `go mod tidy` operate on all workspace modules when run from the root.
 
 ## Quick Start
 
@@ -166,7 +179,8 @@ go mod tidy            # Clean up go.mod
 
 ```bash
 just docker-build      # Build image
-just docker-run        # Run container
+just docker-up         # Run container detached
+just docker-down       # Stop container
 ```
 
 Or with Docker CLI:
@@ -194,7 +208,7 @@ gcloud run deploy huma-playground \
 
 The `--base-image` and `--automatic-updates` flags enable [automatic base image updates](https://cloud.google.com/run/docs/configuring/services/automatic-base-image-updates), allowing Google to apply security patches to the OS and runtime without rebuilding or redeploying.
 
-Set a project ID environment variable (`PROJECT_ID`) to enable trace correlation in Cloud Logging.
+Set a `FIREBASE_PROJECT_ID` environment variable to enable trace correlation in Cloud Logging.
 
 ## CI/CD
 
