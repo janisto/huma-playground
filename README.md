@@ -175,18 +175,18 @@ go mod tidy            # Clean up go.mod
 3. Add a registration function and call it from `routes.Register`
 4. Return errors using Huma's error helpers (`huma.Error400BadRequest()`, etc.)
 
-## Docker
+## Container
 
 ```bash
-just docker-build      # Build image
-just docker-up         # Run container detached
-just docker-down       # Stop container
+just container-build      # Build image
+just container-up         # Run container detached
+just container-down       # Stop container
 ```
 
-Or with Docker CLI:
+Or with Docker/Podman CLI:
 ```bash
 docker build -t huma-playground:latest .
-docker run --rm -p 8080:8080 huma-playground:latest
+docker run --rm -p 8080:8080 --env-file .env huma-playground:latest
 ```
 
 ## Deployment
@@ -195,11 +195,19 @@ docker run --rm -p 8080:8080 huma-playground:latest
 
 ```bash
 # Build and push
-gcloud builds submit --tag REGION-docker.pkg.dev/PROJECT/REPO/huma-playground:latest
+gcloud builds submit --tag REGION-docker.pkg.dev/PROJECT_ID/REPO/huma-playground:latest
 
 # Deploy with automatic base image updates
 gcloud run deploy huma-playground \
-  --image REGION-docker.pkg.dev/PROJECT/REPO/huma-playground:latest \
+  --image REGION-docker.pkg.dev/PROJECT_ID/REPO/huma-playground:latest \
+  --platform managed \
+  --region REGION \
+  --base-image go125 \
+  --automatic-updates
+
+# Deploy from source with automatic base image updates
+gcloud run deploy huma-playground \
+  --source . \
   --platform managed \
   --region REGION \
   --base-image go125 \

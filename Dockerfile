@@ -7,7 +7,7 @@
 # Cloud Run automatic base image updates:
 # Deploy with automatic base image updates so Google can patch the base without a rebuild:
 #   gcloud run deploy huma-playground \
-#     --image REGION-docker.pkg.dev/PROJECT/REPO/huma-playground:latest \
+#     --image REGION-docker.pkg.dev/PROJECT_ID/REPO/huma-playground:latest \
 #     --platform managed \
 #     --region REGION \
 #     --base-image go125 \

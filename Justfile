@@ -5,6 +5,10 @@ set dotenv-load := true
 
 PORT := env("PORT", "8080")
 
+# Container runtime: prefer podman, fallback to docker
+CONTAINER_RUNTIME := if `command -v podman 2>/dev/null || true` != "" { "podman" } else { "docker" }
+
+
 # Default recipe - show available commands
 default:
     @just --list
@@ -98,25 +102,24 @@ qa: tidy fix build test
 [group('check')]
 check: lint build test
 
-# Build Docker image
+# Container tasks
 [group('container')]
-docker-build image="huma-playground:local" version="dev" runtime_img="":
-    docker build \
+container-build image="huma-playground:latest" version="dev" runtime_img="":
+    {{ CONTAINER_RUNTIME }} build \
         --build-arg VERSION={{version}} \
         {{ if runtime_img != "" { "--build-arg RUNTIME_IMAGE=" + runtime_img } else { "" } }} \
         -t {{image}} .
 
-# Run Docker container
 [group('container')]
-docker-up image="huma-playground:local" name="huma-playground" port=PORT:
-    docker run -d --rm --name {{name}} -p {{port}}:8080 {{image}}
+container-up image="huma-playground:latest" name="huma-playground" port=PORT:
+    {{ CONTAINER_RUNTIME }} run -d --rm --name {{name}} \
+        {{ if path_exists(".env") == "true" { "--env-file .env" } else { "" } }} \
+        -p {{port}}:8080 {{image}}
 
-# Show Docker container logs
 [group('container')]
-docker-logs name="huma-playground":
-    docker logs -f {{name}}
+container-logs name="huma-playground":
+    {{ CONTAINER_RUNTIME }} logs -f {{name}}
 
-# Stop Docker container
 [group('container')]
-docker-down name="huma-playground":
-    -docker stop {{name}}
+container-down name="huma-playground":
+    -{{ CONTAINER_RUNTIME }} stop {{name}}
