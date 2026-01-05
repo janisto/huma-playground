@@ -31,7 +31,7 @@ run:
 # Run the server with custom port
 [group('run')]
 run-port port=PORT:
-    PORT={{port}} go run ./cmd/server
+    PORT={{ port }} go run ./cmd/server
 
 # Start Firebase emulators for E2E tests
 [group('test')]
@@ -106,20 +106,20 @@ check: lint build test
 [group('container')]
 container-build image="huma-playground:latest" version="dev" runtime_img="":
     {{ CONTAINER_RUNTIME }} build \
-        --build-arg VERSION={{version}} \
+        --build-arg VERSION={{ version }} \
         {{ if runtime_img != "" { "--build-arg RUNTIME_IMAGE=" + runtime_img } else { "" } }} \
-        -t {{image}} .
+        -t {{ image }} .
 
 [group('container')]
 container-up image="huma-playground:latest" name="huma-playground" port=PORT:
-    {{ CONTAINER_RUNTIME }} run -d --rm --name {{name}} \
+    {{ CONTAINER_RUNTIME }} run -d --rm --name {{ name }} \
         {{ if path_exists(".env") == "true" { "--env-file .env" } else { "" } }} \
-        -p {{port}}:8080 {{image}}
+        -p {{ port }}:8080 {{ image }}
 
 [group('container')]
 container-logs name="huma-playground":
-    {{ CONTAINER_RUNTIME }} logs -f {{name}}
+    {{ CONTAINER_RUNTIME }} logs -f {{ name }}
 
 [group('container')]
 container-down name="huma-playground":
-    -{{ CONTAINER_RUNTIME }} stop {{name}}
+    -{{ CONTAINER_RUNTIME }} stop {{ name }}
