@@ -1,10 +1,18 @@
 # Auto-label PRs based on changed file paths
 # Docs: https://github.com/actions/labeler
 
-# Internal changes in internal folder
-internal:
+
+# Internal changes in app folders
+app:
   - changed-files:
-      - any-glob-to-any-file: 'internal/**'
+      - any-glob-to-any-file:
+          - 'cmd/**'
+          - 'internal/**'
+
+# Functions changes in functions folder
+functions:
+  - changed-files:
+      - any-glob-to-any-file: 'functions/**'
 
 # Documentation changes in README.md
 documentation:
@@ -21,4 +29,3 @@ bug:
 
 improvement:
   - head-branch: ['^improve', 'improve', 'improvement']
-  
