@@ -7,12 +7,48 @@ updates:
     directory: "/"
     schedule:
       interval: "quarterly"
-      time: "09:00"
+      time: "08:00"
       timezone: "Europe/Helsinki"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
     groups:
-      all-dependencies:
+      updates:
         patterns:
           - "*"
+        update-types:
+          - "patch"
+          - "minor"
+      major-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+
+  # Silently skipped if no go.mod exists; activates automatically when added
+  - package-ecosystem: "gomod"
+    directory: "/functions"
+    schedule:
+      interval: "quarterly"
+      time: "08:30"
+      timezone: "Europe/Helsinki"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+    groups:
+      updates:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+      major-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -20,7 +56,19 @@ updates:
       interval: "quarterly"
       time: "09:00"
       timezone: "Europe/Helsinki"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
     groups:
-      all-actions:
+      updates:
         patterns:
           - "*"
+        update-types:
+          - "patch"
+          - "minor"
+      major-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "major"

@@ -222,9 +222,15 @@ Set a `FIREBASE_PROJECT_ID` environment variable to enable trace correlation in 
 
 GitHub Actions workflows in `.github/workflows/`:
 
-- **app-ci.yml**: Build check, tests, coverage report
-- **app-lint.yml**: golangci-lint static analysis
-- **labeler.yml**: Automatic PR labeling
+| Workflow | Description |
+|----------|-------------|
+| `app-ci.yml` | Build, tests, and coverage report |
+| `app-lint.yml` | Code quality (golangci-lint) |
+| `labeler.yml` | Automatic PR labeling |
+| `labeler-manual.yml` | Manual labeling for historical PRs |
+| `dependabot-auto-merge.yml` | Auto-merge Dependabot minor/patch updates |
+
+Dependabot is configured in `.github/dependabot.yml` for automated dependency updates.
 
 ## Contributing
 
