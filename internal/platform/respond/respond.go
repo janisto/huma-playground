@@ -53,9 +53,9 @@ func parseAccept(header string) []mediaRange {
 
 		mr := mediaRange{q: 1.0}
 		mediaType := part
-		if idx := strings.Index(part, ";"); idx != -1 {
-			mediaType = strings.TrimSpace(part[:idx])
-			params := part[idx+1:]
+		if before, after, ok := strings.Cut(part, ";"); ok {
+			mediaType = strings.TrimSpace(before)
+			params := after
 			for param := range strings.SplitSeq(params, ";") {
 				param = strings.TrimSpace(param)
 				if strings.HasPrefix(strings.ToLower(param), "q=") {
@@ -66,9 +66,9 @@ func parseAccept(header string) []mediaRange {
 			}
 		}
 
-		if slash := strings.Index(mediaType, "/"); slash != -1 {
-			mr.typ = strings.ToLower(strings.TrimSpace(mediaType[:slash]))
-			mr.subtype = strings.ToLower(strings.TrimSpace(mediaType[slash+1:]))
+		if before, after, ok := strings.Cut(mediaType, "/"); ok {
+			mr.typ = strings.ToLower(strings.TrimSpace(before))
+			mr.subtype = strings.ToLower(strings.TrimSpace(after))
 		} else {
 			mr.typ = strings.ToLower(strings.TrimSpace(mediaType))
 			mr.subtype = "*"
