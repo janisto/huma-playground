@@ -18,9 +18,12 @@ import (
 
 	"github.com/janisto/huma-playground/internal/http/health"
 	"github.com/janisto/huma-playground/internal/http/v1/routes"
+	"github.com/janisto/huma-playground/internal/platform/auth"
+	"github.com/janisto/huma-playground/internal/platform/firebase"
 	applog "github.com/janisto/huma-playground/internal/platform/logging"
 	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 	"github.com/janisto/huma-playground/internal/platform/respond"
+	profilesvc "github.com/janisto/huma-playground/internal/service/profile"
 )
 
 // Version can be overridden at build time: -ldflags "-X main.Version=1.2.3"
@@ -35,6 +38,35 @@ func main() {
 	if err := applog.Err(); err != nil {
 		applog.LogError(context.Background(), "logger init error", err)
 	}
+
+	// Initialize Firebase
+	ctx := context.Background()
+	firebaseProjectID := os.Getenv("FIREBASE_PROJECT_ID")
+	if firebaseProjectID == "" {
+		if os.Getenv("APP_ENVIRONMENT") == "development" {
+			firebaseProjectID = "demo-test-project"
+			applog.LogWarn(ctx, "using demo-test-project for local development")
+		} else {
+			applog.LogFatal(ctx, "FIREBASE_PROJECT_ID environment variable is required", nil)
+		}
+	}
+	firebaseClients, err := firebase.InitializeClients(ctx, firebase.Config{
+		ProjectID:                    firebaseProjectID,
+		GoogleApplicationCredentials: os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+	})
+	if err != nil {
+		applog.LogFatal(ctx, "firebase init failed", err)
+	}
+	defer func() {
+		if closeErr := firebaseClients.Close(); closeErr != nil {
+			applog.LogError(ctx, "firebase close error", closeErr)
+		}
+	}()
+
+	// Create auth verifier and profile service
+	verifier := auth.NewFirebaseVerifier(firebaseClients.Auth)
+	profileService := profilesvc.NewFirestoreStore(firebaseClients.Firestore)
+
 	router := chi.NewRouter()
 	router.NotFound(respond.NotFoundHandler())
 	router.MethodNotAllowed(respond.MethodNotAllowedHandler())
@@ -89,7 +121,17 @@ func main() {
 			},
 		)
 
-		routes.Register(api)
+		// OpenAPI security scheme for Firebase JWT authentication
+		api.OpenAPI().Components.SecuritySchemes = map[string]*huma.SecurityScheme{
+			"bearerAuth": {
+				Type:         "http",
+				Scheme:       "bearer",
+				BearerFormat: "JWT",
+				Description:  "Firebase ID token",
+			},
+		}
+
+		routes.Register(api, verifier, profileService)
 	})
 
 	port := os.Getenv("PORT")

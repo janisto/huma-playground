@@ -1,6 +1,8 @@
 # Huma Playground
 
-A minimal REST API skeleton built with [Huma](https://github.com/danielgtaylor/huma) running on top of Chi via `humachi`. It demonstrates structured logging, RFC 9457 Problem Details for errors, and a modular route layout that is ready to grow into a larger service.
+A REST API skeleton built with [Huma](https://github.com/danielgtaylor/huma) running on top of Chi via `humachi`, demonstrating Firebase Authentication, Firestore CRUD operations, and modern Go development workflow using [Just](https://github.com/casey/just) (task runner).
+
+It showcases structured logging, RFC 9457 Problem Details for errors, and a modular route layout that is ready to grow into a larger service.
 
 <img src="assets/gopher.svg" alt="Go Gopher mascot illustration" width="400">
 
@@ -14,6 +16,8 @@ A minimal REST API skeleton built with [Huma](https://github.com/danielgtaylor/h
 - Content negotiation supporting [JSON (RFC 8259)](https://datatracker.ietf.org/doc/html/rfc8259) and [CBOR (RFC 8949)](https://datatracker.ietf.org/doc/html/rfc8949) formats via `Accept` header
 - Cursor-based pagination with [RFC 8288 Link](https://datatracker.ietf.org/doc/html/rfc8288) headers
 - [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) documentation with Swagger UI, auto-generated from Huma route schemas
+- Firebase Authentication with JWT validation via Huma middleware
+- Firestore integration with transaction-safe CRUD operations and audit logging
 - Health check endpoint (`/health`) for liveness probes
 
 ## API Design Principles
@@ -43,6 +47,10 @@ Errors follow [RFC 9457 Problem Details](https://www.rfc-editor.org/rfc/rfc9457.
 | Status | Use Case |
 |--------|----------|
 | 400 Bad Request | Malformed syntax, missing required fields |
+| 401 Unauthorized | Missing or invalid authentication |
+| 403 Forbidden | Authenticated but not authorized |
+| 404 Not Found | Resource does not exist |
+| 409 Conflict | Resource already exists |
 | 422 Unprocessable Entity | Validation failures on specific fields |
 
 ### Content Negotiation
@@ -59,7 +67,10 @@ Errors follow [RFC 9457 Problem Details](https://www.rfc-editor.org/rfc/rfc9457.
 ## Requirements
 
 - Go 1.25+
+- [golangci-lint](https://golangci-lint.run/) v2 (for linting and formatting)
+- [Firebase CLI](https://firebase.google.com/docs/cli) (for emulators)
 - [Just](https://github.com/casey/just) command runner (optional)
+- [Podman Desktop](https://podman-desktop.io/) (for containerization, optional)
 
 ## Go Workspace
 
@@ -105,7 +116,7 @@ cp .env.example .env
 | `PORT` | Server listen port | `8080` |
 | `HOST` | Host address to bind to | `0.0.0.0` |
 | `LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |
-| `FIREBASE_PROJECT_ID` | Firebase project ID for Cloud Trace correlation | - |
+| `FIREBASE_PROJECT_ID` | Firebase project ID (use `demo-*` prefix for emulator-only mode) | `demo-test-project` |
 | `APP_ENVIRONMENT` | Environment label | `development` |
 | `APP_URL` | Base URL for the application | `http://localhost:8080` |
 
@@ -118,13 +129,19 @@ internal/http/         # HTTP transport layer
   v1/                  # Versioned API (v1)
     hello/             # Hello endpoint handlers
     items/             # Items endpoint handlers
+    ...                # Additional route packages
     routes/            # Route registration
 internal/platform/     # Cross-cutting infrastructure
+  auth/                # Firebase Auth middleware and JWT validation
+  firebase/            # Firebase Admin SDK initialization
   logging/             # Structured logging with Zap
   middleware/          # Security headers, CORS, request ID
   pagination/          # Cursor-based pagination
   respond/             # Panic recovery and Problem Details
-  timeutil/            # Time formatting utilities
+  ...                  # Additional platform packages
+internal/service/      # Business logic and data access
+  profile/             # User profile service with Firestore backend
+internal/testutil/     # Test utilities (emulator helpers)
 functions/             # Cloud Functions (separate Go module)
 ```
 
@@ -136,6 +153,10 @@ functions/             # Cloud Functions (separate Go module)
 | GET | `/v1/hello` | Default greeting |
 | POST | `/v1/hello` | Create a personalized greeting |
 | GET | `/v1/items` | List items with cursor-based pagination |
+| GET | `/v1/profile` | Get current user profile (requires auth) |
+| POST | `/v1/profile` | Create user profile (requires auth) |
+| PATCH | `/v1/profile` | Update user profile (requires auth) |
+| DELETE | `/v1/profile` | Delete user profile (requires auth) |
 
 ## Development
 
@@ -147,6 +168,21 @@ go test ./...         # Run tests
 go test -v ./...      # Verbose output
 golangci-lint run ./...  # Lint
 ```
+
+### Firebase Emulators
+
+Firestore integration tests require Firebase emulators. Start them before running tests:
+
+```bash
+just emulators        # Start Auth and Firestore emulators
+```
+
+Emulator ports:
+- Auth: `localhost:7110`
+- Firestore: `localhost:7130`
+- Emulator UI: `localhost:4000`
+
+Tests auto-skip when emulators are unavailable. The `demo-test-project` project ID triggers emulator-only mode.
 
 ### Justfile Commands
 
@@ -161,6 +197,7 @@ golangci-lint run ./...  # Lint
 | `just vuln` | Check for vulnerabilities |
 | `just install` | Download module dependencies |
 | `just fresh` | Recreate project from clean state |
+| `just emulators` | Start Firebase emulators for testing |
 
 Run `just` to see all available commands.
 
