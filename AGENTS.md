@@ -66,6 +66,10 @@ Key recipes:
 - `just fmt` - Apply formatters
 - `just fix` - Run linter and apply formatters
 - `just check` - Full check (build + test + lint)
+- `just qa` - Quality assurance (tidy + fix + build + test)
+- `just vuln` - Check for vulnerabilities
+- `just install` - Download module dependencies (alias for download)
+- `just fresh` - Recreate project from clean state
 
 All commands in this document can be run via their corresponding `just` recipes.
 
