@@ -25,7 +25,7 @@ func Register(api huma.API) {
 	}, listHandler)
 }
 
-func listHandler(_ context.Context, input *ListInput) (*ListOutput, error) {
+func listHandler(_ context.Context, input *ItemsListInput) (*ItemsListOutput, error) {
 	cursor, err := pagination.DecodeCursor(input.Cursor)
 	if err != nil {
 		return nil, huma.Error400BadRequest("invalid cursor format")
@@ -56,7 +56,7 @@ func listHandler(_ context.Context, input *ListInput) (*ListOutput, error) {
 		query,
 	)
 
-	return &ListOutput{
+	return &ItemsListOutput{
 		Link: result.LinkHeader,
 		Body: ListData{
 			Items: result.Items,

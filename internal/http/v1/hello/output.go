@@ -1,11 +1,11 @@
 package hello
 
-// GetOutput is the response wrapper for the GET hello endpoint.
-type GetOutput struct {
+// HelloGetOutput is the response wrapper for the GET hello endpoint.
+type HelloGetOutput struct {
 	Body Data
 }
 
-// CreateOutput is the response wrapper for the POST hello endpoint.
-type CreateOutput struct {
+// HelloCreateOutput is the response wrapper for the POST hello endpoint.
+type HelloCreateOutput struct {
 	Body Data
 }

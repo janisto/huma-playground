@@ -24,13 +24,13 @@ func Register(api huma.API) {
 	}, createHandler)
 }
 
-func getHandler(ctx context.Context, _ *struct{}) (*GetOutput, error) {
+func getHandler(ctx context.Context, _ *struct{}) (*HelloGetOutput, error) {
 	applog.LogInfo(ctx, "hello get", zap.String("path", "/hello"))
-	return &GetOutput{Body: Data{Message: "Hello, World!"}}, nil
+	return &HelloGetOutput{Body: Data{Message: "Hello, World!"}}, nil
 }
 
-func createHandler(ctx context.Context, input *CreateInput) (*CreateOutput, error) {
+func createHandler(ctx context.Context, input *HelloCreateInput) (*HelloCreateOutput, error) {
 	applog.LogInfo(ctx, "hello post", zap.String("path", "/hello"), zap.String("name", input.Body.Name))
 	message := fmt.Sprintf("Hello, %s!", input.Body.Name)
-	return &CreateOutput{Body: Data{Message: message}}, nil
+	return &HelloCreateOutput{Body: Data{Message: message}}, nil
 }

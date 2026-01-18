@@ -19,9 +19,11 @@ import (
 
 	"github.com/janisto/huma-playground/internal/http/health"
 	"github.com/janisto/huma-playground/internal/http/v1/routes"
+	"github.com/janisto/huma-playground/internal/platform/auth"
 	applog "github.com/janisto/huma-playground/internal/platform/logging"
 	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 	"github.com/janisto/huma-playground/internal/platform/respond"
+	profilesvc "github.com/janisto/huma-playground/internal/service/profile"
 )
 
 func testServer() http.Handler {
@@ -49,7 +51,9 @@ func testServer() http.Handler {
 			{URL: "/v1"},
 		}
 		api := humachi.New(r, cfg)
-		routes.Register(api)
+		verifier := &auth.MockVerifier{User: auth.TestUser()}
+		profileService := profilesvc.NewMockProfileService()
+		routes.Register(api, verifier, profileService)
 		huma.Get(api, "/panic", func(ctx context.Context, _ *struct{}) (*struct{}, error) {
 			panic("boom")
 		})

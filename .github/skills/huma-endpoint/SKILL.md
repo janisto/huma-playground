@@ -46,22 +46,22 @@ type ResourceOutput struct {
 
 ## Input Struct Pattern
 
-Define input structs for path parameters, query parameters, and request bodies:
+Always prefix input types with the resource name for consistency:
 
 ```go
 // Path parameters
-type ResourceInput struct {
+type ResourceGetInput struct {
     ID string `path:"id" doc:"Resource identifier" example:"res-001"`
 }
 
 // Query parameters
-type ListInput struct {
+type ResourceListInput struct {
     Status string `query:"status" doc:"Filter by status" example:"active" enum:"active,inactive"`
     Limit  int    `query:"limit"  doc:"Maximum items"    example:"10"     minimum:"1" maximum:"100"`
 }
 
 // Request body
-type CreateResourceInput struct {
+type ResourceCreateInput struct {
     Body struct {
         Name string `json:"name" doc:"Resource name" example:"New Resource" minLength:"1" maxLength:"100"`
     }
@@ -74,7 +74,7 @@ Simple retrieval endpoints use `huma.Get`:
 
 ```go
 func registerResource(api huma.API) {
-    huma.Get(api, "/resources/{id}", func(ctx context.Context, input *ResourceInput) (*ResourceOutput, error) {
+    huma.Get(api, "/resources/{id}", func(ctx context.Context, input *ResourceGetInput) (*ResourceOutput, error) {
         resource, err := getResource(input.ID)
         if err != nil {
             return nil, huma.Error404NotFound("resource not found")
@@ -102,7 +102,7 @@ huma.Register(api, huma.Operation{
     Description:   "Creates a new resource and returns its data.",
     DefaultStatus: http.StatusCreated,
     Tags:          []string{"Resources"},
-}, func(ctx context.Context, input *CreateResourceInput) (*CreateResourceOutput, error) {
+}, func(ctx context.Context, input *ResourceCreateInput) (*CreateResourceOutput, error) {
     resource := createResource(input.Body.Name)
     return &CreateResourceOutput{
         Location: fmt.Sprintf("/resources/%s", resource.ID),

@@ -1,0 +1,41 @@
+{
+  "firestore": {
+    "database": "(default)",
+    "location": "europe-west4",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "location": "europe-west4",
+      "codebase": "default",
+      "ignore": [
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local",
+        "*_test.go"
+      ],
+      "runtime": "go125"
+    }
+  ],
+  "emulators": {
+    "auth": {
+      "port": 7110
+    },
+    "functions": {
+      "port": 7120
+    },
+    "firestore": {
+      "port": 7130
+    },
+    "storage": {
+      "port": 7140
+    },
+    "ui": {
+      "enabled": true
+    },
+    "singleProjectMode": true
+  }
+}

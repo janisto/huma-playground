@@ -43,13 +43,16 @@ Huma Playground is a minimal REST API skeleton built with [Huma](https://github.
 - Plain response bodies with RFC 9457 Problem Details for errors
 - Content negotiation supporting JSON and CBOR formats
 - Cursor-based pagination with RFC 8288 Link headers
+- Firebase Authentication with JWT validation via Huma middleware
+- Firestore integration with transaction-safe CRUD operations and audit logging
 
 ### Tech & Tooling
 
 - Language/runtime: Go 1.25+
-- Frameworks/libs: Huma v2, Chi v5, Zap, go-chi/cors
-- Testing: Go standard `testing` package
+- Frameworks/libs: Huma v2, Chi v5, Zap, go-chi/cors, Firebase Admin SDK
+- Testing: Go standard `testing` package, Firebase Emulators
 - Task runner: [Just](https://github.com/casey/just) (optional)
+- Firebase CLI: Required for emulators (`just emulators`)
 
 ---
 
@@ -70,6 +73,7 @@ Key recipes:
 - `just vuln` - Check for vulnerabilities
 - `just install` - Download module dependencies (alias for download)
 - `just fresh` - Recreate project from clean state
+- `just emulators` - Start Firebase emulators (Auth + Firestore)
 
 All commands in this document can be run via their corresponding `just` recipes.
 
@@ -80,6 +84,7 @@ All commands in this document can be run via their corresponding `just` recipes.
 ### Requirements
 
 - Go 1.25+
+- Firebase CLI (for emulators): `npm install -g firebase-tools`
 
 ### Install Dependencies
 
@@ -168,13 +173,19 @@ internal/http/         # HTTP transport layer
   v1/                  # Versioned API (v1)
     hello/             # Hello endpoint handlers
     items/             # Items endpoint handlers
+    profile/           # Profile endpoint handlers (requires auth)
     routes/            # Route registration
 internal/platform/     # Cross-cutting infrastructure
+  auth/                # Firebase Auth middleware and JWT validation
+  firebase/            # Firebase Admin SDK initialization
   logging/             # Structured logging with Zap
   middleware/          # Security headers, CORS, request ID
   pagination/          # Cursor-based pagination
   respond/             # Panic recovery and Problem Details
   timeutil/            # Time formatting utilities
+internal/service/      # Business logic and data access
+  profile/             # Profile service with Firestore backend
+internal/testutil/     # Test utilities (emulator helpers)
 ```
 
 ---
@@ -187,7 +198,9 @@ The `internal/platform/` packages provide shared infrastructure used by HTTP han
 
 | Package | Purpose | Dependencies |
 |---------|---------|--------------|
-| `logging` | Structured logging, request-scoped context, trace correlation | Zap, Chi (for HTTP middleware) |
+| `auth` | Firebase JWT validation, user context, Huma security middleware | Firebase Admin SDK, Huma |
+| `firebase` | Firebase Admin SDK initialization (Auth + Firestore clients) | Firebase Admin SDK |
+| `logging` | Structured logging, request-scoped context, trace correlation, audit logging | Zap, Chi (for HTTP middleware) |
 | `middleware` | HTTP middleware (CORS, security headers, request ID, vary) | Chi, go-chi/cors |
 | `pagination` | Cursor encoding/decoding, link header generation | Standard library only |
 | `respond` | Panic recovery, Problem Details error responses | Chi, Huma (for error types) |
@@ -213,14 +226,37 @@ The `internal/platform/` packages provide shared infrastructure used by HTTP han
 Responses use plain structs; no custom envelope wrapper:
 
 ```go
-type GetOutput struct {
+type HelloGetOutput struct {
     Body Data
 }
 
 func Register(api huma.API) {
-    huma.Get(api, "/hello", func(ctx context.Context, _ *struct{}) (*GetOutput, error) {
-        return &GetOutput{Body: Data{Message: "Hello, World!"}}, nil
+    huma.Get(api, "/hello", func(ctx context.Context, _ *struct{}) (*HelloGetOutput, error) {
+        return &HelloGetOutput{Body: Data{Message: "Hello, World!"}}, nil
     })
+}
+```
+
+### Input/Output Type Naming
+
+Always prefix input/output types with the resource name for consistency and clarity. This ensures unique schema names in Huma's global registry and makes code self-documenting.
+
+| Operation | Input Type | Output Type |
+|-----------|------------|-------------|
+| GET single | `{Resource}GetInput` | `{Resource}GetOutput` |
+| GET list | `{Resource}ListInput` | `{Resource}ListOutput` |
+| POST | `{Resource}CreateInput` | `{Resource}CreateOutput` |
+| PUT/PATCH | `{Resource}UpdateInput` | `{Resource}UpdateOutput` |
+| DELETE | `{Resource}DeleteInput` | (no body) |
+
+For endpoints needing both path params and body:
+
+```go
+type ResourceUpdateInput struct {
+    ID   string `path:"id"`
+    Body struct {
+        Name string `json:"name"`
+    }
 }
 ```
 
@@ -538,6 +574,52 @@ if problem.Title != "Not Found" {
 - Verify error responses use Problem Details format
 - Test trace ID propagation through the request context
 
+### Firebase Emulator Testing
+
+Firestore integration tests require running emulators. Start them before running tests:
+
+```bash
+just emulators
+```
+
+Emulator configuration (from `firebase.json`):
+| Service | Port |
+|---------|------|
+| Auth | 7110 |
+| Functions | 7120 |
+| Firestore | 7130 |
+| Storage | 7140 |
+| Emulator UI | 4000 |
+
+Integration test pattern with emulator detection:
+
+```go
+import "github.com/janisto/huma-playground/internal/testutil"
+
+func TestFirestoreOperation(t *testing.T) {
+    ctx := context.Background()
+    client := testutil.SetupEmulator(t, ctx)
+    t.Cleanup(func() { testutil.ClearFirestore(t, ctx, client) })
+
+    // Test operations using client
+}
+```
+
+Tests auto-skip when emulators are unavailable. The `demo-test-project` project ID triggers emulator-only mode (SDK will only communicate with local emulators).
+
+### Mock Service Testing
+
+For unit tests that don't require Firestore, use mock implementations:
+
+```go
+import "github.com/janisto/huma-playground/internal/service/profile"
+
+func TestHandler(t *testing.T) {
+    svc := profile.NewMockProfileService()
+    // Inject svc into handler for testing
+}
+```
+
 ---
 
 ## Testing & Testability
@@ -554,7 +636,44 @@ if problem.Title != "Not Found" {
 - Access config through environment variables; don't hardcode secrets in business logic.
 - Don't log secrets or PII; ensure logs redact sensitive fields.
 - Typical env vars:
+  - `FIREBASE_PROJECT_ID` (use `demo-*` prefix for emulator-only mode in development)
   - `GOOGLE_CLOUD_PROJECT`, `GCP_PROJECT`, `GCLOUD_PROJECT`, or `PROJECT_ID` (for Cloud Trace correlation)
+
+---
+
+## Authentication
+
+### Protected Endpoints
+
+Use Huma's security mechanism with Firebase Auth middleware for protected routes:
+
+```go
+import "github.com/janisto/huma-playground/internal/platform/auth"
+
+func Register(api huma.API, authClient auth.Client) {
+    auth.RegisterSecurityScheme(api, authClient)
+
+    huma.Register(api, huma.Operation{
+        OperationID: "get-profile",
+        Method:      http.MethodGet,
+        Path:        "/profile",
+        Security:    auth.RequireAuth,
+    }, handleGetProfile)
+}
+```
+
+### Accessing User in Handlers
+
+The auth middleware sets the user in context for secured endpoints. For any endpoint with `Security` configured, the middleware either rejects the request (401/503) before the handler is called, or successfully authenticates and sets the user in context. Therefore, `UserFromContext` is guaranteed non-nil in secured handlers:
+
+```go
+func handleGetProfile(ctx context.Context, _ *struct{}) (*ProfileOutput, error) {
+    user := auth.UserFromContext(ctx)
+    // user is guaranteed non-nil for secured endpoints because the auth
+    // middleware rejects unauthenticated requests before reaching the handler
+    return &ProfileOutput{Body: Profile{ID: user.UID}}, nil
+}
+```
 
 ---
 
