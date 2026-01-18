@@ -157,6 +157,10 @@ golangci-lint run ./...  # Lint
 | `just test` | Run all tests |
 | `just lint` | Run linter |
 | `just check` | Full check (build + test + lint) |
+| `just qa` | Quality assurance (tidy + fix + build + test) |
+| `just vuln` | Check for vulnerabilities |
+| `just install` | Download module dependencies |
+| `just fresh` | Recreate project from clean state |
 
 Run `just` to see all available commands.
 

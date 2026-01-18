@@ -1,7 +1,7 @@
 # Justfile for Huma Playground
 # https://github.com/casey/just
 
-set dotenv-load := true
+set dotenv-load
 
 PORT := env("PORT", "8080")
 
@@ -9,9 +9,8 @@ PORT := env("PORT", "8080")
 CONTAINER_RUNTIME := if `command -v podman 2>/dev/null || true` != "" { "podman" } else { "docker" }
 
 
-# Default recipe - show available commands
-default:
-    @just --list
+@_:
+    just --list
 
 # Build the application
 [group('build')]
@@ -40,18 +39,18 @@ emulators:
 
 # Run all tests
 [group('test')]
-test:
-    go test ./...
+test *args:
+    go test ./... {{ args }}
 
 # Run tests with verbose output
 [group('test')]
-test-verbose:
-    go test -v ./...
+test-verbose *args:
+    go test -v ./... {{ args }}
 
 # Run tests with coverage
 [group('test')]
-test-coverage:
-    go test -v -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+test-coverage *args:
+    go test -v -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./... {{ args }}
 
 # Generate coverage report
 [group('test')]
@@ -60,47 +59,52 @@ coverage: test-coverage
     go tool cover -html=coverage.out -o coverage.html
 
 # Run linter
-[group('lint')]
+[group('qa')]
 lint:
     golangci-lint run ./...
 
 # Apply formatters (gci, gofumpt, golines)
-[group('lint')]
+[group('qa')]
 fmt:
     golangci-lint fmt ./...
 
 # Run linter and apply formatters
-[group('lint')]
+[group('qa')]
 fix:
     golangci-lint run --fix ./...
 
-# Download module dependencies
-[group('deps')]
-download:
-    go mod download
-
-# Tidy go.mod and go.sum
-[group('deps')]
-tidy:
-    go mod tidy
-
-# Update all dependencies to latest versions
-[group('deps')]
-update: && tidy
-    go get -u -t ./...
-
 # Check for vulnerabilities
-[group('check')]
+[group('qa')]
 vuln:
     govulncheck ./...
 
 # Quality assurance: tidy, fix, build, and test
-[group('check')]
+[group('qa')]
 qa: tidy fix build test
 
 # Full check: lint, build, and test
-[group('check')]
+[group('qa')]
 check: lint build test
+
+# Download module dependencies
+alias install := download
+[group('lifecycle')]
+download:
+    go mod download
+
+# Tidy go.mod and go.sum
+[group('lifecycle')]
+tidy:
+    go mod tidy
+
+# Update all dependencies to latest versions
+[group('lifecycle')]
+update: && tidy
+    go get -u -t ./...
+
+# Recreate project from clean state
+[group('lifecycle')]
+fresh: clean download build
 
 # Container tasks
 [group('container')]
