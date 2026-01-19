@@ -51,8 +51,7 @@ func main() {
 		}
 	}
 	firebaseClients, err := firebase.InitializeClients(ctx, firebase.Config{
-		ProjectID:                    firebaseProjectID,
-		GoogleApplicationCredentials: os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+		ProjectID: firebaseProjectID,
 	})
 	if err != nil {
 		applog.LogFatal(ctx, "firebase init failed", err)

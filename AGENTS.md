@@ -637,6 +637,7 @@ func TestHandler(t *testing.T) {
 - Don't log secrets or PII; ensure logs redact sensitive fields.
 - Typical env vars:
   - `FIREBASE_PROJECT_ID` (use `demo-*` prefix for emulator-only mode in development)
+  - `GOOGLE_APPLICATION_CREDENTIALS` (path to service account JSON; uses ADC if not set)
   - `GOOGLE_CLOUD_PROJECT`, `GCP_PROJECT`, `GCLOUD_PROJECT`, or `PROJECT_ID` (for Cloud Trace correlation)
 
 ---

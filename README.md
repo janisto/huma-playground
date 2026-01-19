@@ -117,6 +117,7 @@ cp .env.example .env
 | `HOST` | Host address to bind to | `0.0.0.0` |
 | `LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |
 | `FIREBASE_PROJECT_ID` | Firebase project ID (use `demo-*` prefix for emulator-only mode) | `demo-test-project` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to service account JSON file (uses ADC if not set) | - |
 | `APP_ENVIRONMENT` | Environment label | `development` |
 | `APP_URL` | Base URL for the application | `http://localhost:8080` |
 

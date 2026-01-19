@@ -17,27 +17,10 @@ func TestClientsCloseReturnsNilWhenFirestoreNil(t *testing.T) {
 
 func TestConfigStruct(t *testing.T) {
 	cfg := Config{
-		ProjectID:                    "test-project",
-		GoogleApplicationCredentials: "/path/to/creds.json",
+		ProjectID: "test-project",
 	}
 
 	if cfg.ProjectID != "test-project" {
 		t.Fatalf("expected ProjectID 'test-project', got %s", cfg.ProjectID)
-	}
-	if cfg.GoogleApplicationCredentials != "/path/to/creds.json" {
-		t.Fatalf("expected credentials path '/path/to/creds.json', got %s", cfg.GoogleApplicationCredentials)
-	}
-}
-
-func TestInitializeClientsCredentialsFileNotFound(t *testing.T) {
-	ctx := t.Context()
-	cfg := Config{
-		ProjectID:                    "test-project",
-		GoogleApplicationCredentials: "/nonexistent/path/to/creds.json",
-	}
-
-	_, err := InitializeClients(ctx, cfg)
-	if err == nil {
-		t.Fatal("expected error for missing credentials file, got nil")
 	}
 }
