@@ -2,6 +2,7 @@ package firebase
 
 import (
 	"context"
+	"os"
 
 	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
@@ -26,7 +27,11 @@ type Clients struct {
 func InitializeClients(ctx context.Context, cfg Config) (*Clients, error) {
 	var opts []option.ClientOption
 	if cfg.GoogleApplicationCredentials != "" {
-		opts = append(opts, option.WithCredentialsFile(cfg.GoogleApplicationCredentials))
+		creds, err := os.ReadFile(cfg.GoogleApplicationCredentials)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, option.WithCredentialsJSON(creds))
 	}
 
 	config := &firebase.Config{ProjectID: cfg.ProjectID}
