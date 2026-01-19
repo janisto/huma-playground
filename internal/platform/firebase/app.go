@@ -2,18 +2,17 @@ package firebase
 
 import (
 	"context"
-	"os"
 
 	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/auth"
-	"google.golang.org/api/option"
 )
 
 // Config holds Firebase configuration.
+// Credentials are loaded via Application Default Credentials (ADC).
+// Set GOOGLE_APPLICATION_CREDENTIALS env var to specify a service account key file.
 type Config struct {
-	ProjectID                    string
-	GoogleApplicationCredentials string // Path to service account JSON (optional)
+	ProjectID string
 }
 
 // Clients holds initialized Firebase clients.
@@ -23,19 +22,11 @@ type Clients struct {
 }
 
 // InitializeClients sets up Firebase and returns clients directly.
+// Credentials are loaded via Application Default Credentials (ADC).
 // Prefer this over Initialize() + global getters for better testability.
 func InitializeClients(ctx context.Context, cfg Config) (*Clients, error) {
-	var opts []option.ClientOption
-	if cfg.GoogleApplicationCredentials != "" {
-		creds, err := os.ReadFile(cfg.GoogleApplicationCredentials)
-		if err != nil {
-			return nil, err
-		}
-		opts = append(opts, option.WithCredentialsJSON(creds))
-	}
-
 	config := &firebase.Config{ProjectID: cfg.ProjectID}
-	fbApp, err := firebase.NewApp(ctx, config, opts...)
+	fbApp, err := firebase.NewApp(ctx, config)
 	if err != nil {
 		return nil, err
 	}
