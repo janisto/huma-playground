@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	cloud.google.com/go/firestore v1.21.0
-	firebase.google.com/go/v4 v4.18.0
+	firebase.google.com/go/v4 v4.19.0
 	github.com/danielgtaylor/huma/v2 v2.35.0
 	github.com/fxamacker/cbor/v2 v2.9.0
 	github.com/go-chi/chi/v5 v5.2.4
