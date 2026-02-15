@@ -118,7 +118,7 @@ func TestCreateProfileSuccess(t *testing.T) {
 	verifier := &auth.MockVerifier{User: auth.TestUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phone_number":"+358401234567","marketing":true,"terms":true}`
+	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"+358401234567","marketing":true,"terms":true}`
 	req := httptest.NewRequest(http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
@@ -154,7 +154,7 @@ func TestCreateProfileTermsRequired(t *testing.T) {
 	verifier := &auth.MockVerifier{User: auth.TestUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phone_number":"+358401234567","marketing":true,"terms":false}`
+	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"+358401234567","marketing":true,"terms":false}`
 	req := httptest.NewRequest(http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
@@ -181,7 +181,7 @@ func TestCreateProfileConflict(t *testing.T) {
 	verifier := &auth.MockVerifier{User: auth.TestUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phone_number":"+358401234567","marketing":false,"terms":true}`
+	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"+358401234567","marketing":false,"terms":true}`
 	req := httptest.NewRequest(http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
@@ -199,7 +199,7 @@ func TestCreateProfileUnauthorized(t *testing.T) {
 	verifier := &auth.MockVerifier{User: auth.TestUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phone_number":"+358401234567","terms":true}`
+	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"+358401234567","terms":true}`
 	req := httptest.NewRequest(http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
@@ -348,7 +348,7 @@ func TestProfileValidationInvalidEmail(t *testing.T) {
 	verifier := &auth.MockVerifier{User: auth.TestUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"invalid-email","phone_number":"+358401234567","terms":true}`
+	body := `{"firstname":"John","lastname":"Doe","email":"invalid-email","phoneNumber":"+358401234567","terms":true}`
 	req := httptest.NewRequest(http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
@@ -366,7 +366,7 @@ func TestProfileValidationInvalidPhone(t *testing.T) {
 	verifier := &auth.MockVerifier{User: auth.TestUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phone_number":"12345","terms":true}`
+	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"12345","terms":true}`
 	req := httptest.NewRequest(http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")

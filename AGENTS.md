@@ -368,6 +368,36 @@ huma.Register(api, huma.Operation{
 - JSON responses are UTF-8 with HTML escaping disabled
 - Response bodies include a `$schema` pointer to the JSON Schema
 
+### JSON Property Naming
+
+Use **camelCase** for all JSON property names in API request and response bodies. This aligns with Google's protobuf-to-JSON mapping convention.
+
+```go
+type Item struct {
+    ID        string        `json:"id"`
+    InStock   bool          `json:"inStock"`
+    CreatedAt timeutil.Time `json:"createdAt"`
+}
+```
+
+### Firestore Field Naming
+
+Always use **snake_case** for Firestore document field names. Storage naming is independent of the JSON API contract. The mapping between API and storage representations happens in the service layer:
+
+```go
+// API model (camelCase JSON)
+type Profile struct {
+    PhoneNumber string        `json:"phoneNumber"`
+    CreatedAt   timeutil.Time `json:"createdAt"`
+}
+
+// Firestore document (snake_case storage)
+type firestoreProfile struct {
+    PhoneNumber string    `firestore:"phone_number"`
+    CreatedAt   time.Time `firestore:"created_at"`
+}
+```
+
 ---
 
 ## REST API Implementation Guidelines
