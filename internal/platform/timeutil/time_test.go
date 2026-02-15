@@ -434,6 +434,22 @@ func TestAppendCBORTextStringLarge(t *testing.T) {
 	}
 }
 
+func TestAppendCBORTextStringFourByteLength(t *testing.T) {
+	n := 0x10000
+	s := make([]byte, n)
+	for i := range s {
+		s[i] = 'c'
+	}
+	data := appendCBORTextString(nil, string(s))
+	if data[0] != 0x7a {
+		t.Fatalf("expected 4-byte length encoding (0x7a), got 0x%02x", data[0])
+	}
+	length := int(data[1])<<24 | int(data[2])<<16 | int(data[3])<<8 | int(data[4])
+	if length != n {
+		t.Fatalf("expected length %d, got %d", n, length)
+	}
+}
+
 func TestDecodeCBORTextStringEmpty(t *testing.T) {
 	_, err := decodeCBORTextString(nil)
 	if err == nil {
@@ -471,6 +487,29 @@ func TestDecodeCBORTextStringTwoByteLengthTruncated(t *testing.T) {
 	_, err := decodeCBORTextString([]byte{0x79, 0x00})
 	if err == nil {
 		t.Fatal("expected error for truncated 2-byte length")
+	}
+}
+
+func TestDecodeCBORTextStringFourByteLengthTruncated(t *testing.T) {
+	_, err := decodeCBORTextString([]byte{0x7a, 0x00, 0x00})
+	if err == nil {
+		t.Fatal("expected error for truncated 4-byte length")
+	}
+}
+
+func TestDecodeCBORTextStringFourByteLengthValid(t *testing.T) {
+	n := 0x10000
+	s := make([]byte, n)
+	for i := range s {
+		s[i] = 'z'
+	}
+	data := appendCBORTextString(nil, string(s))
+	got, err := decodeCBORTextString(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != string(s) {
+		t.Fatalf("decoded string mismatch")
 	}
 }
 

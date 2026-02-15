@@ -91,8 +91,10 @@ func appendCBORTextString(dst []byte, s string) []byte {
 		dst = append(dst, 0x60+byte(n))
 	case n <= 0xff:
 		dst = append(dst, 0x78, byte(n))
-	default:
+	case n <= 0xffff:
 		dst = append(dst, 0x79, byte(n>>8), byte(n))
+	default:
+		dst = append(dst, 0x7a, byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
 	}
 	return append(dst, s...)
 }
@@ -124,6 +126,12 @@ func decodeCBORTextString(data []byte) (string, error) {
 		}
 		length = int(data[1])<<8 | int(data[2])
 		offset = 3
+	case info == 26:
+		if len(data) < 5 {
+			return "", errors.New("timeutil: truncated CBOR length")
+		}
+		length = int(data[1])<<24 | int(data[2])<<16 | int(data[3])<<8 | int(data[4])
+		offset = 5
 	default:
 		return "", errors.New("timeutil: unsupported CBOR text string length encoding")
 	}
