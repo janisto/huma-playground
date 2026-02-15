@@ -1,7 +1,11 @@
 package firebase
 
 import (
+	"context"
+	"errors"
 	"testing"
+
+	"github.com/janisto/huma-playground/internal/testutil"
 )
 
 func TestClientsCloseReturnsNilWhenFirestoreNil(t *testing.T) {
@@ -22,5 +26,46 @@ func TestConfigStruct(t *testing.T) {
 
 	if cfg.ProjectID != "test-project" {
 		t.Fatalf("expected ProjectID 'test-project', got %s", cfg.ProjectID)
+	}
+}
+
+func TestInitializeClientsWithEmulator(t *testing.T) {
+	testutil.SkipIfEmulatorUnavailable(t)
+	testutil.SetupEmulator(t)
+
+	ctx := context.Background()
+	clients, err := InitializeClients(ctx, Config{ProjectID: testutil.ProjectID})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if clients.Auth == nil {
+		t.Fatal("expected Auth client to be non-nil")
+	}
+	if clients.Firestore == nil {
+		t.Fatal("expected Firestore client to be non-nil")
+	}
+
+	if err := clients.Close(); err != nil {
+		t.Fatalf("expected no error on Close, got %v", err)
+	}
+}
+
+func TestInitializeClientsCancelledContext(t *testing.T) {
+	testutil.SkipIfEmulatorUnavailable(t)
+	testutil.SetupEmulator(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// The Firebase Admin SDK does not consistently check context cancellation
+	// during client initialization, so both success and context.Canceled are
+	// acceptable outcomes.
+	clients, err := InitializeClients(ctx, Config{ProjectID: testutil.ProjectID})
+	if err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected nil or context.Canceled, got %v", err)
+	}
+	if clients != nil {
+		_ = clients.Close()
 	}
 }

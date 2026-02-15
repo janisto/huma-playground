@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -109,5 +110,54 @@ func TestRegisterRoutesItems(t *testing.T) {
 
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+}
+
+func TestRegisterRoutesProfileGet(t *testing.T) {
+	router := newTestRouter()
+
+	req := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-get")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+}
+
+func TestRegisterRoutesProfileUnauthorized(t *testing.T) {
+	router := newTestRouter()
+
+	req := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-noauth")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", resp.Code)
+	}
+
+	var problem huma.ErrorModel
+	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("failed to unmarshal problem: %v", err)
+	}
+	if problem.Status != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", problem.Status)
+	}
+}
+
+func TestRegisterRoutesProfileDelete(t *testing.T) {
+	router := newTestRouter()
+
+	req := httptest.NewRequest(http.MethodDelete, "/profile", nil)
+	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-delete")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.Code)
 	}
 }

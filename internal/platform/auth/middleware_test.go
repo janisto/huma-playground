@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -181,6 +182,45 @@ func TestMiddlewareRejectsDisabledUser(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for disabled user, got %d", rec.Code)
+	}
+}
+
+func TestMiddlewareRejectsUnknownVerifierError(t *testing.T) {
+	verifier := &MockVerifier{Error: errors.New("unexpected verification error")}
+	router := setupTestAPI(verifier, true)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer some-token")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unknown verifier error, got %d", rec.Code)
+	}
+}
+
+func TestCategorizeAuthError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"token expired", ErrTokenExpired, "token_expired"},
+		{"token revoked", ErrTokenRevoked, "token_revoked"},
+		{"user disabled", ErrUserDisabled, "user_disabled"},
+		{"certificate fetch", ErrCertificateFetch, "certificate_fetch_failed"},
+		{"invalid token", ErrInvalidToken, "invalid_token"},
+		{"unknown error", errors.New("something unexpected"), "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := categorizeAuthError(tt.err)
+			if got != tt.want {
+				t.Fatalf("categorizeAuthError(%v) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 

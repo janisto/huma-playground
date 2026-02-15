@@ -254,6 +254,316 @@ func TestTimeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTimeMarshalCBOR(t *testing.T) {
+	ts := NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
+	b, err := ts.MarshalCBOR()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(b) == 0 {
+		t.Fatal("expected non-empty CBOR data")
+	}
+	if b[0] != 0xc0 {
+		t.Fatalf("expected CBOR tag 0 (0xc0), got 0x%02x", b[0])
+	}
+}
+
+func TestTimeMarshalCBORZeroValue(t *testing.T) {
+	var zero Time
+	b, err := zero.MarshalCBOR()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var decoded Time
+	if err := decoded.UnmarshalCBOR(b); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	want := "0001-01-01T00:00:00.000Z"
+	got := decoded.UTC().Format(RFC3339Millis)
+	if got != want {
+		t.Fatalf("expected %s, got %s", want, got)
+	}
+}
+
+func TestTimeMarshalCBORMilliseconds(t *testing.T) {
+	ts := NewTime(time.Date(2024, 6, 1, 12, 0, 0, 123456789, time.UTC))
+	b, err := ts.MarshalCBOR()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if b[0] != 0xc0 {
+		t.Fatalf("expected CBOR tag 0, got 0x%02x", b[0])
+	}
+}
+
+func TestTimeMarshalCBORNonUTCTimezone(t *testing.T) {
+	ts := NewTime(time.Date(2024, 1, 15, 12, 30, 0, 0, time.FixedZone("CET", 2*60*60)))
+	b, err := ts.MarshalCBOR()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var decoded Time
+	if err := decoded.UnmarshalCBOR(b); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	want := "2024-01-15T10:30:00.000Z"
+	got := decoded.UTC().Format(RFC3339Millis)
+	if got != want {
+		t.Fatalf("expected %s, got %s", want, got)
+	}
+}
+
+func TestTimeMarshalUnmarshalCBORRoundtrip(t *testing.T) {
+	original := NewTime(time.Date(2024, 6, 15, 14, 30, 45, 123000000, time.UTC))
+	b, err := original.MarshalCBOR()
+	if err != nil {
+		t.Fatalf("marshal error: %v", err)
+	}
+	var decoded Time
+	if err := decoded.UnmarshalCBOR(b); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	want := original.UTC().Format(RFC3339Millis)
+	got := decoded.UTC().Format(RFC3339Millis)
+	if got != want {
+		t.Fatalf("roundtrip mismatch: want %s, got %s", want, got)
+	}
+}
+
+func TestTimeUnmarshalCBOREmptyData(t *testing.T) {
+	var ts Time
+	err := ts.UnmarshalCBOR(nil)
+	if err == nil {
+		t.Fatal("expected error for empty CBOR data")
+	}
+}
+
+func TestTimeUnmarshalCBORBareTextString(t *testing.T) {
+	s := "2024-01-15T10:30:00.000Z"
+	data := appendCBORTextString(nil, s)
+	var ts Time
+	if err := ts.UnmarshalCBOR(data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ts.Hour() != 10 {
+		t.Fatalf("expected hour 10, got %d", ts.Hour())
+	}
+}
+
+func TestTimeUnmarshalCBORNanoseconds(t *testing.T) {
+	s := "2024-01-15T10:30:00.123456789Z"
+	data := make([]byte, 0, 2+len(s))
+	data = append(data, 0xc0)
+	data = appendCBORTextString(data, s)
+	var ts Time
+	if err := ts.UnmarshalCBOR(data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ts.Nanosecond() != 123456789 {
+		t.Fatalf("expected 123456789ns, got %dns", ts.Nanosecond())
+	}
+}
+
+func TestTimeUnmarshalCBORRFC3339Fallback(t *testing.T) {
+	s := "2024-01-15T10:30:00Z"
+	data := make([]byte, 0, 2+len(s))
+	data = append(data, 0xc0)
+	data = appendCBORTextString(data, s)
+	var ts Time
+	if err := ts.UnmarshalCBOR(data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestTimeUnmarshalCBORInvalidTimeString(t *testing.T) {
+	s := "not-a-date"
+	data := make([]byte, 0, 2+len(s))
+	data = append(data, 0xc0)
+	data = appendCBORTextString(data, s)
+	var ts Time
+	if err := ts.UnmarshalCBOR(data); err == nil {
+		t.Fatal("expected error for invalid time string in CBOR")
+	}
+}
+
+func TestTimeUnmarshalCBORInvalidMajorType(t *testing.T) {
+	var ts Time
+	err := ts.UnmarshalCBOR([]byte{0x01})
+	if err == nil {
+		t.Fatal("expected error for non-text-string CBOR")
+	}
+}
+
+func TestAppendCBORTextStringShort(t *testing.T) {
+	s := "hello"
+	data := appendCBORTextString(nil, s)
+	if data[0] != 0x60+byte(len(s)) {
+		t.Fatalf("expected direct length encoding, got 0x%02x", data[0])
+	}
+	if string(data[1:]) != s {
+		t.Fatalf("expected %q, got %q", s, string(data[1:]))
+	}
+}
+
+func TestAppendCBORTextStringMedium(t *testing.T) {
+	s := make([]byte, 100)
+	for i := range s {
+		s[i] = 'a'
+	}
+	data := appendCBORTextString(nil, string(s))
+	if data[0] != 0x78 {
+		t.Fatalf("expected 1-byte length encoding (0x78), got 0x%02x", data[0])
+	}
+	if data[1] != 100 {
+		t.Fatalf("expected length 100, got %d", data[1])
+	}
+}
+
+func TestAppendCBORTextStringLarge(t *testing.T) {
+	s := make([]byte, 300)
+	for i := range s {
+		s[i] = 'b'
+	}
+	data := appendCBORTextString(nil, string(s))
+	if data[0] != 0x79 {
+		t.Fatalf("expected 2-byte length encoding (0x79), got 0x%02x", data[0])
+	}
+	length := int(data[1])<<8 | int(data[2])
+	if length != 300 {
+		t.Fatalf("expected length 300, got %d", length)
+	}
+}
+
+func TestAppendCBORTextStringFourByteLength(t *testing.T) {
+	n := 0x10000
+	s := make([]byte, n)
+	for i := range s {
+		s[i] = 'c'
+	}
+	data := appendCBORTextString(nil, string(s))
+	if data[0] != 0x7a {
+		t.Fatalf("expected 4-byte length encoding (0x7a), got 0x%02x", data[0])
+	}
+	length := int(data[1])<<24 | int(data[2])<<16 | int(data[3])<<8 | int(data[4])
+	if length != n {
+		t.Fatalf("expected length %d, got %d", n, length)
+	}
+}
+
+func TestDecodeCBORTextStringEmpty(t *testing.T) {
+	_, err := decodeCBORTextString(nil)
+	if err == nil {
+		t.Fatal("expected error for empty input")
+	}
+}
+
+func TestDecodeCBORTextStringNonTextMajorType(t *testing.T) {
+	_, err := decodeCBORTextString([]byte{0x01})
+	if err == nil {
+		t.Fatal("expected error for non-text major type")
+	}
+}
+
+func TestDecodeCBORTextStringShortLength(t *testing.T) {
+	s := "test"
+	data := appendCBORTextString(nil, s)
+	got, err := decodeCBORTextString(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != s {
+		t.Fatalf("expected %q, got %q", s, got)
+	}
+}
+
+func TestDecodeCBORTextStringOneByteLengthTruncated(t *testing.T) {
+	_, err := decodeCBORTextString([]byte{0x78})
+	if err == nil {
+		t.Fatal("expected error for truncated 1-byte length")
+	}
+}
+
+func TestDecodeCBORTextStringTwoByteLengthTruncated(t *testing.T) {
+	_, err := decodeCBORTextString([]byte{0x79, 0x00})
+	if err == nil {
+		t.Fatal("expected error for truncated 2-byte length")
+	}
+}
+
+func TestDecodeCBORTextStringFourByteLengthTruncated(t *testing.T) {
+	_, err := decodeCBORTextString([]byte{0x7a, 0x00, 0x00})
+	if err == nil {
+		t.Fatal("expected error for truncated 4-byte length")
+	}
+}
+
+func TestDecodeCBORTextStringFourByteLengthValid(t *testing.T) {
+	n := 0x10000
+	s := make([]byte, n)
+	for i := range s {
+		s[i] = 'z'
+	}
+	data := appendCBORTextString(nil, string(s))
+	got, err := decodeCBORTextString(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != string(s) {
+		t.Fatalf("decoded string mismatch")
+	}
+}
+
+func TestDecodeCBORTextStringUnsupportedLengthEncoding(t *testing.T) {
+	_, err := decodeCBORTextString([]byte{0x7b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05})
+	if err == nil {
+		t.Fatal("expected error for unsupported length encoding")
+	}
+}
+
+func TestDecodeCBORTextStringTruncatedPayload(t *testing.T) {
+	_, err := decodeCBORTextString([]byte{0x65, 'h', 'e'})
+	if err == nil {
+		t.Fatal("expected error for truncated payload")
+	}
+}
+
+func TestDecodeCBORTextStringOneByteLengthValid(t *testing.T) {
+	s := make([]byte, 50)
+	for i := range s {
+		s[i] = 'x'
+	}
+	data := appendCBORTextString(nil, string(s))
+	got, err := decodeCBORTextString(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != string(s) {
+		t.Fatalf("decoded string mismatch")
+	}
+}
+
+func TestDecodeCBORTextStringTwoByteLengthValid(t *testing.T) {
+	s := make([]byte, 300)
+	for i := range s {
+		s[i] = 'y'
+	}
+	data := appendCBORTextString(nil, string(s))
+	got, err := decodeCBORTextString(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != string(s) {
+		t.Fatalf("decoded string mismatch")
+	}
+}
+
+func TestDecodeCBORTextStringTwoByteLengthTruncatedPayload(t *testing.T) {
+	_, err := decodeCBORTextString([]byte{0x79, 0x01, 0x00, 'a', 'b'})
+	if err == nil {
+		t.Fatal("expected error for truncated 2-byte length payload")
+	}
+}
+
 func TestTimeInStruct(t *testing.T) {
 	type Item struct {
 		ID        string `json:"id"`

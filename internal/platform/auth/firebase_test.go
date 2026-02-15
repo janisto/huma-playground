@@ -1,8 +1,14 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"testing"
+
+	firebase "firebase.google.com/go/v4"
+	fbauth "firebase.google.com/go/v4/auth"
+
+	"github.com/janisto/huma-playground/internal/testutil"
 )
 
 func TestExtractBearerTokenValid(t *testing.T) {
@@ -128,5 +134,164 @@ func TestErrorTypes(t *testing.T) {
 				t.Fatalf("got %q, want %q", tt.err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+func TestNewFirebaseVerifier(t *testing.T) {
+	testutil.SkipIfEmulatorUnavailable(t)
+	testutil.SetupEmulator(t)
+
+	ctx := context.Background()
+	config := &firebase.Config{ProjectID: testutil.ProjectID}
+	fbApp, err := firebase.NewApp(ctx, config)
+	if err != nil {
+		t.Fatalf("failed to create Firebase app: %v", err)
+	}
+
+	ac, err := fbApp.Auth(ctx)
+	if err != nil {
+		t.Fatalf("failed to create auth client: %v", err)
+	}
+
+	verifier := NewFirebaseVerifier(ac)
+	if verifier == nil {
+		t.Fatal("expected non-nil verifier")
+	}
+	if verifier.client != ac {
+		t.Fatal("expected verifier.client to be the provided auth client")
+	}
+}
+
+func TestFirebaseVerifierVerifyValidToken(t *testing.T) {
+	testutil.SkipIfEmulatorUnavailable(t)
+	testutil.SetupEmulator(t)
+
+	ctx := context.Background()
+	testutil.ClearAccounts(t)
+
+	config := &firebase.Config{ProjectID: testutil.ProjectID}
+	fbApp, err := firebase.NewApp(ctx, config)
+	if err != nil {
+		t.Fatalf("failed to create Firebase app: %v", err)
+	}
+
+	ac, err := fbApp.Auth(ctx)
+	if err != nil {
+		t.Fatalf("failed to create auth client: %v", err)
+	}
+
+	result := testutil.CreateTestUser(t, "verify@example.com", "password123")
+
+	verifier := NewFirebaseVerifier(ac)
+	user, err := verifier.Verify(ctx, result.IDToken)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if user.UID == "" {
+		t.Fatal("expected non-empty UID")
+	}
+	if user.Email != "verify@example.com" {
+		t.Fatalf("expected email verify@example.com, got %s", user.Email)
+	}
+}
+
+func TestFirebaseVerifierVerifyInvalidToken(t *testing.T) {
+	testutil.SkipIfEmulatorUnavailable(t)
+	testutil.SetupEmulator(t)
+
+	ctx := context.Background()
+
+	config := &firebase.Config{ProjectID: testutil.ProjectID}
+	fbApp, err := firebase.NewApp(ctx, config)
+	if err != nil {
+		t.Fatalf("failed to create Firebase app: %v", err)
+	}
+
+	ac, err := fbApp.Auth(ctx)
+	if err != nil {
+		t.Fatalf("failed to create auth client: %v", err)
+	}
+
+	verifier := NewFirebaseVerifier(ac)
+	_, err = verifier.Verify(ctx, "invalid-token-string")
+	if err == nil {
+		t.Fatal("expected error for invalid token")
+	}
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expected ErrInvalidToken, got %v", err)
+	}
+}
+
+func TestFirebaseVerifierVerifyRevokedToken(t *testing.T) {
+	testutil.SkipIfEmulatorUnavailable(t)
+	testutil.SetupEmulator(t)
+	testutil.ClearEmulators(t)
+
+	ctx := context.Background()
+
+	config := &firebase.Config{ProjectID: testutil.ProjectID}
+	fbApp, err := firebase.NewApp(ctx, config)
+	if err != nil {
+		t.Fatalf("failed to create Firebase app: %v", err)
+	}
+
+	ac, err := fbApp.Auth(ctx)
+	if err != nil {
+		t.Fatalf("failed to create auth client: %v", err)
+	}
+
+	result := testutil.CreateTestUser(t, "revoke@example.com", "password123")
+
+	if err := ac.RevokeRefreshTokens(ctx, result.LocalID); err != nil {
+		t.Fatalf("failed to revoke tokens: %v", err)
+	}
+
+	verifier := NewFirebaseVerifier(ac)
+	_, verifyErr := verifier.Verify(ctx, result.IDToken)
+	if verifyErr == nil {
+		t.Skip("emulator does not enforce token revocation checks")
+	}
+	if !errors.Is(verifyErr, ErrTokenRevoked) && !errors.Is(verifyErr, ErrInvalidToken) {
+		t.Fatalf("expected ErrTokenRevoked or ErrInvalidToken, got %v", verifyErr)
+	}
+}
+
+func TestFirebaseVerifierVerifyDisabledUser(t *testing.T) {
+	testutil.SkipIfEmulatorUnavailable(t)
+	testutil.SetupEmulator(t)
+	testutil.ClearAccounts(t)
+
+	ctx := context.Background()
+
+	config := &firebase.Config{ProjectID: testutil.ProjectID}
+	fbApp, err := firebase.NewApp(ctx, config)
+	if err != nil {
+		t.Fatalf("failed to create Firebase app: %v", err)
+	}
+
+	ac, err := fbApp.Auth(ctx)
+	if err != nil {
+		t.Fatalf("failed to create auth client: %v", err)
+	}
+
+	result := testutil.CreateTestUser(t, "disabled@example.com", "password123")
+
+	disabled := false
+	_, err = ac.UpdateUser(ctx, result.LocalID, (&fbauth.UserToUpdate{}).Disabled(true))
+	if err != nil {
+		t.Logf("emulator may not support DisableUser: %v", err)
+	} else {
+		disabled = true
+	}
+
+	if disabled {
+		verifier := NewFirebaseVerifier(ac)
+		_, verifyErr := verifier.Verify(ctx, result.IDToken)
+		if verifyErr == nil {
+			t.Skip("emulator does not enforce disable check on token verification")
+		}
+		if !errors.Is(verifyErr, ErrUserDisabled) && !errors.Is(verifyErr, ErrInvalidToken) {
+			t.Fatalf("expected ErrUserDisabled or ErrInvalidToken, got %v", verifyErr)
+		}
 	}
 }

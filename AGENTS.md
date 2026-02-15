@@ -28,7 +28,7 @@ Keep output and code/doc comments minimal and purposeful.
 - **Ask when unsure:** If requirements are ambiguous, seek clarification rather than guessing.
 - **Well-supported dependencies:** Prefer widely used, well-documented libraries with active maintenance. Ask permission before adding new dependencies.
 - **Security first:** Never exfiltrate secrets; avoid network calls unless explicitly required. Do not log PII or secrets.
-- **After editing code:** Run `go build ./...`, `go test ./...`, and `golangci-lint run ./...` to ensure build/test/lint compliance.
+- **After editing code:** Run `go build ./...`, `just test`, and `golangci-lint run ./...` to ensure build/test/lint compliance.
 
 ---
 
@@ -75,7 +75,7 @@ Key recipes:
 - `just fresh` - Recreate project from clean state
 - `just emulators` - Start Firebase emulators (Auth + Firestore)
 
-All commands in this document can be run via their corresponding `just` recipes.
+The Justfile uses `set dotenv-load` so all recipes automatically load `.env`. This means `just test` and `just coverage` pick up emulator environment variables (e.g. `FIRESTORE_EMULATOR_HOST`) without manual export, ensuring integration tests run when emulators are available. Always prefer `just test` over raw `go test ./...` and `just coverage` over manual coverage commands.
 
 ---
 
@@ -116,27 +116,16 @@ The server starts on port 8080 with endpoints:
 Run all tests:
 
 ```bash
-go test ./...
+just test
 ```
 
-Run tests with verbose output:
+Run tests with coverage report:
 
 ```bash
-go test -v ./...
+just coverage
 ```
 
-Run tests with coverage:
-
-```bash
-go test -v -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
-```
-
-Generate coverage report:
-
-```bash
-go tool cover -func=coverage.out
-go tool cover -html=coverage.out -o coverage.html
-```
+The coverage recipe runs `go test -v -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...`, then generates both a function summary (`go tool cover -func`) and an HTML report (`coverage.html`). Use `go tool cover -func=coverage.out` for the accurate total; per-package percentages shown during the test run are misleadingly low due to `-coverpkg=./...` cross-package instrumentation.
 
 ---
 
@@ -367,6 +356,36 @@ huma.Register(api, huma.Operation{
 
 - JSON responses are UTF-8 with HTML escaping disabled
 - Response bodies include a `$schema` pointer to the JSON Schema
+
+### JSON Property Naming
+
+Use **camelCase** for all JSON property names in API request and response bodies. This aligns with Google's protobuf-to-JSON mapping convention.
+
+```go
+type Item struct {
+    ID        string        `json:"id"`
+    InStock   bool          `json:"inStock"`
+    CreatedAt timeutil.Time `json:"createdAt"`
+}
+```
+
+### Firestore Field Naming
+
+Always use **snake_case** for Firestore document field names. Storage naming is independent of the JSON API contract. The mapping between API and storage representations happens in the service layer:
+
+```go
+// API model (camelCase JSON)
+type Profile struct {
+    PhoneNumber string        `json:"phoneNumber"`
+    CreatedAt   timeutil.Time `json:"createdAt"`
+}
+
+// Firestore document (snake_case storage)
+type firestoreProfile struct {
+    PhoneNumber string    `firestore:"phone_number"`
+    CreatedAt   time.Time `firestore:"created_at"`
+}
+```
 
 ---
 

@@ -18,14 +18,9 @@ const (
 	fakeAPIKey            = "fake-api-key" //nolint:gosec // Test-only fake key for emulator
 )
 
-// FirestoreAvailable checks if the Firestore emulator is reachable.
-func FirestoreAvailable() bool {
-	return emulatorAvailable(FirestoreEmulatorHost)
-}
-
-// AuthAvailable checks if the Auth emulator is reachable.
-func AuthAvailable() bool {
-	return emulatorAvailable(AuthEmulatorHost)
+// EmulatorAvailable checks if the Firebase emulators (Auth + Firestore) are reachable.
+func EmulatorAvailable() bool {
+	return emulatorAvailable(AuthEmulatorHost) && emulatorAvailable(FirestoreEmulatorHost)
 }
 
 func emulatorAvailable(host string) bool {
@@ -40,19 +35,11 @@ func emulatorAvailable(host string) bool {
 	return true
 }
 
-// SkipIfFirestoreUnavailable skips the test if the Firestore emulator is not running.
-func SkipIfFirestoreUnavailable(t *testing.T) {
+// SkipIfEmulatorUnavailable skips the test if the Firebase emulators are not running.
+func SkipIfEmulatorUnavailable(t *testing.T) {
 	t.Helper()
-	if !FirestoreAvailable() {
-		t.Skip("Firestore emulator not available")
-	}
-}
-
-// SkipIfAuthUnavailable skips the test if the Auth emulator is not running.
-func SkipIfAuthUnavailable(t *testing.T) {
-	t.Helper()
-	if !AuthAvailable() {
-		t.Skip("Auth emulator not available")
+	if !EmulatorAvailable() {
+		t.Skip("Firebase emulators not available")
 	}
 }
 
