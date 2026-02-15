@@ -17,7 +17,7 @@ func setupFirestoreTest(t *testing.T) (*FirestoreStore, func()) {
 
 	testutil.SkipIfFirestoreUnavailable(t)
 	testutil.SetupEmulator(t)
-	testutil.ClearFirestore(t)
+	testutil.ClearEmulators(t)
 
 	ctx := context.Background()
 	client, err := firestore.NewClient(ctx, testutil.ProjectID)
@@ -432,4 +432,106 @@ func TestFirestoreConcurrentDelete(t *testing.T) {
 
 func TestFirestoreInterfaceCompliance(t *testing.T) {
 	var _ Service = (*FirestoreStore)(nil)
+}
+
+func TestCategorizeError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"already exists", ErrAlreadyExists, "already_exists"},
+		{"not found", ErrNotFound, "not_found"},
+		{"internal error", errors.New("unexpected"), "internal_error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := categorizeError(tt.err)
+			if got != tt.want {
+				t.Fatalf("categorizeError(%v) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewFirestoreStore(t *testing.T) {
+	testutil.SkipIfFirestoreUnavailable(t)
+	testutil.SetupEmulator(t)
+
+	ctx := context.Background()
+	client, err := firestore.NewClient(ctx, testutil.ProjectID)
+	if err != nil {
+		t.Fatalf("failed to create Firestore client: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	store := NewFirestoreStore(client)
+	if store == nil {
+		t.Fatal("expected non-nil store")
+	}
+	if store.client != client {
+		t.Fatal("expected store.client to be the provided client")
+	}
+}
+
+func TestFirestoreGetCancelledContext(t *testing.T) {
+	store, cleanup := setupFirestoreTest(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := store.Get(ctx, "user-canceled")
+	if err == nil {
+		t.Fatal("expected error with canceled context")
+	}
+	if errors.Is(err, ErrNotFound) {
+		t.Fatal("expected non-NotFound error, got ErrNotFound")
+	}
+}
+
+func TestFirestoreCreateCancelledContext(t *testing.T) {
+	store, cleanup := setupFirestoreTest(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := store.Create(ctx, "user-canceled", CreateParams{
+		Firstname: "Test",
+		Lastname:  "User",
+		Email:     "test@example.com",
+		Terms:     true,
+	})
+	if err == nil {
+		t.Fatal("expected error with canceled context")
+	}
+}
+
+func TestFirestoreUpdateCancelledContext(t *testing.T) {
+	store, cleanup := setupFirestoreTest(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	newName := "Test"
+	_, err := store.Update(ctx, "user-canceled", UpdateParams{Firstname: &newName})
+	if err == nil {
+		t.Fatal("expected error with canceled context")
+	}
+}
+
+func TestFirestoreDeleteCancelledContext(t *testing.T) {
+	store, cleanup := setupFirestoreTest(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := store.Delete(ctx, "user-canceled")
+	if err == nil {
+		t.Fatal("expected error with canceled context")
+	}
 }

@@ -3,6 +3,7 @@ package profile
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -427,6 +428,82 @@ func TestDeleteProfileTwice(t *testing.T) {
 
 	if resp2.Code != http.StatusNotFound {
 		t.Fatalf("second delete: expected 404, got %d", resp2.Code)
+	}
+}
+
+func TestCreateProfileInternalServerError(t *testing.T) {
+	svc := &mockService{err: errors.New("unexpected database error")}
+	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	router := newTestRouter(svc, verifier)
+
+	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"+358401234567","marketing":false,"terms":true}`
+	req := httptest.NewRequest(http.MethodPost, "/profile", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var problem huma.ErrorModel
+	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("json unmarshal: %v", err)
+	}
+	if problem.Status != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", problem.Status)
+	}
+}
+
+func TestGetProfileInternalServerError(t *testing.T) {
+	svc := &mockService{err: errors.New("unexpected database error")}
+	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	router := newTestRouter(svc, verifier)
+
+	req := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestUpdateProfileInternalServerError(t *testing.T) {
+	svc := &mockService{err: errors.New("unexpected database error")}
+	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	router := newTestRouter(svc, verifier)
+
+	body := `{"firstname":"Jane"}`
+	req := httptest.NewRequest(http.MethodPatch, "/profile", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestDeleteProfileInternalServerError(t *testing.T) {
+	svc := &mockService{err: errors.New("unexpected database error")}
+	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	router := newTestRouter(svc, verifier)
+
+	req := httptest.NewRequest(http.MethodDelete, "/profile", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", resp.Code, resp.Body.String())
 	}
 }
 

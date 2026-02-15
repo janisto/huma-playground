@@ -295,3 +295,77 @@ func TestMockConcurrentAccess(t *testing.T) {
 func TestMockInterfaceCompliance(t *testing.T) {
 	var _ Service = (*MockProfileService)(nil)
 }
+
+func TestMockCreateEmailNormalization(t *testing.T) {
+	svc := NewMockProfileService()
+	ctx := context.Background()
+
+	p, err := svc.Create(ctx, "user-norm", CreateParams{
+		Firstname: "Test",
+		Email:     "  UPPER@EXAMPLE.COM  ",
+		Terms:     true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Email != "upper@example.com" {
+		t.Fatalf("expected normalized email, got %q", p.Email)
+	}
+}
+
+func TestMockCreatePhoneNormalization(t *testing.T) {
+	svc := NewMockProfileService()
+	ctx := context.Background()
+
+	p, err := svc.Create(ctx, "user-phone", CreateParams{
+		Firstname:   "Test",
+		PhoneNumber: "  +358401234567  ",
+		Terms:       true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.PhoneNumber != "+358401234567" {
+		t.Fatalf("expected trimmed phone, got %q", p.PhoneNumber)
+	}
+}
+
+func TestMockUpdateEmailNormalization(t *testing.T) {
+	svc := NewMockProfileService()
+	ctx := context.Background()
+
+	_, _ = svc.Create(ctx, "user-upd-email", CreateParams{
+		Firstname: "Test",
+		Email:     "test@example.com",
+		Terms:     true,
+	})
+
+	newEmail := "  UPDATED@EXAMPLE.COM  "
+	updated, err := svc.Update(ctx, "user-upd-email", UpdateParams{Email: &newEmail})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated.Email != "updated@example.com" {
+		t.Fatalf("expected normalized email, got %q", updated.Email)
+	}
+}
+
+func TestMockUpdatePhoneNormalization(t *testing.T) {
+	svc := NewMockProfileService()
+	ctx := context.Background()
+
+	_, _ = svc.Create(ctx, "user-upd-phone", CreateParams{
+		Firstname:   "Test",
+		PhoneNumber: "+358401234567",
+		Terms:       true,
+	})
+
+	newPhone := "  +358409876543  "
+	updated, err := svc.Update(ctx, "user-upd-phone", UpdateParams{PhoneNumber: &newPhone})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated.PhoneNumber != "+358409876543" {
+		t.Fatalf("expected trimmed phone, got %q", updated.PhoneNumber)
+	}
+}
