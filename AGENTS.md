@@ -108,6 +108,12 @@ The server starts on port 8080 with endpoints:
 - `http://localhost:8080/health` - health probe
 - `http://localhost:8080/v1/api-docs` - interactive API explorer
 - `http://localhost:8080/v1/openapi` - OpenAPI schema
+- `http://localhost:8080/v1/github/owners/{owner}` - GitHub owner info
+- `http://localhost:8080/v1/github/owners/{owner}/repos` - GitHub owner repos
+- `http://localhost:8080/v1/github/repos/{owner}/{repo}` - GitHub repo details
+- `http://localhost:8080/v1/github/repos/{owner}/{repo}/activity` - GitHub repo activity
+- `http://localhost:8080/v1/github/repos/{owner}/{repo}/languages` - GitHub repo languages
+- `http://localhost:8080/v1/github/repos/{owner}/{repo}/tags` - GitHub repo tags
 
 ---
 
@@ -160,6 +166,7 @@ cmd/server/            # Application entrypoint and HTTP server bootstrap
 internal/http/         # HTTP transport layer
   health/              # Health check handler (unversioned)
   v1/                  # Versioned API (v1)
+    github/            # GitHub API proxy endpoint handlers
     hello/             # Hello endpoint handlers
     items/             # Items endpoint handlers
     profile/           # Profile endpoint handlers (requires auth)
@@ -173,6 +180,7 @@ internal/platform/     # Cross-cutting infrastructure
   respond/             # Panic recovery and Problem Details
   timeutil/            # Time formatting utilities
 internal/service/      # Business logic and data access
+  github/              # GitHub API client and service
   profile/             # Profile service with Firestore backend
 internal/testutil/     # Test utilities (emulator helpers)
 ```
@@ -656,6 +664,7 @@ func TestHandler(t *testing.T) {
 - Don't log secrets or PII; ensure logs redact sensitive fields.
 - Typical env vars:
   - `FIREBASE_PROJECT_ID` (use `demo-*` prefix for emulator-only mode in development)
+  - `GITHUB_TOKEN` (optional GitHub personal access token for higher rate limits)
   - `GOOGLE_APPLICATION_CREDENTIALS` (path to service account JSON; uses ADC if not set)
   - `GOOGLE_CLOUD_PROJECT`, `GCP_PROJECT`, `GCLOUD_PROJECT`, or `PROJECT_ID` (for Cloud Trace correlation)
 

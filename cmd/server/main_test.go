@@ -23,6 +23,7 @@ import (
 	applog "github.com/janisto/huma-playground/internal/platform/logging"
 	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 	"github.com/janisto/huma-playground/internal/platform/respond"
+	githubsvc "github.com/janisto/huma-playground/internal/service/github"
 	profilesvc "github.com/janisto/huma-playground/internal/service/profile"
 )
 
@@ -53,7 +54,8 @@ func testServer() http.Handler {
 		api := humachi.New(r, cfg)
 		verifier := &auth.MockVerifier{User: auth.TestUser()}
 		profileService := profilesvc.NewMockProfileService()
-		routes.Register(api, verifier, profileService)
+		githubService := githubsvc.NewMockGitHubService()
+		routes.Register(api, verifier, profileService, githubService)
 		huma.Get(api, "/panic", func(ctx context.Context, _ *struct{}) (*struct{}, error) {
 			panic("boom")
 		})
@@ -510,5 +512,20 @@ func TestCBORAcceptHeader(t *testing.T) {
 	}
 	if ct := resp.Header().Get("Content-Type"); ct != "application/cbor" {
 		t.Fatalf("expected application/cbor content type, got %q", ct)
+	}
+}
+
+func TestGitHubOwnerEndpoint(t *testing.T) {
+	srv := testServer()
+	req := httptest.NewRequest(http.MethodGet, "/v1/github/owners/octocat", nil)
+	req.Header.Set(chimiddleware.RequestIDHeader, "test-github-owner")
+	resp := httptest.NewRecorder()
+	srv.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	if ct := resp.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("expected application/json, got %q", ct)
 	}
 }

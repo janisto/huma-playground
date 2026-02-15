@@ -23,6 +23,7 @@ import (
 	applog "github.com/janisto/huma-playground/internal/platform/logging"
 	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 	"github.com/janisto/huma-playground/internal/platform/respond"
+	githubsvc "github.com/janisto/huma-playground/internal/service/github"
 	profilesvc "github.com/janisto/huma-playground/internal/service/profile"
 )
 
@@ -65,6 +66,14 @@ func main() {
 	// Create auth verifier and profile service
 	verifier := auth.NewFirebaseVerifier(firebaseClients.Auth)
 	profileService := profilesvc.NewFirestoreStore(firebaseClients.Firestore)
+
+	// Create GitHub service
+	githubHTTPClient := &http.Client{Timeout: 10 * time.Second}
+	var githubOpts []githubsvc.Option
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		githubOpts = append(githubOpts, githubsvc.WithToken(token))
+	}
+	githubService := githubsvc.NewClient(githubHTTPClient, githubOpts...)
 
 	router := chi.NewRouter()
 	router.NotFound(respond.NotFoundHandler())
@@ -130,7 +139,7 @@ func main() {
 			},
 		}
 
-		routes.Register(api, verifier, profileService)
+		routes.Register(api, verifier, profileService, githubService)
 	})
 
 	port := os.Getenv("PORT")

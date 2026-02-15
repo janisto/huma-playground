@@ -32,6 +32,8 @@ func CORS() func(http.Handler) http.Handler {
 		ExposedHeaders: []string{
 			"Link",
 			"Location",
+			"Retry-After",
+			"X-RateLimit-Reset",
 			"X-Request-ID",
 		},
 		MaxAge: 300,
