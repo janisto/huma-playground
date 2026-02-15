@@ -29,7 +29,7 @@ func newTestRouter() chi.Router {
 		respond.Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("ItemsTest", "test"))
-	Register(api)
+	Register(api, "")
 	return router
 }
 

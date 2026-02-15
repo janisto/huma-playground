@@ -293,6 +293,31 @@ func TestUpdateProfileSuccess(t *testing.T) {
 	}
 }
 
+func TestUpdateProfileEmptyBody(t *testing.T) {
+	svc := &mockService{profile: testProfile()}
+	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	router := newTestRouter(svc, verifier)
+
+	req := httptest.NewRequest(http.MethodPatch, "/profile", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var problem huma.ErrorModel
+	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("json unmarshal: %v", err)
+	}
+	if problem.Status != http.StatusUnprocessableEntity {
+		t.Errorf("expected status 422, got %d", problem.Status)
+	}
+}
+
 func TestUpdateProfileNotFound(t *testing.T) {
 	svc := &mockService{err: profilesvc.ErrNotFound}
 	verifier := &auth.MockVerifier{User: auth.TestUser()}

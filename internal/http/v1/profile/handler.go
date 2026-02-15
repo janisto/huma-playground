@@ -83,6 +83,9 @@ func Register(api huma.API, svc profilesvc.Service) {
 		},
 	}, func(ctx context.Context, input *ProfileUpdateInput) (*ProfileUpdateOutput, error) {
 		user := auth.UserFromContext(ctx)
+		if !hasProfileUpdateFields(input) {
+			return nil, huma.Error422UnprocessableEntity("at least one field must be provided")
+		}
 
 		profile, err := svc.Update(ctx, user.UID, profilesvc.UpdateParams{
 			Firstname:   input.Body.Firstname,
@@ -118,6 +121,14 @@ func Register(api huma.API, svc profilesvc.Service) {
 		}
 		return nil, nil
 	})
+}
+
+func hasProfileUpdateFields(input *ProfileUpdateInput) bool {
+	return input.Body.Firstname != nil ||
+		input.Body.Lastname != nil ||
+		input.Body.Email != nil ||
+		input.Body.PhoneNumber != nil ||
+		input.Body.Marketing != nil
 }
 
 func mapServiceError(err error) error {

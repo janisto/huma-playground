@@ -37,6 +37,11 @@ func TestExtractBearerTokenValid(t *testing.T) {
 			header: "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig",
 			want:   "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig",
 		},
+		{
+			name:   "extra spaces around token",
+			header: "Bearer   token123   ",
+			want:   "token123",
+		},
 	}
 
 	for _, tt := range tests {
@@ -79,6 +84,18 @@ func TestExtractBearerTokenInvalid(t *testing.T) {
 		{
 			name:   "bearer without token",
 			header: "Bearer",
+		},
+		{
+			name:   "bearer with trailing space and no token",
+			header: "Bearer ",
+		},
+		{
+			name:   "bearer with whitespace token only",
+			header: "Bearer    ",
+		},
+		{
+			name:   "bearer token with extra segment",
+			header: "Bearer token123 extra",
 		},
 		{
 			name:   "only spaces",

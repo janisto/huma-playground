@@ -87,8 +87,8 @@ func ExtractBearerToken(header string) (string, error) {
 	if header == "" {
 		return "", ErrNoToken
 	}
-	parts := strings.SplitN(header, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+	parts := strings.Fields(header)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") || parts[1] == "" {
 		return "", ErrInvalidToken
 	}
 	return parts[1], nil

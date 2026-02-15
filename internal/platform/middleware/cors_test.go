@@ -31,7 +31,7 @@ func TestCORSAllowsGETOrigin(t *testing.T) {
 	if exposeHeaders == "" {
 		t.Fatalf("expected Access-Control-Expose-Headers to be set")
 	}
-	for _, h := range []string{"Link", "Location", "X-Request-Id"} {
+	for _, h := range []string{"Link", "Location", "Retry-After", "X-RateLimit-Reset", "X-Request-Id"} {
 		if !containsHeader(exposeHeaders, h) {
 			t.Fatalf("expected Access-Control-Expose-Headers to contain %q, got %q", h, exposeHeaders)
 		}
