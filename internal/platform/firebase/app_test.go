@@ -61,8 +61,11 @@ func TestInitializeClientsCancelledContext(t *testing.T) {
 	// The Firebase Admin SDK does not consistently check context cancellation
 	// during client initialization, so both success and context.Canceled are
 	// acceptable outcomes.
-	_, err := InitializeClients(ctx, Config{ProjectID: testutil.ProjectID})
+	clients, err := InitializeClients(ctx, Config{ProjectID: testutil.ProjectID})
 	if err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected nil or context.Canceled, got %v", err)
+	}
+	if clients != nil {
+		_ = clients.Close()
 	}
 }
