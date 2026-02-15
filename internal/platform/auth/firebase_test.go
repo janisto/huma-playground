@@ -138,7 +138,7 @@ func TestErrorTypes(t *testing.T) {
 }
 
 func TestNewFirebaseVerifier(t *testing.T) {
-	testutil.SkipIfAuthUnavailable(t)
+	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
 	ctx := context.Background()
@@ -163,7 +163,7 @@ func TestNewFirebaseVerifier(t *testing.T) {
 }
 
 func TestFirebaseVerifierVerifyValidToken(t *testing.T) {
-	testutil.SkipIfAuthUnavailable(t)
+	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
 	ctx := context.Background()
@@ -196,7 +196,7 @@ func TestFirebaseVerifierVerifyValidToken(t *testing.T) {
 }
 
 func TestFirebaseVerifierVerifyInvalidToken(t *testing.T) {
-	testutil.SkipIfAuthUnavailable(t)
+	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
 	ctx := context.Background()
@@ -223,7 +223,7 @@ func TestFirebaseVerifierVerifyInvalidToken(t *testing.T) {
 }
 
 func TestFirebaseVerifierVerifyRevokedToken(t *testing.T) {
-	testutil.SkipIfAuthUnavailable(t)
+	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 	testutil.ClearEmulators(t)
 
@@ -257,7 +257,7 @@ func TestFirebaseVerifierVerifyRevokedToken(t *testing.T) {
 }
 
 func TestFirebaseVerifierVerifyDisabledUser(t *testing.T) {
-	testutil.SkipIfAuthUnavailable(t)
+	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 	testutil.ClearAccounts(t)
 

@@ -2,6 +2,7 @@ package firebase
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/janisto/huma-playground/internal/testutil"
@@ -29,8 +30,7 @@ func TestConfigStruct(t *testing.T) {
 }
 
 func TestInitializeClientsWithEmulator(t *testing.T) {
-	testutil.SkipIfFirestoreUnavailable(t)
-	testutil.SkipIfAuthUnavailable(t)
+	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
 	ctx := context.Background()
@@ -52,14 +52,17 @@ func TestInitializeClientsWithEmulator(t *testing.T) {
 }
 
 func TestInitializeClientsCancelledContext(t *testing.T) {
-	testutil.SkipIfFirestoreUnavailable(t)
+	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
+	// The Firebase Admin SDK does not consistently check context cancellation
+	// during client initialization, so both success and context.Canceled are
+	// acceptable outcomes.
 	_, err := InitializeClients(ctx, Config{ProjectID: testutil.ProjectID})
-	if err == nil {
-		t.Log("InitializeClients succeeded with canceled context (SDK may not check context during init)")
+	if err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected nil or context.Canceled, got %v", err)
 	}
 }

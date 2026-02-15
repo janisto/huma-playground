@@ -15,7 +15,7 @@ import (
 func setupFirestoreTest(t *testing.T) (*FirestoreStore, func()) {
 	t.Helper()
 
-	testutil.SkipIfFirestoreUnavailable(t)
+	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 	testutil.ClearEmulators(t)
 
@@ -456,7 +456,7 @@ func TestCategorizeError(t *testing.T) {
 }
 
 func TestNewFirestoreStore(t *testing.T) {
-	testutil.SkipIfFirestoreUnavailable(t)
+	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
 	ctx := context.Background()
