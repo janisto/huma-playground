@@ -113,6 +113,7 @@ func TestRequestLoggerFallsBackToRequestID(t *testing.T) {
 		traceID := TraceIDFromContext(r.Context())
 		if traceID == nil {
 			t.Fatal("expected trace ID in context")
+			return
 		}
 		if *traceID != "test-request-id" {
 			t.Fatalf("expected trace ID to be request ID 'test-request-id', got %s", *traceID)

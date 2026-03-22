@@ -239,6 +239,7 @@ func TestUserFromContextReturnsUser(t *testing.T) {
 	user := UserFromContext(ctx)
 	if user == nil {
 		t.Fatal("expected user from context")
+		return
 	}
 	if user.UID != expected.UID {
 		t.Fatalf("expected UID %s, got %s", expected.UID, user.UID)

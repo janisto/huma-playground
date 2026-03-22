@@ -416,6 +416,7 @@ func TestOpenAPICBORContentTypes(t *testing.T) {
 	resp200 := op.Responses["200"]
 	if resp200 == nil {
 		t.Fatal("expected 200 response")
+		return
 	}
 	if _, ok := resp200.Content["application/json"]; !ok {
 		t.Fatal("expected application/json in 200 response content")
