@@ -85,16 +85,16 @@ func (t *Time) UnmarshalCBOR(data []byte) error {
 
 // appendCBORTextString appends a CBOR text string (major type 3) to dst.
 func appendCBORTextString(dst []byte, s string) []byte {
-	n := len(s)
+	n := uint(len(s))
 	switch {
 	case n <= 23:
 		dst = append(dst, 0x60+byte(n))
 	case n <= 0xff:
 		dst = append(dst, 0x78, byte(n))
 	case n <= 0xffff:
-		dst = append(dst, 0x79, byte(n>>8), byte(n))
+		dst = append(dst, 0x79, byte(n>>8&0xff), byte(n&0xff))
 	default:
-		dst = append(dst, 0x7a, byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+		dst = append(dst, 0x7a, byte(n>>24&0xff), byte(n>>16&0xff), byte(n>>8&0xff), byte(n&0xff))
 	}
 	return append(dst, s...)
 }

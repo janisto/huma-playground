@@ -23,7 +23,7 @@ func TestAccessLoggerUsesRequestLogger(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/tea", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/tea", nil)
 	req = req.WithContext(contextWithLogger(req.Context(), logger))
 	resp := httptest.NewRecorder()
 
@@ -63,7 +63,7 @@ func TestRequestLoggerMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -89,7 +89,7 @@ func TestRequestLoggerWithTraceHeader(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	req.Header.Set("traceparent", "00-3d23d071b5bfd6579171efce907685cb-08f067aa0ba902b7-01")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
@@ -113,6 +113,7 @@ func TestRequestLoggerFallsBackToRequestID(t *testing.T) {
 		traceID := TraceIDFromContext(r.Context())
 		if traceID == nil {
 			t.Fatal("expected trace ID in context")
+			return
 		}
 		if *traceID != "test-request-id" {
 			t.Fatalf("expected trace ID to be request ID 'test-request-id', got %s", *traceID)
@@ -128,7 +129,7 @@ func TestRequestLoggerFallsBackToRequestID(t *testing.T) {
 		})
 	}(RequestLogger()(inner))
 
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 

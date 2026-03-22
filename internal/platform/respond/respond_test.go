@@ -32,7 +32,7 @@ func TestNotFoundHandlerReturnsProblemDetails(t *testing.T) {
 	router := chi.NewRouter()
 	router.NotFound(NotFoundHandler())
 
-	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -75,7 +75,7 @@ func TestMethodNotAllowedHandlerReturnsProblemDetails(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -126,7 +126,7 @@ func TestRecovererReturnsProblemDetails(t *testing.T) {
 		panic("boom")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/panic", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -167,7 +167,7 @@ func TestRecovererRePanicsOnErrAbortHandler(t *testing.T) {
 		}
 	}()
 
-	req := httptest.NewRequest(http.MethodGet, "/abort", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/abort", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -179,7 +179,7 @@ func TestWriteRedirect(t *testing.T) {
 		WriteRedirect(w, r, "/destination", http.StatusMovedPermanently)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/redirect", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/redirect", nil)
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -202,7 +202,7 @@ func TestStatus304NotModifiedHasNoBody(t *testing.T) {
 		return nil, Status304NotModified()
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/etag", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/etag", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "test-304-req")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -278,7 +278,7 @@ func TestRecovererSkipsWriteWhenHeaderAlreadyWritten(t *testing.T) {
 		panic("panic after write")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/partial", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/partial", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -295,7 +295,7 @@ func TestNotFoundHandlerReturnsCBORWhenAccepted(t *testing.T) {
 	router := chi.NewRouter()
 	router.NotFound(NotFoundHandler())
 
-	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil)
 	req.Header.Set("Accept", "application/cbor")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -326,7 +326,7 @@ func TestMethodNotAllowedHandlerReturnsCBORWhenAccepted(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", nil)
 	req.Header.Set("Accept", "application/cbor")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -362,7 +362,7 @@ func TestRecovererReturnsCBORWhenAccepted(t *testing.T) {
 		panic("boom")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/panic", nil)
 	req.Header.Set("Accept", "application/cbor")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -556,7 +556,7 @@ func TestAcceptsCBOREdgeCases(t *testing.T) {
 			router := chi.NewRouter()
 			router.NotFound(NotFoundHandler())
 
-			req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil)
 			if tt.accept != "" {
 				req.Header.Set("Accept", tt.accept)
 			}
@@ -599,7 +599,7 @@ func TestAllowedMethodsReturned(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	req := httptest.NewRequest(http.MethodDelete, "/resource", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/resource", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -620,7 +620,7 @@ func TestNotFoundHandlerWithEmptyPath(t *testing.T) {
 	router := chi.NewRouter()
 	router.NotFound(NotFoundHandler())
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -649,7 +649,7 @@ func TestRecovererWithErrorPanic(t *testing.T) {
 		panic(errors.New("wrapped error"))
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/panic-error", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/panic-error", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -673,7 +673,7 @@ func TestMethodNotAllowedWithRawPath(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/path%2Fencoded", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/path%2Fencoded", nil)
 	req.URL.RawPath = "/path%2Fencoded"
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -692,7 +692,7 @@ func TestMethodNotAllowedWithRawPath(t *testing.T) {
 }
 
 func TestAllowedMethodsNilRouteContext(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	methods := allowedMethods(req)
 	if methods != nil {
 		t.Fatalf("expected nil for request without chi route context, got %v", methods)
@@ -703,7 +703,7 @@ func TestVaryHeaderPresent(t *testing.T) {
 	router := chi.NewRouter()
 	router.NotFound(NotFoundHandler())
 
-	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil)
 	req.Header.Set("Accept", "application/json")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -731,7 +731,7 @@ func TestVaryHeaderMergesWithExisting(t *testing.T) {
 		NotFoundHandler().ServeHTTP(w, r)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil)
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -761,7 +761,7 @@ func TestVaryHeaderNoDuplicates(t *testing.T) {
 		NotFoundHandler().ServeHTTP(w, r)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil)
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -783,7 +783,7 @@ func TestJSONResponseHasNoHTMLEscaping(t *testing.T) {
 	router := chi.NewRouter()
 	router.NotFound(NotFoundHandler())
 
-	req := httptest.NewRequest(http.MethodGet, "/path?foo=<bar>&baz=1", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/path?foo=<bar>&baz=1", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -865,7 +865,7 @@ func TestAllowedMethodsEmptyRoutePath(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", nil)
 	req.URL.Path = ""
 	req.URL.RawPath = ""
 	resp := httptest.NewRecorder()
@@ -880,7 +880,7 @@ func TestSchemaURLUsesHTTPSWhenForwardedProtoSet(t *testing.T) {
 	router := chi.NewRouter()
 	router.NotFound(NotFoundHandler())
 
-	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil)
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Host = "example.com"
 	resp := httptest.NewRecorder()
@@ -907,7 +907,12 @@ func TestSchemaURLUsesHTTPSWhenTLSPresent(t *testing.T) {
 	router := chi.NewRouter()
 	router.NotFound(NotFoundHandler())
 
-	req := httptest.NewRequest(http.MethodGet, "https://secure.example.com/missing", nil)
+	req := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"https://secure.example.com/missing",
+		nil,
+	)
 	req.TLS = &tls.ConnectionState{}
 	req.Host = "secure.example.com"
 	resp := httptest.NewRecorder()
@@ -949,7 +954,7 @@ func TestWriteRedirectVariousCodes(t *testing.T) {
 				WriteRedirect(w, r, tt.location, tt.code)
 			})
 
-			req := httptest.NewRequest(http.MethodGet, "/redirect", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/redirect", nil)
 			resp := httptest.NewRecorder()
 			handler.ServeHTTP(resp, req)
 
@@ -969,7 +974,7 @@ func TestEnsureVaryWithCommaSeparatedExisting(t *testing.T) {
 		NotFoundHandler().ServeHTTP(w, r)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil)
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -1042,7 +1047,7 @@ func TestMethodNotAllowedWithMultipleMethods(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	req := httptest.NewRequest(http.MethodPatch, "/multi", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/multi", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -1069,7 +1074,7 @@ func TestRecovererWithNonErrorPanic(t *testing.T) {
 		panic(42)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/panic-int", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/panic-int", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 

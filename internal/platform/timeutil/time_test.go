@@ -397,7 +397,7 @@ func TestTimeUnmarshalCBORInvalidMajorType(t *testing.T) {
 func TestAppendCBORTextStringShort(t *testing.T) {
 	s := "hello"
 	data := appendCBORTextString(nil, s)
-	if data[0] != 0x60+byte(len(s)) {
+	if data[0] != 0x60+byte(len(s)&0xff) {
 		t.Fatalf("expected direct length encoding, got 0x%02x", data[0])
 	}
 	if string(data[1:]) != s {

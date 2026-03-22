@@ -28,7 +28,7 @@ Keep output and code/doc comments minimal and purposeful.
 - **Ask when unsure:** If requirements are ambiguous, seek clarification rather than guessing.
 - **Well-supported dependencies:** Prefer widely used, well-documented libraries with active maintenance. Ask permission before adding new dependencies.
 - **Security first:** Never exfiltrate secrets; avoid network calls unless explicitly required. Do not log PII or secrets.
-- **After editing code:** Run `go build ./...`, `just test`, and `golangci-lint run ./...` to ensure build/test/lint compliance.
+- **After editing code:** Run `just build`, `just test`, and `just lint` to ensure build/test/lint compliance. Always use `just` recipes instead of raw `go` or `golangci-lint` commands so that `.env` is loaded and the pinned Go toolchain (`GOTOOLCHAIN`) is used.
 
 ---
 
@@ -51,7 +51,7 @@ Huma Playground is a minimal REST API skeleton built with [Huma](https://github.
 - Language/runtime: Go 1.25+
 - Frameworks/libs: Huma v2, Chi v5, Zap, go-chi/cors, Firebase Admin SDK
 - Testing: Go standard `testing` package, Firebase Emulators
-- Task runner: [Just](https://github.com/casey/just) (optional)
+- Task runner: [Just](https://github.com/casey/just) (required for pinned Go toolchain)
 - Firebase CLI: Required for emulators (`just emulators`)
 
 ---
@@ -75,7 +75,7 @@ Key recipes:
 - `just fresh` - Recreate project from clean state
 - `just emulators` - Start Firebase emulators (Auth + Firestore)
 
-The Justfile uses `set dotenv-load` so all recipes automatically load `.env`. This means `just test` and `just coverage` pick up emulator environment variables (e.g. `FIRESTORE_EMULATOR_HOST`) without manual export, ensuring integration tests run when emulators are available. Always prefer `just test` over raw `go test ./...` and `just coverage` over manual coverage commands.
+The Justfile uses `set dotenv-load` so all recipes automatically load `.env`. This means `just test` and `just coverage` pick up emulator environment variables (e.g. `FIRESTORE_EMULATOR_HOST`) without manual export, ensuring integration tests run when emulators are available. The `.env` also sets `GOTOOLCHAIN` to pin the Go version, preventing automatic upgrades from a newer local Go installation. Always prefer `just` recipes over raw `go` or `golangci-lint` commands:
 
 ---
 

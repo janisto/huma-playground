@@ -92,7 +92,7 @@ func newTestRouter() chi.Router {
 func TestRegisterRoutesHello(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/hello", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-hello")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -105,7 +105,7 @@ func TestRegisterRoutesHello(t *testing.T) {
 func TestRegisterRoutesItems(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-items")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -118,7 +118,7 @@ func TestRegisterRoutesItems(t *testing.T) {
 func TestRegisterRoutesProfileGet(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/profile", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-get")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -132,7 +132,7 @@ func TestRegisterRoutesProfileGet(t *testing.T) {
 func TestRegisterRoutesProfileUnauthorized(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/profile", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/profile", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-noauth")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -153,7 +153,7 @@ func TestRegisterRoutesProfileUnauthorized(t *testing.T) {
 func TestRegisterRoutesProfileDelete(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodDelete, "/profile", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/profile", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-delete")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -167,7 +167,7 @@ func TestRegisterRoutesProfileDelete(t *testing.T) {
 func TestRegisterRoutesGitHubOwner(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/github/owners/octocat", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/octocat", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-github-owner")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -180,7 +180,12 @@ func TestRegisterRoutesGitHubOwner(t *testing.T) {
 func TestRegisterRoutesGitHubRepo(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/github/repos/octocat/git-consortium", nil)
+	req := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"/github/repos/octocat/git-consortium",
+		nil,
+	)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-github-repo")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)

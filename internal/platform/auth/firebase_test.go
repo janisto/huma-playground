@@ -173,6 +173,7 @@ func TestNewFirebaseVerifier(t *testing.T) {
 	verifier := NewFirebaseVerifier(ac)
 	if verifier == nil {
 		t.Fatal("expected non-nil verifier")
+		return
 	}
 	if verifier.client != ac {
 		t.Fatal("expected verifier.client to be the provided auth client")

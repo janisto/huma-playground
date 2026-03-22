@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,7 +13,7 @@ func TestSecurityMiddlewareSetsHeaders(t *testing.T) {
 	})
 
 	h := Security()(handler)
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	resp := httptest.NewRecorder()
 
 	h.ServeHTTP(resp, req)
@@ -50,7 +51,7 @@ func TestSecurityMiddlewarePreservesDownstreamResponse(t *testing.T) {
 	})
 
 	h := Security()(handler)
-	req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/test", nil)
 	resp := httptest.NewRecorder()
 
 	h.ServeHTTP(resp, req)
@@ -73,7 +74,7 @@ func TestSecurityMiddlewareDoesNotOverrideDownstreamHeaders(t *testing.T) {
 	})
 
 	h := Security()(handler)
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	resp := httptest.NewRecorder()
 
 	h.ServeHTTP(resp, req)
@@ -104,7 +105,7 @@ func TestSecurityMiddlewareSkipsExcludedPaths(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tt.path, nil)
 		resp := httptest.NewRecorder()
 
 		h.ServeHTTP(resp, req)

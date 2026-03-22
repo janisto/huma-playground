@@ -469,6 +469,7 @@ func TestNewFirestoreStore(t *testing.T) {
 	store := NewFirestoreStore(client)
 	if store == nil {
 		t.Fatal("expected non-nil store")
+		return
 	}
 	if store.client != client {
 		t.Fatal("expected store.client to be the provided client")

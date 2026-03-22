@@ -1,6 +1,7 @@
 package items
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -36,7 +37,7 @@ func newTestRouter() chi.Router {
 func TestListFirstPage(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-first-page")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -72,7 +73,7 @@ func TestListFirstPage(t *testing.T) {
 func TestListWithLimit(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?limit=5", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?limit=5", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-limit-5")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -100,7 +101,7 @@ func TestListMiddlePage(t *testing.T) {
 	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "item-010"}.Encode()
-	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-middle-page")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -134,7 +135,12 @@ func TestListLastPage(t *testing.T) {
 	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "item-025"}.Encode()
-	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor+"&limit=10", nil)
+	req := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"/items?cursor="+cursor+"&limit=10",
+		nil,
+	)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-last-page")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -167,7 +173,7 @@ func TestListLastPage(t *testing.T) {
 func TestListWithCategoryFilter(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?category=tools", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?category=tools", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-category-filter")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -195,7 +201,12 @@ func TestListWithCategoryFilter(t *testing.T) {
 func TestListCategoryPreservedInLink(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?category=electronics&limit=5", nil)
+	req := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"/items?category=electronics&limit=5",
+		nil,
+	)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-category-link")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -213,7 +224,7 @@ func TestListCategoryPreservedInLink(t *testing.T) {
 func TestListInvalidCursor(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?cursor=invalid!!!", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?cursor=invalid!!!", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-invalid-cursor")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -236,7 +247,7 @@ func TestListCursorTypeMismatch(t *testing.T) {
 	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "wrongtype", Value: "item-001"}.Encode()
-	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?cursor="+cursor, nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-cursor-mismatch")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -259,7 +270,7 @@ func TestListCursorUnknownItem(t *testing.T) {
 	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "nonexistent"}.Encode()
-	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?cursor="+cursor, nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-cursor-unknown")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -281,7 +292,7 @@ func TestListCursorUnknownItem(t *testing.T) {
 func TestListCBOR(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?limit=3", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?limit=3", nil)
 	req.Header.Set("Accept", "application/cbor")
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-cbor")
 	resp := httptest.NewRecorder()
@@ -308,7 +319,7 @@ func TestListCBOR(t *testing.T) {
 func TestListInvalidCategory(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?category=nonexistent", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?category=nonexistent", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-invalid-category")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -332,7 +343,7 @@ func TestListPaginationRoundTrip(t *testing.T) {
 	collectedIDs := make(map[string]bool)
 	limit := 7
 
-	req := httptest.NewRequest(http.MethodGet, "/items?limit=7", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?limit=7", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-roundtrip-1")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -359,7 +370,7 @@ func TestListPaginationRoundTrip(t *testing.T) {
 			t.Fatal("could not extract next URL from Link header")
 		}
 
-		req = httptest.NewRequest(http.MethodGet, nextURL, nil)
+		req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, nextURL, nil)
 		req.Header.Set(chimiddleware.RequestIDHeader, "items-roundtrip-"+string(rune('0'+pageCount+1)))
 		resp = httptest.NewRecorder()
 		router.ServeHTTP(resp, req)
@@ -410,7 +421,7 @@ func TestListValidateLimitRange(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/items?limit="+tc.limit, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?limit="+tc.limit, nil)
 			req.Header.Set(chimiddleware.RequestIDHeader, "items-limit-"+tc.name)
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
@@ -426,7 +437,7 @@ func TestListCursorAtFirstItem(t *testing.T) {
 	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "item-001"}.Encode()
-	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-cursor-first")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -454,7 +465,7 @@ func TestListCursorAtLastItem(t *testing.T) {
 	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "item-030"}.Encode()
-	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-cursor-last")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -484,7 +495,7 @@ func TestListCursorAtLastItem(t *testing.T) {
 func TestListSingleItemPage(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?limit=1", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?limit=1", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-single")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -514,7 +525,7 @@ func TestListSingleItemPage(t *testing.T) {
 func TestListLimitPreservedInLink(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?limit=7", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?limit=7", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-limit-link")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -533,7 +544,7 @@ func TestListBackwardsNavigation(t *testing.T) {
 	router := newTestRouter()
 
 	cursor := pagination.Cursor{Type: "item", Value: "item-005"}.Encode()
-	req := httptest.NewRequest(http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?cursor="+cursor+"&limit=5", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-backwards")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -548,7 +559,7 @@ func TestListBackwardsNavigation(t *testing.T) {
 		t.Fatal("expected prev link")
 	}
 
-	req = httptest.NewRequest(http.MethodGet, prevURL, nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, prevURL, nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-backwards-prev")
 	resp = httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -570,7 +581,7 @@ func TestListBackwardsNavigation(t *testing.T) {
 func TestListExactPageBoundary(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?limit=30", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?limit=30", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-exact-boundary")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -600,7 +611,12 @@ func TestListExactPageBoundary(t *testing.T) {
 func TestListCategoryFilterWithPagination(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?category=electronics&limit=3", nil)
+	req := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"/items?category=electronics&limit=3",
+		nil,
+	)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-category-pagination")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -636,7 +652,7 @@ func TestListCategoryFilterWithPagination(t *testing.T) {
 func TestListValidCategory(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?category=electronics", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?category=electronics", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-valid-category")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -722,7 +738,7 @@ func TestListValidationErrors422(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/items"+tc.query, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items"+tc.query, nil)
 			req.Header.Set(chimiddleware.RequestIDHeader, "items-422-"+tc.name)
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
@@ -762,7 +778,7 @@ func TestListValidationErrors422(t *testing.T) {
 func TestListEmptyCategoryReturnsAll(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/items?category=", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?category=", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "items-empty-category")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -813,7 +829,7 @@ func TestListCursorErrors400(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/items?cursor="+tc.cursor, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items?cursor="+tc.cursor, nil)
 			req.Header.Set(chimiddleware.RequestIDHeader, "items-400-"+tc.name)
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
@@ -850,7 +866,12 @@ func TestListAllValidCategories(t *testing.T) {
 
 	for _, category := range categories {
 		t.Run(category, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/items?category="+category, nil)
+			req := httptest.NewRequestWithContext(
+				context.Background(),
+				http.MethodGet,
+				"/items?category="+category,
+				nil,
+			)
 			req.Header.Set(chimiddleware.RequestIDHeader, "items-category-"+category)
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
