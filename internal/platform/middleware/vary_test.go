@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,7 +13,7 @@ func TestVaryMiddlewareSetsHeader(t *testing.T) {
 	})
 
 	h := Vary()(handler)
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	resp := httptest.NewRecorder()
 
 	h.ServeHTTP(resp, req)
@@ -31,7 +32,7 @@ func TestVaryMiddlewarePreservesDownstreamResponse(t *testing.T) {
 	})
 
 	h := Vary()(handler)
-	req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/test", nil)
 	resp := httptest.NewRecorder()
 
 	h.ServeHTTP(resp, req)

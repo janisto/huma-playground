@@ -2,6 +2,7 @@ package hello
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -36,7 +37,7 @@ func newTestRouter() chi.Router {
 func TestGetJSON(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/hello", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-get-json")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -60,7 +61,7 @@ func TestGetJSON(t *testing.T) {
 func TestGetCBOR(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/hello", nil)
 	req.Header.Set("Accept", "application/cbor")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-get-cbor")
 	resp := httptest.NewRecorder()
@@ -86,7 +87,7 @@ func TestPostJSONSuccess(t *testing.T) {
 	router := newTestRouter()
 
 	body := `{"name":"Test"}`
-	req := httptest.NewRequest(http.MethodPost, "/hello", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-post-json")
 	resp := httptest.NewRecorder()
@@ -115,7 +116,7 @@ func TestPostCBORSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cbor marshal: %v", err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/hello", bytes.NewReader(cborBody))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", bytes.NewReader(cborBody))
 	req.Header.Set("Content-Type", "application/cbor")
 	req.Header.Set("Accept", "application/cbor")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-post-cbor")
@@ -142,7 +143,7 @@ func TestPostJSONValidationErrorDefaultsToJSON(t *testing.T) {
 	router := newTestRouter()
 
 	body := `{"name":""}`
-	req := httptest.NewRequest(http.MethodPost, "/hello", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-error-json-default")
 	resp := httptest.NewRecorder()
@@ -171,7 +172,7 @@ func TestPostJSONValidationErrorWithCBORAccept(t *testing.T) {
 	router := newTestRouter()
 
 	body := `{"name":""}`
-	req := httptest.NewRequest(http.MethodPost, "/hello", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/cbor")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-error-json-cbor-accept")
@@ -201,7 +202,7 @@ func TestPostCBORValidationErrorDefaultsToJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cbor marshal: %v", err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/hello", bytes.NewReader(cborBody))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", bytes.NewReader(cborBody))
 	req.Header.Set("Content-Type", "application/cbor")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-error-cbor-json-default")
 	resp := httptest.NewRecorder()
@@ -230,7 +231,7 @@ func TestPostCBORValidationErrorWithCBORAccept(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cbor marshal: %v", err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/hello", bytes.NewReader(cborBody))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", bytes.NewReader(cborBody))
 	req.Header.Set("Content-Type", "application/cbor")
 	req.Header.Set("Accept", "application/cbor")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-error-cbor-cbor-accept")

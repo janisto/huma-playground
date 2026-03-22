@@ -66,7 +66,7 @@ func testServer() http.Handler {
 
 func TestHealth(t *testing.T) {
 	srv := testServer()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "test-health-req")
 	req.Header.Set("Accept", "application/json")
 	resp := httptest.NewRecorder()
@@ -88,7 +88,7 @@ func TestHealth(t *testing.T) {
 
 func TestNotFoundReturnsProblemDetails(t *testing.T) {
 	srv := testServer()
-	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "test-404-req")
 	resp := httptest.NewRecorder()
 	srv.ServeHTTP(resp, req)
@@ -117,7 +117,7 @@ func TestNotFoundReturnsProblemDetails(t *testing.T) {
 
 func TestMethodNotAllowedReturnsProblemDetails(t *testing.T) {
 	srv := testServer()
-	req := httptest.NewRequest(http.MethodPost, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/health", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "test-405-req")
 	resp := httptest.NewRecorder()
 	srv.ServeHTTP(resp, req)
@@ -149,7 +149,7 @@ func TestMethodNotAllowedReturnsProblemDetails(t *testing.T) {
 
 func TestRecovererReturnsProblemDetails(t *testing.T) {
 	srv := testServer()
-	req := httptest.NewRequest(http.MethodGet, "/v1/panic", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/panic", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "test-500-req")
 	resp := httptest.NewRecorder()
 	srv.ServeHTTP(resp, req)
@@ -178,7 +178,7 @@ func TestRecovererReturnsProblemDetails(t *testing.T) {
 
 func TestRedirect(t *testing.T) {
 	srv := testServer()
-	req := httptest.NewRequest(http.MethodGet, "/redirect", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/redirect", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "test-301-req")
 	resp := httptest.NewRecorder()
 	srv.ServeHTTP(resp, req)
@@ -193,7 +193,7 @@ func TestRedirect(t *testing.T) {
 
 func TestFallbackToJSONForUnknownAccept(t *testing.T) {
 	srv := testServer()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "test-fallback-req")
 	req.Header.Set("Accept", "text/plain")
 	resp := httptest.NewRecorder()
@@ -229,7 +229,7 @@ func TestWildcardAcceptReturnsJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/health", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
 			req.Header.Set(chimiddleware.RequestIDHeader, "test-wildcard-req")
 			if tt.accept != "" {
 				req.Header.Set("Accept", tt.accept)
@@ -502,7 +502,7 @@ func TestVersionVariable(t *testing.T) {
 
 func TestCBORAcceptHeader(t *testing.T) {
 	srv := testServer()
-	req := httptest.NewRequest(http.MethodGet, "/v1/hello", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/hello", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "test-cbor-req")
 	req.Header.Set("Accept", "application/cbor")
 	resp := httptest.NewRecorder()
@@ -518,7 +518,7 @@ func TestCBORAcceptHeader(t *testing.T) {
 
 func TestGitHubOwnerEndpoint(t *testing.T) {
 	srv := testServer()
-	req := httptest.NewRequest(http.MethodGet, "/v1/github/owners/octocat", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/github/owners/octocat", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "test-github-owner")
 	resp := httptest.NewRecorder()
 	srv.ServeHTTP(resp, req)

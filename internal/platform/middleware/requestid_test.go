@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +13,7 @@ import (
 
 func TestRequestIDGeneratesUUIDv4(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 
 	var captured string
 	h := RequestID()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +39,7 @@ func TestRequestIDGeneratesUUIDv4(t *testing.T) {
 
 func TestRequestIDPreservesIncomingHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "external-id")
 
 	var captured string
@@ -132,7 +133,7 @@ func TestRequestIDRejectsInvalidHeaders(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 			req.Header.Set(chimiddleware.RequestIDHeader, tc.inputID)
 
 			var captured string
@@ -197,7 +198,7 @@ func TestIsValidRequestID(t *testing.T) {
 
 func TestRequestIDSetsResponseHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 
 	h := RequestID()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -218,7 +219,7 @@ func TestRequestIDSetsResponseHeader(t *testing.T) {
 
 func TestRequestIDContextValueMatchesHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "trace-correlation-123")
 
 	var contextValue string
@@ -242,7 +243,7 @@ func TestRequestIDMultipleRequests(t *testing.T) {
 	ids := make(map[string]bool)
 	for i := range 10 {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 
 		h.ServeHTTP(rec, req)
 
@@ -268,7 +269,7 @@ func TestRequestIDWithDifferentHTTPMethods(t *testing.T) {
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(method, "/resource", nil)
+			req := httptest.NewRequestWithContext(context.Background(), method, "/resource", nil)
 			req.Header.Set(chimiddleware.RequestIDHeader, "method-test-id")
 
 			var captured string
@@ -287,7 +288,7 @@ func TestRequestIDWithDifferentHTTPMethods(t *testing.T) {
 
 func TestRequestIDPreservesOtherHeaders(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.Header.Set("X-Custom-Header", "custom-value")
 	req.Header.Set("Authorization", "Bearer token")
 
@@ -319,7 +320,7 @@ func TestRequestIDHandlerChaining(t *testing.T) {
 	outer := RequestID()(inner)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/items", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/items", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "chained-request-id")
 
 	outer.ServeHTTP(rec, req)
@@ -387,7 +388,7 @@ func TestRequestIDWithW3CTraceparentFormat(t *testing.T) {
 	traceparent := "00-ab42124a3c573678d4d8b21ba52df3bf-d21f7bc17caa5aba-01"
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, traceparent)
 
 	var captured string
@@ -406,7 +407,7 @@ func TestRequestIDWithBase64EncodedValue(t *testing.T) {
 	base64ID := "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo="
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, base64ID)
 
 	var captured string
@@ -425,7 +426,7 @@ func TestRequestIDWithURLEncodedCharacters(t *testing.T) {
 	urlEncoded := "trace%2Fspan%3Fid%3D123"
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, urlEncoded)
 
 	var captured string
@@ -455,7 +456,7 @@ func TestRequestIDEmptyVsWhitespaceOnly(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 			req.Header.Set(chimiddleware.RequestIDHeader, tc.inputID)
 
 			var captured string

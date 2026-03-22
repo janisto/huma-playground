@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +16,7 @@ func TestCORSAllowsGETOrigin(t *testing.T) {
 	})
 
 	h := CORS()(fn)
-	req := httptest.NewRequest(http.MethodGet, "http://localhost/resource", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://localhost/resource", nil)
 	req.Header.Set("Origin", "http://example.com")
 	resp := httptest.NewRecorder()
 
@@ -54,7 +55,7 @@ func TestCORSHandlesPreflightWithoutCallingNext(t *testing.T) {
 	})
 
 	h := CORS()(fn)
-	req := httptest.NewRequest(http.MethodOptions, "http://localhost/resource", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "http://localhost/resource", nil)
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
 	req.Header.Set("Access-Control-Request-Headers", "Content-Type")
@@ -85,7 +86,7 @@ func TestCORSAllowsXRequestIDHeader(t *testing.T) {
 	})
 
 	h := CORS()(fn)
-	req := httptest.NewRequest(http.MethodOptions, "http://localhost/resource", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "http://localhost/resource", nil)
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
 	req.Header.Set("Access-Control-Request-Headers", "X-Request-ID")
@@ -108,7 +109,7 @@ func TestCORSAllowsTraceparentHeader(t *testing.T) {
 	})
 
 	h := CORS()(fn)
-	req := httptest.NewRequest(http.MethodOptions, "http://localhost/resource", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "http://localhost/resource", nil)
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
 	req.Header.Set("Access-Control-Request-Headers", "traceparent")
