@@ -2,6 +2,8 @@ module github.com/janisto/huma-playground
 
 go 1.25.5
 
+toolchain go1.25.5
+
 require (
 	cloud.google.com/go/firestore v1.21.0
 	firebase.google.com/go/v4 v4.19.0

@@ -72,6 +72,25 @@ Errors follow [RFC 9457 Problem Details](https://www.rfc-editor.org/rfc/rfc9457.
 - [Just](https://github.com/casey/just) command runner (optional)
 - [Podman Desktop](https://podman-desktop.io/) (for containerization, optional)
 
+## Go Version Pinning
+
+The project is pinned to **Go 1.25.x**. Both `go.mod` and `go.work` include a `toolchain` directive, and CI workflows use `go-version: '1.25.x'` with `GOTOOLCHAIN: local` to prevent automatic upgrades.
+
+To keep the same constraint locally, set `GOTOOLCHAIN` in `.env`:
+
+```
+GOTOOLCHAIN=go1.25.5
+```
+
+Since the Justfile uses `set dotenv-load`, all `just` recipes (build, test, lint, etc.) will use Go 1.25.5 even if a newer Go is installed on your system.
+
+To upgrade to a new Go version (e.g., 1.26.x), update all of these in a single PR:
+
+1. `go.mod` and `functions/go.mod` — `go` and `toolchain` directives
+2. `go.work` — `go` and `toolchain` directives
+3. `.env` — `GOTOOLCHAIN` value
+4. `.github/workflows/app-ci.yml` and `app-lint.yml` — `go-version`
+
 ## Go Workspace
 
 This project uses a [Go workspace](https://go.dev/doc/tutorial/workspaces) (`go.work`) to manage multiple modules:
