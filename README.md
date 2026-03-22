@@ -79,7 +79,7 @@ The project is pinned to **Go 1.25.x**. Both `go.mod` and `go.work` include a `t
 To keep the same constraint locally, set `GOTOOLCHAIN` in `.env`:
 
 ```
-GOTOOLCHAIN=go1.25.5
+GOTOOLCHAIN=go1.25.8
 ```
 
 Since the Justfile uses `set dotenv-load`, all `just` recipes (build, test, lint, etc.) will use Go 1.25.5 even if a newer Go is installed on your system.
@@ -96,7 +96,7 @@ To upgrade to a new Go version (e.g., 1.26.x), update all of these in a single P
 This project uses a [Go workspace](https://go.dev/doc/tutorial/workspaces) (`go.work`) to manage multiple modules:
 
 ```go
-go 1.25.5
+go 1.25.8
 
 use (
     .
