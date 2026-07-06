@@ -118,7 +118,7 @@ func TestRecovererReturnsProblemDetails(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
 		appmiddleware.RequestID(),
-		chimiddleware.RealIP,
+		chimiddleware.ClientIPFromRemoteAddr,
 		Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("Test", "test"))
@@ -195,7 +195,7 @@ func TestStatus304NotModifiedHasNoBody(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
 		appmiddleware.RequestID(),
-		chimiddleware.RealIP,
+		chimiddleware.ClientIPFromRemoteAddr,
 	)
 	api := humachi.New(router, huma.DefaultConfig("NoBody", "test"))
 	huma.Get(api, "/etag", func(ctx context.Context, _ *struct{}) (*struct{}, error) {
@@ -269,7 +269,7 @@ func TestRecovererSkipsWriteWhenHeaderAlreadyWritten(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
 		appmiddleware.RequestID(),
-		chimiddleware.RealIP,
+		chimiddleware.ClientIPFromRemoteAddr,
 		Recoverer(),
 	)
 	router.Get("/partial", func(w http.ResponseWriter, r *http.Request) {
@@ -354,7 +354,7 @@ func TestRecovererReturnsCBORWhenAccepted(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
 		appmiddleware.RequestID(),
-		chimiddleware.RealIP,
+		chimiddleware.ClientIPFromRemoteAddr,
 		Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("Test", "test"))
@@ -641,7 +641,7 @@ func TestRecovererWithErrorPanic(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
 		appmiddleware.RequestID(),
-		chimiddleware.RealIP,
+		chimiddleware.ClientIPFromRemoteAddr,
 		Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("Test", "test"))
@@ -1067,7 +1067,7 @@ func TestRecovererWithNonErrorPanic(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
 		appmiddleware.RequestID(),
-		chimiddleware.RealIP,
+		chimiddleware.ClientIPFromRemoteAddr,
 		Recoverer(),
 	)
 	router.Get("/panic-int", func(_ http.ResponseWriter, _ *http.Request) {

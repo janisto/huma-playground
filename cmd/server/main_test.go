@@ -33,7 +33,7 @@ func testServer() http.Handler {
 	router.MethodNotAllowed(respond.MethodNotAllowedHandler())
 	router.Use(
 		appmiddleware.RequestID(),
-		chimiddleware.RealIP,
+		chimiddleware.ClientIPFromRemoteAddr,
 		applog.RequestLogger(),
 		respond.Recoverer(),
 	)

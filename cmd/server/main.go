@@ -85,10 +85,7 @@ func main() {
 		appmiddleware.Vary(),
 		appmiddleware.CORS(),
 		appmiddleware.RequestID(),
-		// RealIP extracts client IP from X-Real-IP or X-Forwarded-For headers.
-		// SECURITY: Only use behind a trusted reverse proxy (e.g., Cloud Run, nginx).
-		// Without a trusted proxy, clients can spoof their IP address.
-		chimiddleware.RealIP,
+		chimiddleware.ClientIPFromRemoteAddr,
 		// RequestSize limits request body size to prevent memory exhaustion from large payloads.
 		chimiddleware.RequestSize(1<<20), // 1 MB limit
 		applog.RequestLogger(),
