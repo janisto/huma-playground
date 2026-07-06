@@ -25,7 +25,7 @@ func newTestRouter() chi.Router {
 	router := chi.NewRouter()
 	router.Use(
 		appmiddleware.RequestID(),
-		chimiddleware.RealIP,
+		chimiddleware.ClientIPFromRemoteAddr,
 		applog.RequestLogger(),
 		respond.Recoverer(),
 	)

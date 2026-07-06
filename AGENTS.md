@@ -554,7 +554,7 @@ func TestMyFeature(t *testing.T) {
     router := chi.NewRouter()
     router.Use(
         appmiddleware.RequestID(),
-        chimiddleware.RealIP,
+        chimiddleware.ClientIPFromRemoteAddr,
         applog.RequestLogger(),
         respond.Recoverer(),
     )
@@ -680,13 +680,13 @@ Use Huma's security mechanism with Firebase Auth middleware for protected routes
 import "github.com/janisto/huma-playground/internal/platform/auth"
 
 func Register(api huma.API, authClient auth.Client) {
-    auth.RegisterSecurityScheme(api, authClient)
+    auth.RegisterSecurityScheme(api)
 
     huma.Register(api, huma.Operation{
         OperationID: "get-profile",
         Method:      http.MethodGet,
         Path:        "/profile",
-        Security:    auth.RequireAuth,
+        Security:    auth.RequireAuth(),
     }, handleGetProfile)
 }
 ```
