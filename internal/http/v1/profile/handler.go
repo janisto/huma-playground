@@ -22,9 +22,7 @@ func Register(api huma.API, svc profilesvc.Service) {
 		Description:   "Creates a new profile for the authenticated user. Terms must be accepted.",
 		Tags:          []string{"Profile"},
 		DefaultStatus: http.StatusCreated,
-		Security: []map[string][]string{
-			{"bearerAuth": {}},
-		},
+		Security:      auth.RequireAuth(),
 	}, func(ctx context.Context, input *ProfileCreateInput) (*ProfileCreateOutput, error) {
 		user := auth.UserFromContext(ctx)
 
@@ -56,9 +54,7 @@ func Register(api huma.API, svc profilesvc.Service) {
 		Summary:     "Get current user's profile",
 		Description: "Retrieves the profile for the authenticated user.",
 		Tags:        []string{"Profile"},
-		Security: []map[string][]string{
-			{"bearerAuth": {}},
-		},
+		Security:    auth.RequireAuth(),
 	}, func(ctx context.Context, _ *ProfileGetInput) (*ProfileGetOutput, error) {
 		user := auth.UserFromContext(ctx)
 
@@ -78,9 +74,7 @@ func Register(api huma.API, svc profilesvc.Service) {
 		Summary:     "Update current user's profile",
 		Description: "Updates fields on the authenticated user's profile. Only provided fields are updated.",
 		Tags:        []string{"Profile"},
-		Security: []map[string][]string{
-			{"bearerAuth": {}},
-		},
+		Security:    auth.RequireAuth(),
 	}, func(ctx context.Context, input *ProfileUpdateInput) (*ProfileUpdateOutput, error) {
 		user := auth.UserFromContext(ctx)
 		if !hasProfileUpdateFields(input) {
@@ -110,9 +104,7 @@ func Register(api huma.API, svc profilesvc.Service) {
 		Description:   "Permanently deletes the authenticated user's profile.",
 		Tags:          []string{"Profile"},
 		DefaultStatus: http.StatusNoContent,
-		Security: []map[string][]string{
-			{"bearerAuth": {}},
-		},
+		Security:      auth.RequireAuth(),
 	}, func(ctx context.Context, _ *ProfileDeleteInput) (*struct{}, error) {
 		user := auth.UserFromContext(ctx)
 

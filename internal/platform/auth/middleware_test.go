@@ -27,7 +27,7 @@ func setupTestAPI(verifier Verifier, requireAuth bool) *chi.Mux {
 
 	var security []map[string][]string
 	if requireAuth {
-		security = []map[string][]string{{"bearer": {}}}
+		security = RequireAuth()
 	}
 
 	huma.Register(api, huma.Operation{
@@ -58,6 +58,40 @@ func TestMiddlewareSkipsUnsecuredEndpoints(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for unsecured endpoint, got %d", rec.Code)
+	}
+}
+
+func TestRequireAuth(t *testing.T) {
+	security := RequireAuth()
+	if len(security) != 1 {
+		t.Fatalf("expected one security requirement, got %d", len(security))
+	}
+	scopes, ok := security[0][BearerAuthScheme]
+	if !ok {
+		t.Fatalf("expected %q security scheme, got %v", BearerAuthScheme, security)
+	}
+	if len(scopes) != 0 {
+		t.Fatalf("expected no required scopes, got %v", scopes)
+	}
+
+	security[0][BearerAuthScheme] = []string{"mutated"}
+	if got := RequireAuth()[0][BearerAuthScheme]; len(got) != 0 {
+		t.Fatalf("expected RequireAuth to return fresh security requirements, got %v", got)
+	}
+}
+
+func TestRegisterSecurityScheme(t *testing.T) {
+	router := chi.NewRouter()
+	api := humachi.New(router, huma.DefaultConfig("Test", "1.0.0"))
+
+	RegisterSecurityScheme(api)
+
+	scheme := api.OpenAPI().Components.SecuritySchemes[BearerAuthScheme]
+	if scheme == nil {
+		t.Fatalf("expected %q security scheme to be registered", BearerAuthScheme)
+	}
+	if scheme.Type != "http" || scheme.Scheme != "bearer" || scheme.BearerFormat != "JWT" {
+		t.Fatalf("unexpected bearer scheme: %#v", scheme)
 	}
 }
 

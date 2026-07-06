@@ -126,15 +126,7 @@ func main() {
 			},
 		)
 
-		// OpenAPI security scheme for Firebase JWT authentication
-		api.OpenAPI().Components.SecuritySchemes = map[string]*huma.SecurityScheme{
-			"bearerAuth": {
-				Type:         "http",
-				Scheme:       "bearer",
-				BearerFormat: "JWT",
-				Description:  "Firebase ID token",
-			},
-		}
+		auth.RegisterSecurityScheme(api)
 
 		routes.Register(api, verifier, profileService, githubService)
 	})
