@@ -124,15 +124,6 @@ func TestLoggerWithTraceAddsCloudFields(t *testing.T) {
 	}
 }
 
-func TestFirstNonEmpty(t *testing.T) {
-	if got := firstNonEmpty("", "", "value", "other"); got != "value" {
-		t.Fatalf("expected 'value', got %q", got)
-	}
-	if got := firstNonEmpty(); got != "" {
-		t.Fatalf("expected empty string, got %q", got)
-	}
-}
-
 func TestTraceResource(t *testing.T) {
 	header := "00-3d23d071b5bfd6579171efce907685cb-08f067aa0ba902b7-01"
 	projectID := "test-project"

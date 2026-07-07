@@ -48,7 +48,7 @@ Huma Playground is a minimal REST API skeleton built with [Huma](https://github.
 
 ### Tech & Tooling
 
-- Language/runtime: Go 1.25+
+- Language/runtime: Go 1.26+
 - Frameworks/libs: Huma v2, Chi v5, Zap, go-chi/cors, Firebase Admin SDK
 - Testing: Go standard `testing` package, Firebase Emulators
 - Task runner: [Just](https://github.com/casey/just) (required for pinned Go toolchain)
@@ -83,7 +83,7 @@ The Justfile uses `set dotenv-load` so all recipes automatically load `.env`. Th
 
 ### Requirements
 
-- Go 1.25+
+- Go 1.26+
 - Firebase CLI (for emulators): `npm install -g firebase-tools`
 
 ### Install Dependencies

@@ -1,7 +1,9 @@
 package pagination
 
 import (
+	"fmt"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -142,10 +144,10 @@ func TestPaginateWithQueryParams(t *testing.T) {
 	if result.LinkHeader == "" {
 		t.Fatal("expected link header")
 	}
-	if !containsString(result.LinkHeader, "category=electronics") {
+	if !strings.Contains(result.LinkHeader, "category=electronics") {
 		t.Fatalf("expected category in link header, got %s", result.LinkHeader)
 	}
-	if !containsString(result.LinkHeader, "limit=10") {
+	if !strings.Contains(result.LinkHeader, "limit=10") {
 		t.Fatalf("expected limit in link header, got %s", result.LinkHeader)
 	}
 }
@@ -253,45 +255,11 @@ func TestPaginateLimitLargerThanItems(t *testing.T) {
 func makeTestItems(count int) []testItem {
 	items := make([]testItem, count)
 	for i := range count {
+		n := i + 1
 		items[i] = testItem{
-			ID:   "item-" + padNumber(i+1),
-			Name: "Item " + padNumber(i+1),
+			ID:   fmt.Sprintf("item-%03d", n),
+			Name: fmt.Sprintf("Item %03d", n),
 		}
 	}
 	return items
-}
-
-func padNumber(n int) string {
-	if n < 10 {
-		return "00" + itoa(n)
-	}
-	if n < 100 {
-		return "0" + itoa(n)
-	}
-	return itoa(n)
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var digits []byte
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-	return string(digits)
-}
-
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStringHelper(s, substr))
-}
-
-func containsStringHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

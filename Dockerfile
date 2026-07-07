@@ -10,11 +10,11 @@
 #     --image REGION-docker.pkg.dev/PROJECT_ID/REPO/huma-playground:latest \
 #     --platform managed \
 #     --region REGION \
-#     --base-image go125 \
+#     --base-image go126 \
 #     --automatic-updates
 
 # Builder image: includes Go toolchain for compilation
-ARG GO_IMAGE=golang:1.25-trixie
+ARG GO_IMAGE=golang:1.26-trixie
 # Runtime image: minimal distroless image (no shell, no package manager)
 ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian13:nonroot
 # Build arguments for version injection

@@ -176,13 +176,19 @@ func ensureVary(h http.Header, values ...string) {
 	existing := make(map[string]struct{})
 	for _, v := range h.Values("Vary") {
 		for part := range strings.SplitSeq(v, ",") {
-			existing[strings.TrimSpace(part)] = struct{}{}
+			if key := http.CanonicalHeaderKey(strings.TrimSpace(part)); key != "" {
+				existing[key] = struct{}{}
+			}
 		}
 	}
 	for _, v := range values {
-		if _, ok := existing[v]; !ok {
-			h.Add("Vary", v)
-			existing[v] = struct{}{}
+		key := http.CanonicalHeaderKey(strings.TrimSpace(v))
+		if key == "" {
+			continue
+		}
+		if _, ok := existing[key]; !ok {
+			h.Add("Vary", key)
+			existing[key] = struct{}{}
 		}
 	}
 }
@@ -381,14 +387,10 @@ func allowedMethods(r *http.Request) []string {
 		http.MethodOptions,
 	}
 	allowed := make([]string, 0, len(methods))
-	seen := make(map[string]struct{})
 	for _, method := range methods {
 		tctx := chi.NewRouteContext()
 		if rctx.Routes.Match(tctx, method, routePath) {
-			if _, ok := seen[method]; !ok {
-				allowed = append(allowed, method)
-				seen[method] = struct{}{}
-			}
+			allowed = append(allowed, method)
 		}
 	}
 	return allowed
