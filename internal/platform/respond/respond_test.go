@@ -1129,3 +1129,28 @@ func TestEnsureVaryDuplicateInSingleCall(t *testing.T) {
 		t.Fatalf("expected Accept once, got %d times in %v", acceptCount, varyValues)
 	}
 }
+
+func TestEnsureVaryCanonicalizesExistingValues(t *testing.T) {
+	h := make(http.Header)
+	h.Set("Vary", "accept, origin")
+
+	ensureVary(h, "Accept", "Origin", "")
+
+	varyValues := h.Values("Vary")
+	acceptCount := 0
+	originCount := 0
+	for _, v := range varyValues {
+		for part := range strings.SplitSeq(v, ",") {
+			switch http.CanonicalHeaderKey(strings.TrimSpace(part)) {
+			case "Accept":
+				acceptCount++
+			case "Origin":
+				originCount++
+			}
+		}
+	}
+	if acceptCount != 1 || originCount != 1 {
+		t.Fatalf("expected canonicalized Vary values once each, got Accept=%d Origin=%d in %v",
+			acceptCount, originCount, varyValues)
+	}
+}

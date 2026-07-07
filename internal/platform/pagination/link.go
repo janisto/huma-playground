@@ -3,6 +3,7 @@ package pagination
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -28,7 +29,7 @@ func cloneValues(v url.Values) url.Values {
 	}
 	out := make(url.Values, len(v))
 	for k, vals := range v {
-		out[k] = append([]string(nil), vals...)
+		out[k] = slices.Clone(vals)
 	}
 	return out
 }

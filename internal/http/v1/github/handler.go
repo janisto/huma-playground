@@ -155,9 +155,7 @@ func Register(api huma.API, svc githubsvc.Service, prefix string) {
 }
 
 func mapServiceError(err error) error {
-	var upstreamErr *githubsvc.UpstreamError
-
-	if errors.As(err, &upstreamErr) {
+	if upstreamErr, ok := errors.AsType[*githubsvc.UpstreamError](err); ok {
 		switch upstreamErr.Kind {
 		case githubsvc.UpstreamErrorKindNotFound:
 			return huma.Error404NotFound("resource not found")

@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"regexp"
@@ -66,18 +67,9 @@ func traceResource(header, projectID string) string {
 	return fmt.Sprintf("projects/%s/traces/%s", projectID, matches[2])
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
 func resolveProjectID() string {
 	projectIDOnce.Do(func() {
-		cachedProjectID = firstNonEmpty(
+		cachedProjectID = cmp.Or(
 			os.Getenv("FIREBASE_PROJECT_ID"),
 			os.Getenv("GOOGLE_CLOUD_PROJECT"),
 			os.Getenv("GCP_PROJECT"),

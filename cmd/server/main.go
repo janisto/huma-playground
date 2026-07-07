@@ -154,15 +154,15 @@ func main() {
 		}
 	}()
 
-	// Graceful shutdown
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	select {
 	case err := <-listenErr:
 		applog.LogError(context.Background(), "listen failed", err, zap.String("addr", srv.Addr))
 		os.Exit(1)
-	case <-stop:
-		applog.LogInfo(context.Background(), "shutdown signal received")
+	case <-shutdownCtx.Done():
+		applog.LogInfo(context.Background(), "shutdown signal received", zap.Error(context.Cause(shutdownCtx)))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

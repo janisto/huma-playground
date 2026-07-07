@@ -344,8 +344,8 @@ func TestNotFoundError(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 
-	var upstreamErr *UpstreamError
-	if !errors.As(err, &upstreamErr) {
+	upstreamErr, ok := errors.AsType[*UpstreamError](err)
+	if !ok {
 		t.Fatalf("expected UpstreamError, got %T", err)
 	}
 	if upstreamErr.Kind != UpstreamErrorKindNotFound {
@@ -370,8 +370,8 @@ func TestForbiddenError(t *testing.T) {
 		t.Fatalf("expected ErrForbidden, got %v", err)
 	}
 
-	var upstreamErr *UpstreamError
-	if !errors.As(err, &upstreamErr) {
+	upstreamErr, ok := errors.AsType[*UpstreamError](err)
+	if !ok {
 		t.Fatalf("expected UpstreamError, got %T", err)
 	}
 	if upstreamErr.Kind != UpstreamErrorKindForbidden {
@@ -397,8 +397,8 @@ func TestRateLimitedError(t *testing.T) {
 		t.Fatalf("expected ErrRateLimited, got %v", err)
 	}
 
-	var upstreamErr *UpstreamError
-	if !errors.As(err, &upstreamErr) {
+	upstreamErr, ok := errors.AsType[*UpstreamError](err)
+	if !ok {
 		t.Fatalf("expected UpstreamError, got %T", err)
 	}
 	if upstreamErr.Kind != UpstreamErrorKindRateLimited {
@@ -428,8 +428,8 @@ func TestRateLimited403WithRetryAfter(t *testing.T) {
 		t.Fatalf("expected ErrRateLimited, got %v", err)
 	}
 
-	var upstreamErr *UpstreamError
-	if !errors.As(err, &upstreamErr) {
+	upstreamErr, ok := errors.AsType[*UpstreamError](err)
+	if !ok {
 		t.Fatalf("expected UpstreamError, got %T", err)
 	}
 	if upstreamErr.Kind != UpstreamErrorKindRateLimited {
@@ -456,8 +456,8 @@ func TestRateLimitedHTTP429(t *testing.T) {
 		t.Fatalf("expected ErrRateLimited, got %v", err)
 	}
 
-	var upstreamErr *UpstreamError
-	if !errors.As(err, &upstreamErr) {
+	upstreamErr, ok := errors.AsType[*UpstreamError](err)
+	if !ok {
 		t.Fatalf("expected UpstreamError, got %T", err)
 	}
 	if upstreamErr.Kind != UpstreamErrorKindRateLimited {
@@ -484,8 +484,8 @@ func TestUpstreamError(t *testing.T) {
 		t.Fatalf("expected ErrUpstream, got %v", err)
 	}
 
-	var upstreamErr *UpstreamError
-	if !errors.As(err, &upstreamErr) {
+	upstreamErr, ok := errors.AsType[*UpstreamError](err)
+	if !ok {
 		t.Fatalf("expected UpstreamError, got %T", err)
 	}
 	if upstreamErr.Kind != UpstreamErrorKindUpstream {
