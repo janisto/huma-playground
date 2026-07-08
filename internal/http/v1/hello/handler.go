@@ -6,9 +6,8 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/janisto/huma-observability"
 	"go.uber.org/zap"
-
-	applog "github.com/janisto/huma-playground/internal/platform/logging"
 )
 
 // Register wires hello routes into the provided API router.
@@ -25,12 +24,12 @@ func Register(api huma.API) {
 }
 
 func getHandler(ctx context.Context, _ *struct{}) (*HelloGetOutput, error) {
-	applog.LogInfo(ctx, "hello get", zap.String("path", "/hello"))
+	obs.Logger(ctx).Info("hello get", zap.String("path", "/hello"))
 	return &HelloGetOutput{Body: Data{Message: "Hello, World!"}}, nil
 }
 
 func createHandler(ctx context.Context, input *HelloCreateInput) (*HelloCreateOutput, error) {
-	applog.LogInfo(ctx, "hello post", zap.String("path", "/hello"), zap.String("name", input.Body.Name))
+	obs.Logger(ctx).Info("hello post", zap.String("path", "/hello"), zap.String("name", input.Body.Name))
 	message := fmt.Sprintf("Hello, %s!", input.Body.Name)
 	return &HelloCreateOutput{Body: Data{Message: message}}, nil
 }

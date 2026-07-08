@@ -6,9 +6,8 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/janisto/huma-observability"
 	"go.uber.org/zap"
-
-	applog "github.com/janisto/huma-playground/internal/platform/logging"
 )
 
 // userContextKey is the context key for the authenticated user.
@@ -25,7 +24,7 @@ func NewAuthMiddleware(api huma.API, verifier Verifier) func(huma.Context, func(
 
 		token, err := ExtractBearerToken(ctx.Header("Authorization"))
 		if err != nil {
-			applog.LogWarn(ctx.Context(), "auth failed: missing or invalid header",
+			obs.Logger(ctx.Context()).Warn("auth failed: missing or invalid header",
 				zap.String("reason", "no_token"))
 			ctx.SetHeader("WWW-Authenticate", "Bearer")
 			_ = huma.WriteErr(api, ctx, http.StatusUnauthorized, "missing or invalid authorization header")
@@ -35,7 +34,7 @@ func NewAuthMiddleware(api huma.API, verifier Verifier) func(huma.Context, func(
 		user, err := verifier.Verify(ctx.Context(), token)
 		if err != nil {
 			reason := categorizeAuthError(err)
-			applog.LogWarn(ctx.Context(), "auth failed: token verification failed",
+			obs.Logger(ctx.Context()).Warn("auth failed: token verification failed",
 				zap.String("reason", reason))
 
 			if errors.Is(err, ErrCertificateFetch) {

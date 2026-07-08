@@ -15,10 +15,9 @@ import (
 	humachi "github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/janisto/huma-observability"
 
 	"github.com/janisto/huma-playground/internal/platform/auth"
-	applog "github.com/janisto/huma-playground/internal/platform/logging"
-	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 	"github.com/janisto/huma-playground/internal/platform/respond"
 	profilesvc "github.com/janisto/huma-playground/internal/service/profile"
 )
@@ -88,12 +87,12 @@ func (m *mockService) Delete(_ context.Context, _ string) error {
 func newTestRouter(svc profilesvc.Service, verifier auth.Verifier) chi.Router {
 	router := chi.NewRouter()
 	router.Use(
-		appmiddleware.RequestID(),
 		chimiddleware.ClientIPFromRemoteAddr,
-		applog.RequestLogger(),
 		respond.Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("ProfileTest", "test"))
+	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{}))
+	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{}))
 	api.UseMiddleware(auth.NewAuthMiddleware(api, verifier))
 	Register(api, svc)
 	return router

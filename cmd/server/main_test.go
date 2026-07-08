@@ -16,11 +16,14 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/janisto/huma-observability"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/janisto/huma-playground/internal/http/health"
 	"github.com/janisto/huma-playground/internal/http/v1/routes"
 	"github.com/janisto/huma-playground/internal/platform/auth"
-	applog "github.com/janisto/huma-playground/internal/platform/logging"
 	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 	"github.com/janisto/huma-playground/internal/platform/respond"
 	githubsvc "github.com/janisto/huma-playground/internal/service/github"
@@ -28,20 +31,30 @@ import (
 )
 
 func testServer() http.Handler {
+	return testServerWithLogger(zap.NewNop())
+}
+
+func testServerWithLogger(logger *zap.Logger) http.Handler {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	router := chi.NewRouter()
-	router.NotFound(respond.NotFoundHandler())
-	router.MethodNotAllowed(respond.MethodNotAllowedHandler())
+	httpAccessLogger := appmiddleware.AccessLogger()
+	router.NotFound(httpAccessLogger(respond.NotFoundHandler()).ServeHTTP)
+	router.MethodNotAllowed(httpAccessLogger(respond.MethodNotAllowedHandler()).ServeHTTP)
 	router.Use(
-		appmiddleware.RequestID(),
+		obs.HTTPRequestContext(obs.HTTPRequestContextConfig{Logger: logger}),
+		respond.Recoverer(logger),
 		chimiddleware.ClientIPFromRemoteAddr,
-		applog.RequestLogger(),
-		respond.Recoverer(),
 	)
 
 	// Root-level endpoints
-	router.Get("/health", health.Handler)
-	router.Get("/redirect", func(w http.ResponseWriter, r *http.Request) {
-		respond.WriteRedirect(w, r, "/health", http.StatusMovedPermanently)
+	router.Group(func(r chi.Router) {
+		r.Use(httpAccessLogger)
+		r.Get("/health", health.Handler)
+		r.Get("/redirect", func(w http.ResponseWriter, r *http.Request) {
+			respond.WriteRedirect(w, r, "/health", http.StatusMovedPermanently)
+		})
 	})
 
 	// Versioned API
@@ -52,6 +65,8 @@ func testServer() http.Handler {
 			{URL: "/v1"},
 		}
 		api := humachi.New(r, cfg)
+		api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{Logger: logger}))
+		api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{Logger: logger}))
 		verifier := &auth.MockVerifier{User: auth.TestUser()}
 		profileService := profilesvc.NewMockProfileService()
 		githubService := githubsvc.NewMockGitHubService()
@@ -75,6 +90,7 @@ func TestHealth(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected status 200 got %d", resp.Code)
 	}
+	assertRequestID(t, resp, "test-health-req")
 
 	var h health.Response
 	if err := json.Unmarshal(resp.Body.Bytes(), &h); err != nil {
@@ -84,6 +100,88 @@ func TestHealth(t *testing.T) {
 	if h.Status != "healthy" {
 		t.Fatalf("expected status 'healthy', got %s", h.Status)
 	}
+}
+
+func TestRequestIDGeneratedWhenMissing(t *testing.T) {
+	srv := testServer()
+	tests := []struct {
+		name string
+		path string
+		want int
+	}{
+		{name: "health", path: "/health", want: http.StatusOK},
+		{name: "not found", path: "/missing", want: http.StatusNotFound},
+		{name: "huma route", path: "/v1/hello", want: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tt.path, nil)
+			resp := httptest.NewRecorder()
+			srv.ServeHTTP(resp, req)
+
+			if resp.Code != tt.want {
+				t.Fatalf("expected status %d, got %d", tt.want, resp.Code)
+			}
+			assertValidRequestID(t, resp)
+		})
+	}
+}
+
+func TestInvalidRequestIDIsReplaced(t *testing.T) {
+	srv := testServer()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
+	req.Header.Set(chimiddleware.RequestIDHeader, "bad request id")
+	resp := httptest.NewRecorder()
+	srv.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200 got %d", resp.Code)
+	}
+	got := assertValidRequestID(t, resp)
+	if got == "bad request id" {
+		t.Fatalf("expected invalid request ID to be replaced")
+	}
+}
+
+func TestAccessLogsAreSplitBetweenChiAndHuma(t *testing.T) {
+	core, recorded := observer.New(zapcore.InfoLevel)
+	srv := testServerWithLogger(zap.New(core))
+
+	healthReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
+	healthReq.Header.Set(chimiddleware.RequestIDHeader, "access-health")
+	healthResp := httptest.NewRecorder()
+	srv.ServeHTTP(healthResp, healthReq)
+
+	if healthResp.Code != http.StatusOK {
+		t.Fatalf("expected health status 200, got %d", healthResp.Code)
+	}
+
+	humaReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/hello", nil)
+	humaReq.Header.Set(chimiddleware.RequestIDHeader, "access-huma")
+	humaResp := httptest.NewRecorder()
+	srv.ServeHTTP(humaResp, humaReq)
+
+	if humaResp.Code != http.StatusOK {
+		t.Fatalf("expected Huma status 200, got %d", humaResp.Code)
+	}
+
+	localAccessLogs := recorded.FilterMessage("http request completed").All()
+	if len(localAccessLogs) != 1 {
+		t.Fatalf("expected 1 local Chi access log, got %d", len(localAccessLogs))
+	}
+	localFields := localAccessLogs[0].ContextMap()
+	assertObservedField(t, localFields, "request_id", "access-health")
+	assertObservedField(t, localFields, "path", "/health")
+	assertObservedField(t, localFields, "status", int64(http.StatusOK))
+
+	humaAccessLogs := recorded.FilterMessage("request completed").All()
+	if len(humaAccessLogs) != 1 {
+		t.Fatalf("expected 1 Huma access log, got %d", len(humaAccessLogs))
+	}
+	humaFields := humaAccessLogs[0].ContextMap()
+	assertObservedField(t, humaFields, "request_id", "access-huma")
+	assertObservedField(t, humaFields, "status", int64(http.StatusOK))
 }
 
 func TestNotFoundReturnsProblemDetails(t *testing.T) {
@@ -96,6 +194,7 @@ func TestNotFoundReturnsProblemDetails(t *testing.T) {
 	if resp.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 got %d", resp.Code)
 	}
+	assertRequestID(t, resp, "test-404-req")
 	if ct := resp.Header().Get("Content-Type"); ct != "application/problem+json" {
 		t.Fatalf("expected application/problem+json content type, got %q", ct)
 	}
@@ -125,6 +224,7 @@ func TestMethodNotAllowedReturnsProblemDetails(t *testing.T) {
 	if resp.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405 got %d", resp.Code)
 	}
+	assertRequestID(t, resp, "test-405-req")
 	if allow := resp.Header().Get("Allow"); !strings.Contains(allow, http.MethodGet) {
 		t.Fatalf("expected Allow header to list GET, got %q", allow)
 	}
@@ -157,6 +257,7 @@ func TestRecovererReturnsProblemDetails(t *testing.T) {
 	if resp.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 got %d", resp.Code)
 	}
+	assertRequestID(t, resp, "test-500-req")
 	if ct := resp.Header().Get("Content-Type"); ct != "application/problem+json" {
 		t.Fatalf("expected application/problem+json content type, got %q", ct)
 	}
@@ -186,8 +287,32 @@ func TestRedirect(t *testing.T) {
 	if resp.Code != http.StatusMovedPermanently {
 		t.Fatalf("expected 301 got %d", resp.Code)
 	}
+	assertRequestID(t, resp, "test-301-req")
 	if loc := resp.Header().Get("Location"); loc != "/health" {
 		t.Fatalf("expected Location /health, got %q", loc)
+	}
+}
+
+func assertRequestID(t *testing.T, resp *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	if got := resp.Header().Get(chimiddleware.RequestIDHeader); got != want {
+		t.Fatalf("expected request ID response header %q, got %q", want, got)
+	}
+}
+
+func assertValidRequestID(t *testing.T, resp *httptest.ResponseRecorder) string {
+	t.Helper()
+	got := resp.Header().Get(chimiddleware.RequestIDHeader)
+	if !obs.DefaultValidateRequestID(got) {
+		t.Fatalf("expected valid request ID response header, got %q", got)
+	}
+	return got
+}
+
+func assertObservedField(t *testing.T, fields map[string]any, key string, want any) {
+	t.Helper()
+	if got := fields[key]; got != want {
+		t.Fatalf("expected log field %s=%v, got %v in %#v", key, want, got, fields)
 	}
 }
 

@@ -11,9 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/janisto/huma-observability"
 	"go.uber.org/zap"
-
-	applog "github.com/janisto/huma-playground/internal/platform/logging"
 )
 
 const (
@@ -159,7 +158,7 @@ func (c *Client) decodeResponse(ctx context.Context, resp *http.Response, target
 		}
 		remaining := strings.TrimSpace(resp.Header.Get("X-RateLimit-Remaining"))
 		reset := strings.TrimSpace(resp.Header.Get("X-RateLimit-Reset"))
-		applog.LogWarn(ctx, "github api access denied",
+		obs.Logger(ctx).Warn("github api access denied",
 			zap.Int("status", resp.StatusCode),
 			zap.String("X-RateLimit-Remaining", remaining),
 			zap.String("X-RateLimit-Reset", reset),
@@ -452,7 +451,7 @@ func logRateLimited(ctx context.Context, resp *http.Response) {
 	if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
 		fields = append(fields, zap.String("Retry-After", retryAfter))
 	}
-	applog.LogWarn(ctx, "github api rate limit exceeded", fields...)
+	obs.Logger(ctx).Warn("github api rate limit exceeded", fields...)
 }
 
 // Compile-time interface check

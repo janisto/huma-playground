@@ -175,25 +175,31 @@ huma.NewError(http.StatusConflict, "resource already exists")
 
 ## Logging
 
-Use context-aware logging helpers:
+Use request-scoped loggers:
 
 ```go
 import (
+    "github.com/janisto/huma-observability"
     "go.uber.org/zap"
-    applog "github.com/janisto/huma-playground/internal/platform/logging"
 )
 
 func handler(ctx context.Context, input *Input) (*Output, error) {
-    applog.LogInfo(ctx, "processing request", zap.String("id", input.ID))
+    obs.Logger(ctx).Info("processing request", zap.String("id", input.ID))
 
     if err != nil {
-        applog.LogError(ctx, "operation failed", err, zap.String("id", input.ID))
+        obs.Logger(ctx).Error("operation failed", zap.Error(err), zap.String("id", input.ID))
         return nil, huma.Error500InternalServerError("operation failed")
     }
 
     return &Output{Body: result}, nil
 }
 ```
+
+`obs.Logger(ctx)` is intentionally request-scoped. It writes only after
+`obs.HTTPRequestContext`, `obs.RequestContext`, or another
+`huma-observability` logger installer has populated the context. Do not use it
+for background work, scripts, or direct service tests with `context.Background()`;
+use an explicit process logger for those paths.
 
 ## Field Documentation
 

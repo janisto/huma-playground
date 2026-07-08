@@ -38,8 +38,8 @@ Huma Playground is a minimal REST API skeleton built with [Huma](https://github.
 
 ### Key Features
 
-- Chi middleware stack with security headers, CORS, request IDs, real IP detection, request logging, access logging, and panic recovery
-- Request-scoped Zap logger with Google Cloud trace metadata enrichment
+- Chi middleware stack with security headers, CORS, real IP detection, request size limits, and panic recovery
+- Huma observability middleware via `github.com/janisto/huma-observability` for router-wide request IDs, Huma access logs, request-scoped Zap loggers, and trace metadata enrichment
 - Plain response bodies with RFC 9457 Problem Details for errors
 - Content negotiation supporting JSON and CBOR formats
 - Cursor-based pagination with RFC 8288 Link headers
@@ -84,24 +84,25 @@ The Justfile uses `set dotenv-load` so all recipes automatically load `.env`. Th
 ### Requirements
 
 - Go 1.26+
+- Just
 - Firebase CLI (for emulators): `npm install -g firebase-tools`
 
 ### Install Dependencies
 
 ```bash
-go mod download
+just install
 ```
 
 ### Build
 
 ```bash
-go build -v ./...
+just build
 ```
 
 ### Run
 
 ```bash
-go run ./cmd/server
+just run
 ```
 
 The server starts on port 8080 with endpoints:
@@ -142,19 +143,19 @@ The project uses [golangci-lint](https://golangci-lint.run/) v2 for static analy
 Run linter:
 
 ```bash
-golangci-lint run ./...
+just lint
 ```
 
 Apply formatters (gci, gofumpt, golines) automatically:
 
 ```bash
-golangci-lint fmt ./...
+just fmt
 ```
 
 Run linter and apply formatters in one step:
 
 ```bash
-golangci-lint run --fix ./...
+just fix
 ```
 
 ---
@@ -172,10 +173,10 @@ internal/http/         # HTTP transport layer
     profile/           # Profile endpoint handlers (requires auth)
     routes/            # Route registration
 internal/platform/     # Cross-cutting infrastructure
+  audit/               # Audit event logging helpers
   auth/                # Firebase Auth middleware and JWT validation
   firebase/            # Firebase Admin SDK initialization
-  logging/             # Structured logging with Zap
-  middleware/          # Security headers, CORS, request ID
+  middleware/          # Security headers, CORS, vary, Chi-only access logs
   pagination/          # Cursor-based pagination
   respond/             # Panic recovery and Problem Details
   timeutil/            # Time formatting utilities
@@ -195,10 +196,10 @@ The `internal/platform/` packages provide shared infrastructure used by HTTP han
 
 | Package | Purpose | Dependencies |
 |---------|---------|--------------|
+| `audit` | Audit event logging helpers | huma-observability, Zap |
 | `auth` | Firebase JWT validation, user context, Huma security middleware | Firebase Admin SDK, Huma |
 | `firebase` | Firebase Admin SDK initialization (Auth + Firestore clients) | Firebase Admin SDK |
-| `logging` | Structured logging, request-scoped context, trace correlation, audit logging | Zap, Chi (for HTTP middleware) |
-| `middleware` | HTTP middleware (CORS, security headers, request ID, vary) | Chi, go-chi/cors |
+| `middleware` | HTTP middleware (CORS, security headers, vary, Chi-only access logs) | Chi, go-chi/cors, huma-observability, Zap |
 | `pagination` | Cursor encoding/decoding, link header generation | Standard library only |
 | `respond` | Panic recovery, Problem Details error responses | Chi, Huma (for error types) |
 | `timeutil` | Time formatting constants | Standard library only |
@@ -208,8 +209,7 @@ The `internal/platform/` packages provide shared infrastructure used by HTTP han
 - `timeutil` - Time formatting has no transport coupling
 
 **HTTP-coupled packages (by design):**
-- `logging` - HTTP middleware for request logging; core helpers (`LogInfo`, `LogError`) are transport-agnostic
-- `middleware` - HTTP-specific (CORS, headers, request ID)
+- `middleware` - HTTP-specific (CORS, headers, vary, Chi-only access logs)
 - `respond` - HTTP error handling with RFC 9457 Problem Details
 
 **Key rule:** Platform packages must not import from `internal/http/` (no circular dependencies). HTTP handlers import platform packages, never the reverse.
@@ -278,25 +278,24 @@ Panic recovery and Chi-level handlers use Problem Details via `internal/platform
 
 ### Logging
 
-Use context-aware logging helpers from `internal/platform/logging`:
+Use request-scoped loggers from `github.com/janisto/huma-observability`:
 
 ```go
-import applog "github.com/janisto/huma-playground/internal/platform/logging"
+import "github.com/janisto/huma-observability"
 
-applog.LogInfo(ctx, "message", zap.String("key", "value"))
-applog.LogWarn(ctx, "message", zap.String("key", "value"))
-applog.LogError(ctx, "message", err, zap.String("key", "value"))
-applog.LogFatal(ctx, "message", err, zap.String("key", "value"))
+obs.Logger(ctx).Info("message", zap.String("key", "value"))
+obs.Logger(ctx).Warn("message", zap.String("key", "value"))
+obs.Logger(ctx).Error("message", zap.Error(err), zap.String("key", "value"))
 ```
 
-These helpers preserve contextual fields such as trace IDs.
+`obs.Logger(ctx)` preserves request metadata installed by router-wide `obs.HTTPRequestContext` and Huma `obs.RequestContext`. It intentionally returns a no-op logger when no request logger is installed. That means audit helpers and service warning logs are valid only for request-driven paths; direct service calls, background jobs, scripts, and tests using `context.Background()` must use an explicit process logger instead. `obs.AccessLogger` emits Huma operation-aware access logs. Use `internal/platform/middleware.AccessLogger` only for Chi-only route groups and Chi error handlers to avoid duplicate `/v1` access logs. Use the startup logger returned by `obs.NewLogger` for process-level logs outside a request context.
 
 ### Adding New Routes
 
 1. Create a new file under `internal/http/v1` (e.g., `users/handler.go`)
 2. Define output struct with `Body` field for the response payload
 3. Add a registration function and call it from `routes.Register`
-4. Log within handlers using context-aware helpers
+4. Log within handlers using `obs.Logger(ctx)`
 5. Return errors using Huma's error helpers
 6. Use `respond.WriteRedirect()` for redirects
 
@@ -458,9 +457,9 @@ Use Huma error helpers:
 
 ### Request ID
 
-- `X-Request-ID` header tracks requests end-to-end
+- `X-Request-ID` header tracks all server requests end-to-end
 - Propagate to downstream services and include in logs
-- Generated automatically by `RequestID()` middleware if not provided
+- Generated automatically by `obs.HTTPRequestContext` if not provided, then reused by `obs.RequestContext` on Huma routes
 
 ### Content Types
 
@@ -546,19 +545,25 @@ Links provided via HTTP `Link` header per RFC 8288.
 
 ```go
 import (
-    applog "github.com/janisto/huma-playground/internal/platform/logging"
+    "github.com/janisto/huma-observability"
+    "go.uber.org/zap"
+
     appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 )
 
 func TestMyFeature(t *testing.T) {
+    logger := zap.NewNop()
     router := chi.NewRouter()
+    httpAccessLogger := appmiddleware.AccessLogger()
+    router.NotFound(httpAccessLogger(respond.NotFoundHandler()).ServeHTTP)
     router.Use(
-        appmiddleware.RequestID(),
+        obs.HTTPRequestContext(obs.HTTPRequestContextConfig{Logger: logger}),
+        respond.Recoverer(logger),
         chimiddleware.ClientIPFromRemoteAddr,
-        applog.RequestLogger(),
-        respond.Recoverer(),
     )
     api := humachi.New(router, huma.DefaultConfig("Test", "test"))
+    api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{Logger: logger}))
+    api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{Logger: logger}))
     routes.Register(api)
 
     req := httptest.NewRequest(http.MethodGet, "/hello", nil)

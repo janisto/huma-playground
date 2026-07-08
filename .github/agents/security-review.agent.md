@@ -13,11 +13,11 @@ Before analysis, read these files:
 1. `cmd/server/main.go` - Application setup, middleware, and CORS configuration
 2. `internal/platform/middleware/cors.go` - CORS configuration
 3. `internal/platform/middleware/security.go` - Security headers middleware
-4. `internal/platform/middleware/requestid.go` - Request ID middleware
-5. `internal/platform/logging/middleware.go` - Request logging middleware
-6. `internal/platform/respond/respond.go` - Error handling and panic recovery
+4. `internal/platform/middleware/accesslog.go` - Chi-only access logging middleware
+5. `internal/platform/respond/respond.go` - Error handling and panic recovery
+6. `internal/platform/audit/audit.go` - Audit logging helper
 7. All files in `internal/http/v1/` - Endpoint definitions
-8. `internal/platform/logging/logger.go` - Logger configuration
+8. `go.mod` - Observability and middleware dependency versions
 
 ## Security Review Checklist
 
@@ -60,6 +60,7 @@ Referrer-Policy: no-referrer
 - [ ] Sensitive data (tokens, passwords, PII) never logged
 - [ ] Security events use appropriate log levels (WARN/ERROR)
 - [ ] Request correlation IDs present for traceability (X-Request-ID)
+- [ ] Audit/security log callers either run under installed observability request context or use an explicit process logger
 - [ ] Suspicious patterns (brute force, scanning) would be detectable
 
 ### 6. Secrets & Configuration

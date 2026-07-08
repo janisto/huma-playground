@@ -15,8 +15,6 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-
-	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 )
 
 // testProblem is used for testing to capture $schema field.
@@ -117,7 +115,6 @@ func TestMethodNotAllowedHandlerReturnsProblemDetails(t *testing.T) {
 func TestRecovererReturnsProblemDetails(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
-		appmiddleware.RequestID(),
 		chimiddleware.ClientIPFromRemoteAddr,
 		Recoverer(),
 	)
@@ -194,7 +191,6 @@ func TestWriteRedirect(t *testing.T) {
 func TestStatus304NotModifiedHasNoBody(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
-		appmiddleware.RequestID(),
 		chimiddleware.ClientIPFromRemoteAddr,
 	)
 	api := humachi.New(router, huma.DefaultConfig("NoBody", "test"))
@@ -268,7 +264,6 @@ func TestResponseWriterMethods(t *testing.T) {
 func TestRecovererSkipsWriteWhenHeaderAlreadyWritten(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
-		appmiddleware.RequestID(),
 		chimiddleware.ClientIPFromRemoteAddr,
 		Recoverer(),
 	)
@@ -353,7 +348,6 @@ func TestMethodNotAllowedHandlerReturnsCBORWhenAccepted(t *testing.T) {
 func TestRecovererReturnsCBORWhenAccepted(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
-		appmiddleware.RequestID(),
 		chimiddleware.ClientIPFromRemoteAddr,
 		Recoverer(),
 	)
@@ -640,7 +634,6 @@ func TestNotFoundHandlerWithEmptyPath(t *testing.T) {
 func TestRecovererWithErrorPanic(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
-		appmiddleware.RequestID(),
 		chimiddleware.ClientIPFromRemoteAddr,
 		Recoverer(),
 	)
@@ -1066,7 +1059,6 @@ func TestMethodNotAllowedWithMultipleMethods(t *testing.T) {
 func TestRecovererWithNonErrorPanic(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(
-		appmiddleware.RequestID(),
 		chimiddleware.ClientIPFromRemoteAddr,
 		Recoverer(),
 	)
