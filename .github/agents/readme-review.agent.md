@@ -57,10 +57,10 @@ Maintain these sections in order:
 ## Verification Checklist
 
 ### Commands to Verify
-- `go build -v ./...`
-- `go test ./...`
-- `golangci-lint run ./...`
-- `go run ./cmd/server`
+- `just build`
+- `just test`
+- `just lint`
+- `just run`
 
 ### Paths to Verify
 - `cmd/server/` exists

@@ -13,9 +13,8 @@ import (
 	humachi "github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/janisto/huma-observability"
 
-	applog "github.com/janisto/huma-playground/internal/platform/logging"
-	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 	"github.com/janisto/huma-playground/internal/platform/pagination"
 	"github.com/janisto/huma-playground/internal/platform/respond"
 	githubsvc "github.com/janisto/huma-playground/internal/service/github"
@@ -83,12 +82,12 @@ var _ githubsvc.Service = (*mockGitHubService)(nil)
 func newTestRouter(svc githubsvc.Service) chi.Router {
 	router := chi.NewRouter()
 	router.Use(
-		appmiddleware.RequestID(),
 		chimiddleware.ClientIPFromRemoteAddr,
-		applog.RequestLogger(),
 		respond.Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("GitHubTest", "test"))
+	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{}))
+	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{}))
 	Register(api, svc, "")
 	return router
 }
@@ -307,6 +306,38 @@ func TestGetRepoSuccess(t *testing.T) {
 	}
 	if repo.License != "MIT License" {
 		t.Errorf("expected license MIT License, got %s", repo.License)
+	}
+}
+
+func TestGetRepoNilTopicsReturnsEmptyArray(t *testing.T) {
+	repo := testRepo()
+	repo.Topics = nil
+	svc := &mockGitHubService{repo: repo}
+	router := newTestRouter(svc)
+
+	req := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"/github/repos/octocat/git-consortium",
+		nil,
+	)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json unmarshal: %v", err)
+	}
+	topics, ok := body["topics"].([]any)
+	if !ok {
+		t.Fatalf("expected topics array, got %#v", body["topics"])
+	}
+	if len(topics) != 0 {
+		t.Fatalf("expected empty topics array, got %#v", topics)
 	}
 }
 

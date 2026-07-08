@@ -15,21 +15,20 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/janisto/huma-observability"
 
-	applog "github.com/janisto/huma-playground/internal/platform/logging"
-	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 	"github.com/janisto/huma-playground/internal/platform/respond"
 )
 
 func newTestRouter() chi.Router {
 	router := chi.NewRouter()
 	router.Use(
-		appmiddleware.RequestID(),
 		chimiddleware.ClientIPFromRemoteAddr,
-		applog.RequestLogger(),
 		respond.Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("HelloTest", "test"))
+	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{}))
+	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{}))
 	Register(api)
 	return router
 }
@@ -44,6 +43,9 @@ func TestGetJSON(t *testing.T) {
 
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	if got := resp.Header().Get(chimiddleware.RequestIDHeader); got != "hello-get-json" {
+		t.Fatalf("expected request ID response header, got %q", got)
 	}
 	if ct := resp.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("expected application/json, got %s", ct)

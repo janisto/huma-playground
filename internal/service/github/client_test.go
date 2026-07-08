@@ -471,6 +471,56 @@ func TestRateLimitedHTTP429(t *testing.T) {
 	}
 }
 
+func TestIsGitHubRateLimitResponse(t *testing.T) {
+	tests := map[string]struct {
+		status  int
+		headers map[string]string
+		want    bool
+	}{
+		"429": {
+			status: http.StatusTooManyRequests,
+			want:   true,
+		},
+		"403 remaining zero": {
+			status: http.StatusForbidden,
+			headers: map[string]string{
+				"X-RateLimit-Remaining": " 0 ",
+			},
+			want: true,
+		},
+		"403 retry after": {
+			status: http.StatusForbidden,
+			headers: map[string]string{
+				"Retry-After": "60",
+			},
+			want: true,
+		},
+		"403 without rate limit headers": {
+			status: http.StatusForbidden,
+			want:   false,
+		},
+		"500": {
+			status: http.StatusInternalServerError,
+			want:   false,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: tt.status,
+				Header:     make(http.Header),
+			}
+			for key, value := range tt.headers {
+				resp.Header.Set(key, value)
+			}
+			if got := isGitHubRateLimitResponse(resp); got != tt.want {
+				t.Fatalf("expected %t, got %t", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestUpstreamError(t *testing.T) {
 	srv := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -493,6 +543,39 @@ func TestUpstreamError(t *testing.T) {
 	}
 	if upstreamErr.Status != http.StatusInternalServerError {
 		t.Fatalf("expected status 500, got %d", upstreamErr.Status)
+	}
+}
+
+func TestUpstreamErrorStringAndUnwrap(t *testing.T) {
+	if got := (*UpstreamError)(nil).Error(); got != "github upstream error" {
+		t.Fatalf("unexpected nil error string: %q", got)
+	}
+	if got := (*UpstreamError)(nil).Unwrap(); got != nil {
+		t.Fatalf("expected nil unwrap, got %v", got)
+	}
+
+	errWithoutCause := &UpstreamError{
+		Kind:   UpstreamErrorKindForbidden,
+		Status: http.StatusForbidden,
+	}
+	if got := errWithoutCause.Error(); got != "github upstream error (kind=forbidden status=403)" {
+		t.Fatalf("unexpected error string: %q", got)
+	}
+	if got := errWithoutCause.Unwrap(); got != nil {
+		t.Fatalf("expected nil unwrap, got %v", got)
+	}
+
+	cause := errors.New("upstream said no")
+	errWithCause := &UpstreamError{
+		Kind:   UpstreamErrorKindUpstream,
+		Status: http.StatusInternalServerError,
+		cause:  cause,
+	}
+	if got := errWithCause.Error(); got != "github upstream error (kind=upstream status=500): upstream said no" {
+		t.Fatalf("unexpected error string: %q", got)
+	}
+	if got := errWithCause.Unwrap(); !errors.Is(got, cause) {
+		t.Fatalf("expected cause unwrap, got %v", got)
 	}
 }
 
@@ -525,6 +608,20 @@ func TestContextCancellation(t *testing.T) {
 	_, err := client.GetOwner(ctx, "octocat")
 	if err == nil {
 		t.Fatal("expected error for canceled context")
+	}
+}
+
+func TestListLanguagesContextCancellation(t *testing.T) {
+	client := newTestClient("http://127.0.0.1")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := client.ListLanguages(ctx, "octocat", "hello-world")
+	if err == nil {
+		t.Fatal("expected error for canceled context")
+	}
+	if !strings.Contains(err.Error(), "fetching languages") {
+		t.Fatalf("expected fetching languages context, got %v", err)
 	}
 }
 
@@ -708,5 +805,36 @@ func TestParseTimeEmpty(t *testing.T) {
 	_, err := client.GetOwner(context.Background(), "octocat")
 	if err == nil {
 		t.Fatal("expected error for missing timestamp")
+	}
+}
+
+func TestToRepoSummaryRejectsInvalidTimestamps(t *testing.T) {
+	valid := githubRepoSummary{
+		Name:      "hello-world",
+		FullName:  "octocat/hello-world",
+		CreatedAt: "2024-01-01T00:00:00Z",
+		UpdatedAt: "2024-01-02T00:00:00Z",
+	}
+	tests := map[string]githubRepoSummary{
+		"created at": {
+			Name:      valid.Name,
+			FullName:  valid.FullName,
+			CreatedAt: "not-a-date",
+			UpdatedAt: valid.UpdatedAt,
+		},
+		"updated at": {
+			Name:      valid.Name,
+			FullName:  valid.FullName,
+			CreatedAt: valid.CreatedAt,
+			UpdatedAt: "not-a-date",
+		},
+	}
+
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := toRepoSummary(input); err == nil {
+				t.Fatal("expected invalid timestamp error")
+			}
+		})
 	}
 }

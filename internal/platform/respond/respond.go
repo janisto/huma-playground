@@ -1,6 +1,7 @@
 package respond
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,9 +13,8 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-chi/chi/v5"
+	"github.com/janisto/huma-observability"
 	"go.uber.org/zap"
-
-	applog "github.com/janisto/huma-playground/internal/platform/logging"
 )
 
 // problemWithSchema wraps huma.ErrorModel to include the $schema field.
@@ -263,7 +263,12 @@ func (rw *responseWriter) Unwrap() http.ResponseWriter {
 
 // Recoverer returns middleware that recovers from panics with Problem Details.
 // Re-panics on http.ErrAbortHandler to preserve net/http abort semantics.
-func Recoverer() func(http.Handler) http.Handler {
+func Recoverer(loggers ...*zap.Logger) func(http.Handler) http.Handler {
+	fallback := zap.NewNop()
+	if len(loggers) > 0 && loggers[0] != nil {
+		fallback = loggers[0]
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rw := &responseWriter{ResponseWriter: w}
@@ -277,8 +282,8 @@ func Recoverer() func(http.Handler) http.Handler {
 					}
 
 					stack := debug.Stack()
-					applog.LogError(r.Context(), "panic recovered",
-						fmt.Errorf("%v", rec),
+					recoveryLogger(r.Context(), fallback).Error("panic recovered",
+						zap.Error(fmt.Errorf("%v", rec)),
 						zap.ByteString("stack", stack),
 					)
 
@@ -300,6 +305,16 @@ func Recoverer() func(http.Handler) http.Handler {
 			next.ServeHTTP(rw, r)
 		})
 	}
+}
+
+func recoveryLogger(ctx context.Context, fallback *zap.Logger) *zap.Logger {
+	if obs.RequestID(ctx) != "" {
+		return obs.Logger(ctx)
+	}
+	if fallback == nil {
+		return zap.NewNop()
+	}
+	return fallback
 }
 
 // NotFoundHandler returns a handler for 404 responses with Problem Details.

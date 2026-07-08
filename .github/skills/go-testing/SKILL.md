@@ -24,9 +24,9 @@ internal/
                 handler.go
                 handler_test.go
     platform/
-        logging/
-            middleware.go
-            middleware_test.go
+        middleware/
+            accesslog.go
+            accesslog_test.go
 ```
 
 ## Test Server Setup
@@ -46,30 +46,39 @@ import (
     humachi "github.com/danielgtaylor/huma/v2/adapters/humachi"
     "github.com/go-chi/chi/v5"
     chimiddleware "github.com/go-chi/chi/v5/middleware"
+    "github.com/janisto/huma-observability"
+    "go.uber.org/zap"
 
     "github.com/janisto/huma-playground/internal/http/health"
-    "github.com/janisto/huma-playground/internal/http/v1/routes"
-    applog "github.com/janisto/huma-playground/internal/platform/logging"
+    "github.com/janisto/huma-playground/internal/http/v1/hello"
     appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
     "github.com/janisto/huma-playground/internal/platform/respond"
 )
 
 func setupTestRouter() *chi.Mux {
+    logger := zap.NewNop()
     router := chi.NewRouter()
+    httpAccessLogger := appmiddleware.AccessLogger()
+    router.NotFound(httpAccessLogger(respond.NotFoundHandler()).ServeHTTP)
+    router.MethodNotAllowed(httpAccessLogger(respond.MethodNotAllowedHandler()).ServeHTTP)
     router.Use(
-        appmiddleware.RequestID(),
+        obs.HTTPRequestContext(obs.HTTPRequestContextConfig{Logger: logger}),
+        respond.Recoverer(logger),
         chimiddleware.ClientIPFromRemoteAddr,
-        applog.RequestLogger(),
-        respond.Recoverer(),
     )
 
     // Root-level endpoints (unversioned)
-    router.Get("/health", health.Handler)
+    router.Group(func(r chi.Router) {
+        r.Use(httpAccessLogger)
+        r.Get("/health", health.Handler)
+    })
 
     // Versioned API
     router.Route("/v1", func(r chi.Router) {
         api := humachi.New(r, huma.DefaultConfig("Test", "test"))
-        routes.Register(api)
+        api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{Logger: logger}))
+        api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{Logger: logger}))
+        hello.Register(api)
     })
     return router
 }
@@ -283,13 +292,13 @@ func TestListItems_WithInvalidCursor_Returns400(t *testing.T) { ... }
 
 ```bash
 # Run all tests
-go test ./...
+just test
 
 # Verbose output
-go test -v ./...
+just test-verbose
 
 # With coverage
-go test -v -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+just coverage
 
 # Coverage report
 go tool cover -func=coverage.out

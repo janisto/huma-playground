@@ -10,8 +10,9 @@ It showcases structured logging, RFC 9457 Problem Details for errors, and a modu
 
 ## Features
 
-- Layered middleware architecture with security headers, CORS, request IDs, real IP detection, and structured access logs
-- Request-scoped Zap logger with Google Cloud Trace correlation via [W3C Trace Context](https://www.w3.org/TR/trace-context/) `traceparent` header, falling back to request ID when no trace exists
+- Layered middleware architecture with security headers, CORS, real IP detection, request size limits, and panic recovery
+- Huma observability middleware via [`github.com/janisto/huma-observability`](https://pkg.go.dev/github.com/janisto/huma-observability) for router-wide request IDs, Huma access logs, and request-scoped Zap loggers
+- Google Cloud Trace correlation via [W3C Trace Context](https://www.w3.org/TR/trace-context/) `traceparent` header, falling back to request ID when no trace exists
 - [RFC 9457 Problem Details](https://datatracker.ietf.org/doc/html/rfc9457) for all error responses with optional field-level validation errors
 - Content negotiation supporting [JSON (RFC 8259)](https://datatracker.ietf.org/doc/html/rfc8259) and [CBOR (RFC 8949)](https://datatracker.ietf.org/doc/html/rfc8949) formats via `Accept` header
 - Cursor-based pagination with [RFC 8288 Link](https://datatracker.ietf.org/doc/html/rfc8288) headers
@@ -19,6 +20,24 @@ It showcases structured logging, RFC 9457 Problem Details for errors, and a modu
 - Firebase Authentication with JWT validation via Huma middleware
 - Firestore integration with transaction-safe CRUD operations and audit logging
 - Health check endpoint (`/health`) for liveness probes
+
+## Observability
+
+The server installs `obs.HTTPRequestContext` at the Chi boundary so `/health`,
+redirects, panic recovery, 404, 405, and Huma routes all share the same request
+ID, trace metadata, and request-scoped logger. The `/v1` Huma API also installs
+`obs.RequestContext` and `obs.AccessLogger` so Huma routes emit
+operation-aware access logs with `operation_id` and route templates.
+
+`huma-observability` does not emit generic `net/http` access logs. This app
+uses local Chi access logging only around non-Huma handlers and Chi error
+handlers to avoid duplicate access logs for `/v1` routes.
+
+Request-scoped logging is intentionally request-bound. `obs.Logger(ctx)` writes
+only when `ctx` has passed through `obs.HTTPRequestContext`, `obs.RequestContext`,
+or another `huma-observability` logger installer. Calls from direct service use,
+background jobs, scripts, or tests using `context.Background()` are no-ops by
+design; those paths must use an explicit process logger instead.
 
 ## API Design Principles
 
@@ -69,7 +88,7 @@ Errors follow [RFC 9457 Problem Details](https://www.rfc-editor.org/rfc/rfc9457.
 - Go 1.26+
 - [golangci-lint](https://golangci-lint.run/) v2 (for linting and formatting)
 - [Firebase CLI](https://firebase.google.com/docs/cli) (for emulators)
-- [Just](https://github.com/casey/just) command runner (optional)
+- [Just](https://github.com/casey/just) command runner
 - [Podman Desktop](https://podman-desktop.io/) (for containerization, optional)
 
 ## Go Version Pinning
@@ -105,7 +124,7 @@ use (
 )
 ```
 
-The workspace allows simultaneous development across modules. Commands like `go build`, `go test`, and `go mod tidy` operate on all workspace modules when run from the root.
+The workspace allows simultaneous development across modules. Use the `just` recipes from the repository root so `.env` and the pinned toolchain are applied consistently.
 
 ## Quick Start
 
@@ -153,10 +172,10 @@ internal/http/         # HTTP transport layer
     ...                # Additional route packages
     routes/            # Route registration
 internal/platform/     # Cross-cutting infrastructure
+  audit/               # Audit event logging helpers
   auth/                # Firebase Auth middleware and JWT validation
   firebase/            # Firebase Admin SDK initialization
-  logging/             # Structured logging with Zap
-  middleware/          # Security headers, CORS, request ID
+  middleware/          # Security headers, CORS, vary, Chi-only access logs
   pagination/          # Cursor-based pagination
   respond/             # Panic recovery and Problem Details
   ...                  # Additional platform packages
@@ -184,10 +203,9 @@ functions/             # Cloud Functions (separate Go module)
 ### Build and Test
 
 ```bash
-go build -v ./...     # Build
-go test ./...         # Run tests
-go test -v ./...      # Verbose output
-golangci-lint run ./...  # Lint
+just build       # Build
+just test        # Run tests
+just lint        # Lint
 ```
 
 ### Firebase Emulators
@@ -225,9 +243,9 @@ Run `just` to see all available commands.
 ### Dependencies
 
 ```bash
-go mod download        # Download dependencies
-go get -u -t ./...     # Update dependencies
-go mod tidy            # Clean up go.mod
+just install       # Download dependencies
+just update        # Update dependencies
+just tidy          # Clean up go.mod
 ```
 
 ## Adding Routes
@@ -278,7 +296,7 @@ gcloud run deploy huma-playground \
 
 The `--base-image` and `--automatic-updates` flags enable [automatic base image updates](https://cloud.google.com/run/docs/configuring/services/automatic-base-image-updates), allowing Google to apply security patches to the OS and runtime without rebuilding or redeploying.
 
-Set a `FIREBASE_PROJECT_ID` environment variable to enable trace correlation in Cloud Logging.
+Cloud Logging trace correlation uses W3C `traceparent` metadata parsed by `huma-observability` with the GCP preset.
 
 ## CI/CD
 

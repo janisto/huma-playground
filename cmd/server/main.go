@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	_ "github.com/danielgtaylor/huma/v2/formats/cbor"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/janisto/huma-observability"
 	_ "github.com/joho/godotenv/autoload"
 	"go.uber.org/zap"
 
@@ -20,7 +22,6 @@ import (
 	"github.com/janisto/huma-playground/internal/http/v1/routes"
 	"github.com/janisto/huma-playground/internal/platform/auth"
 	"github.com/janisto/huma-playground/internal/platform/firebase"
-	applog "github.com/janisto/huma-playground/internal/platform/logging"
 	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
 	"github.com/janisto/huma-playground/internal/platform/respond"
 	githubsvc "github.com/janisto/huma-playground/internal/service/github"
@@ -31,14 +32,18 @@ import (
 var Version = "dev"
 
 func main() {
+	logger, err := obs.NewLogger(obs.LoggerConfig{
+		Preset:    obs.PresetGCP,
+		AddCaller: true,
+	})
+	if err != nil {
+		panic(err)
+	}
 	defer func() {
-		if err := applog.Sync(); err != nil {
-			applog.LogError(context.Background(), "logger sync error", err)
+		if syncErr := logger.Sync(); syncErr != nil && !errors.Is(syncErr, syscall.ENOTTY) {
+			logger.Error("logger sync error", zap.Error(syncErr))
 		}
 	}()
-	if err := applog.Err(); err != nil {
-		applog.LogError(context.Background(), "logger init error", err)
-	}
 
 	// Initialize Firebase
 	ctx := context.Background()
@@ -46,20 +51,20 @@ func main() {
 	if firebaseProjectID == "" {
 		if os.Getenv("APP_ENVIRONMENT") == "development" {
 			firebaseProjectID = "demo-test-project"
-			applog.LogWarn(ctx, "using demo-test-project for local development")
+			logger.Warn("using demo-test-project for local development")
 		} else {
-			applog.LogFatal(ctx, "FIREBASE_PROJECT_ID environment variable is required", nil)
+			logger.Fatal("FIREBASE_PROJECT_ID environment variable is required")
 		}
 	}
 	firebaseClients, err := firebase.InitializeClients(ctx, firebase.Config{
 		ProjectID: firebaseProjectID,
 	})
 	if err != nil {
-		applog.LogFatal(ctx, "firebase init failed", err)
+		logger.Fatal("firebase init failed", zap.Error(err))
 	}
 	defer func() {
 		if closeErr := firebaseClients.Close(); closeErr != nil {
-			applog.LogError(ctx, "firebase close error", closeErr)
+			logger.Error("firebase close error", zap.Error(closeErr))
 		}
 	}()
 
@@ -76,25 +81,29 @@ func main() {
 	githubService := githubsvc.NewClient(githubHTTPClient, githubOpts...)
 
 	router := chi.NewRouter()
-	router.NotFound(respond.NotFoundHandler())
-	router.MethodNotAllowed(respond.MethodNotAllowedHandler())
+	httpAccessLogger := appmiddleware.AccessLogger()
+	router.NotFound(httpAccessLogger(respond.NotFoundHandler()).ServeHTTP)
+	router.MethodNotAllowed(httpAccessLogger(respond.MethodNotAllowedHandler()).ServeHTTP)
 
 	// Base middleware stack
 	router.Use(
+		obs.HTTPRequestContext(obs.HTTPRequestContextConfig{
+			Logger: logger,
+			Preset: obs.PresetGCP,
+		}),
+		respond.Recoverer(logger),
 		appmiddleware.Security("/v1/api-docs"),
 		appmiddleware.Vary(),
 		appmiddleware.CORS(),
-		appmiddleware.RequestID(),
 		chimiddleware.ClientIPFromRemoteAddr,
-		// RequestSize limits request body size to prevent memory exhaustion from large payloads.
 		chimiddleware.RequestSize(1<<20), // 1 MB limit
-		applog.RequestLogger(),
-		applog.AccessLogger(),
-		respond.Recoverer(),
 	)
 
 	// Root-level endpoints (unversioned)
-	router.Get("/health", health.Handler)
+	router.Group(func(r chi.Router) {
+		r.Use(httpAccessLogger)
+		r.Get("/health", health.Handler)
+	})
 
 	// Versioned API
 	cfg := huma.DefaultConfig("Huma Playground API", Version)
@@ -106,6 +115,14 @@ func main() {
 
 	router.Route("/v1", func(r chi.Router) {
 		api := humachi.New(r, cfg)
+		api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{
+			Logger: logger,
+			Preset: obs.PresetGCP,
+		}))
+		api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{
+			Logger: logger,
+			Preset: obs.PresetGCP,
+		}))
 
 		// Add CBOR content type to OpenAPI requests and responses
 		api.OpenAPI().OnAddOperation = append(api.OpenAPI().OnAddOperation,
@@ -148,7 +165,7 @@ func main() {
 
 	listenErr := make(chan error, 1)
 	go func() {
-		applog.LogInfo(context.Background(), "server listening", zap.String("addr", srv.Addr))
+		logger.Info("server listening", zap.String("addr", srv.Addr))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			listenErr <- err
 		}
@@ -159,15 +176,15 @@ func main() {
 
 	select {
 	case err := <-listenErr:
-		applog.LogError(context.Background(), "listen failed", err, zap.String("addr", srv.Addr))
+		logger.Error("listen failed", zap.Error(err), zap.String("addr", srv.Addr))
 		os.Exit(1)
 	case <-shutdownCtx.Done():
-		applog.LogInfo(context.Background(), "shutdown signal received", zap.Error(context.Cause(shutdownCtx)))
+		logger.Info("shutdown signal received", zap.Error(context.Cause(shutdownCtx)))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		applog.LogError(ctx, "server shutdown error", err)
+		logger.Error("server shutdown error", zap.Error(err))
 	}
-	applog.LogInfo(context.Background(), "server exited")
+	logger.Info("server exited")
 }
