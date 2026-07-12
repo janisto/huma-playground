@@ -191,9 +191,6 @@ jobs:
       - name: Probe final image
         run: just container-smoke
 
-      - name: Verify non-root runtime
-        run: test "$(docker image inspect --format '{{.Config.User}}' huma-playground:smoke)" = "65532:65532"
-
   ci:
     if: ${{ always() }}
     needs:

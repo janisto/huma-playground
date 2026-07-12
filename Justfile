@@ -258,6 +258,7 @@ container-smoke image="huma-playground:smoke" name="huma-playground-smoke" host_
     }
     trap cleanup EXIT
     just container-build {{ image }} ci-smoke
+    test "$("$runtime" image inspect --format '{{ "{{.Config.User}}" }}' {{ image }})" = "65532:65532"
     "$runtime" run -d --rm --name {{ name }} \
       -e APP_ENVIRONMENT=development \
       -e FIREBASE_MODE=offline \

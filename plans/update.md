@@ -162,6 +162,24 @@ Final-pass validation: `just check`, `just test -- -shuffle=on -count=3`, `just 
 `git diff --check` passed. No production deployment or live Firebase project was changed. Hosted GitHub workflow
 execution remains the only validation that requires a pushed branch or pull request.
 
+## Pull request CI follow-up
+
+PR #65's first hosted container run failed after `just container-smoke` completed its Podman build and runtime probes.
+The workflow then invoked `docker image inspect` in a separate step. GitHub's runner exposes both tools, the Justfile
+correctly selected Podman, and Docker could not see the image in Podman's storage. The aggregate `ci` job failed because
+the container job failed; unit, required Firebase emulator, vulnerability, and dependency-review jobs passed.
+
+The non-root image assertion now runs inside `container-smoke` through the same selected container runtime used to build
+and run the image. The Docker-only workflow step was removed. This keeps the local and hosted artifact contract in one
+recipe and prevents mixed-runtime image-store assumptions. `just container-smoke` and `just workflow-check` pass locally
+with Podman after the correction.
+
+The top-level JSON `null` concern found during the comparative Echo review was also checked against the composed Huma
+application. Huma rejects `null`, arrays, strings, numbers, and booleans with 422 Problem Details containing
+`expected object`; it does not decode them into a zero-value body. `internal/http/v1/hello/handler_test.go` already
+contains an explicit `null` regression case. That behavior matches this repository's documented split: malformed JSON
+syntax is 400, while syntactically valid JSON that violates the operation schema is 422. No Huma decoder fix is needed.
+
 ## Original review verdict
 
 The following verdict records the pre-implementation state at `c5991fe`. It is retained as the rationale for the changes and is superseded by the implementation result at the end of this file.
