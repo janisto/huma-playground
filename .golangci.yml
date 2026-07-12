@@ -3,23 +3,44 @@ version: "2"
 linters:
   default: standard
   enable:
+    - asciicheck
+    - bidichk
     - bodyclose
+    - canonicalheader
     - copyloopvar
+    - durationcheck
     - errcheck
+    - errchkjson
+    - errname
     - errorlint
+    - fatcontext
+    - gocheckcompilerdirectives
+    - gochecksumtype
     - gosec
     - govet
     - ineffassign
     - intrange
+    - loggercheck
+    - makezero
     - misspell
     - modernize
+    - musttag
     - nilerr
+    - nilnesserr
     - noctx
+    - nolintlint
     - perfsprint
+    - predeclared
+    - reassign
+    - recvcheck
     - staticcheck
+    - thelper
     - unconvert
     - unparam
     - unused
+    - usestdlibvars
+    - usetesting
+    - wastedassign
 
   settings:
     errcheck:
@@ -35,6 +56,14 @@ linters:
 
     misspell:
       locale: US
+
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+    recvcheck:
+      exclusions:
+        - "Time.MarshalCBOR"
 
     staticcheck:
       checks:
@@ -68,8 +97,6 @@ formatters:
 
   exclusions:
     generated: strict
-    paths:
-      - ".*_mock.go"
 
 run:
   timeout: 5m

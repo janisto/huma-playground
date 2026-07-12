@@ -1,8 +1,6 @@
 package routes
 
 import (
-	"net/url"
-
 	"github.com/danielgtaylor/huma/v2"
 
 	githubhandler "github.com/janisto/huma-playground/internal/http/v1/github"
@@ -17,26 +15,15 @@ import (
 // Register wires all HTTP routes into the provided API router.
 func Register(
 	api huma.API,
+	prefix string,
 	verifier auth.Verifier,
-	profileService profilesvc.Service,
+	profileStore profilesvc.Store,
 	githubService githubsvc.Service,
 ) {
-	prefix := apiPrefix(api)
-
-	// Apply auth middleware for protected endpoints
 	api.UseMiddleware(auth.NewAuthMiddleware(api, verifier))
 
 	hello.Register(api)
 	items.Register(api, prefix)
-	profile.Register(api, profileService)
+	profile.Register(api, prefix, profileStore)
 	githubhandler.Register(api, githubService, prefix)
-}
-
-func apiPrefix(api huma.API) string {
-	for _, s := range api.OpenAPI().Servers {
-		if u, err := url.Parse(s.URL); err == nil && u.Path != "" {
-			return u.Path
-		}
-	}
-	return ""
 }

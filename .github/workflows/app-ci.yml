@@ -1,28 +1,31 @@
-name: App build, tests and coverage
+name: App build, tests and deployable artifacts
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '17 5 * * 1'
 
 permissions:
   contents: read
-  pull-requests: write
-  issues: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
-  ci:
+  unit:
     runs-on: ubuntu-latest
-    env:
-      GOTOOLCHAIN: local
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v6.5.0
@@ -30,18 +33,33 @@ jobs:
           go-version: '1.26.x'
           check-latest: true
           cache: true
+          cache-dependency-path: |
+            go.sum
+            functions/go.sum
 
-      - name: Validate Go toolchain
+      - name: Set up Just
+        uses: extractions/setup-just@v4.0.0
+
+      - name: Validate toolchain
         run: go version
 
-      - name: Install dependencies
-        run: go mod download
+      - name: Download both modules
+        run: just download
 
-      - name: Build
-        run: go build -v ./...
+      - name: Build both modules
+        run: just build
 
-      - name: Run tests with coverage
-        run: go test -v -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+      - name: Test root module with coverage
+        run: just test-coverage
+
+      - name: Test function module
+        run: just test-functions
+
+      - name: Smoke-test Functions Framework target
+        run: just functions-smoke
+
+      - name: Race detector
+        run: just test-race
 
       - name: Generate coverage artifacts
         run: |
@@ -56,9 +74,7 @@ jobs:
             echo
             echo "Total coverage: ${total}"
             echo
-            echo '```'
-            cat coverage-summary.txt
-            echo '```'
+            sed 's/^/    /' coverage-summary.txt
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage artifacts
@@ -69,3 +85,135 @@ jobs:
             coverage.out
             coverage.html
             coverage-summary.txt
+
+  firebase-emulators:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: true
+
+      - name: Set up Java
+        uses: actions/setup-java@v5.5.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: '24'
+
+      - name: Set up Just
+        uses: extractions/setup-just@v4.0.0
+
+      - name: Install Firebase CLI
+        run: npm install --global firebase-tools@15.22.1
+
+      - name: Run required emulator tests
+        run: just test-integration-ci
+
+      - name: Publish emulator coverage summary
+        run: |
+          total=$(grep '^total:' integration-coverage-summary.txt | awk '{print $3}')
+          {
+            echo "### Emulator-backed Test Coverage"
+            echo
+            echo "Total coverage: ${total}"
+            echo
+            echo "This profile includes the root test suite with required Auth and Firestore emulators."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload emulator coverage artifacts
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: emulator-coverage-report
+          path: |
+            integration-coverage.out
+            integration-coverage.html
+            integration-coverage-summary.txt
+
+  vulnerability:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            functions/go.sum
+
+      - name: Set up Just
+        uses: extractions/setup-just@v4.0.0
+
+      - name: Scan both modules
+        run: just vuln
+
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4.9.0
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Just
+        uses: extractions/setup-just@v4.0.0
+
+      - name: Probe final image
+        run: just container-smoke
+
+      - name: Verify non-root runtime
+        run: test "$(docker image inspect --format '{{.Config.User}}' huma-playground:smoke)" = "65532:65532"
+
+  ci:
+    if: ${{ always() }}
+    needs:
+      - unit
+      - firebase-emulators
+      - vulnerability
+      - dependency-review
+      - container
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all CI jobs
+        env:
+          UNIT: ${{ needs.unit.result }}
+          FIREBASE_EMULATORS: ${{ needs['firebase-emulators'].result }}
+          VULNERABILITY: ${{ needs.vulnerability.result }}
+          DEPENDENCY_REVIEW: ${{ needs['dependency-review'].result }}
+          CONTAINER: ${{ needs.container.result }}
+        run: |
+          test "$UNIT" = success
+          test "$FIREBASE_EMULATORS" = success
+          test "$VULNERABILITY" = success
+          test "$DEPENDENCY_REVIEW" = success
+          test "$CONTAINER" = success

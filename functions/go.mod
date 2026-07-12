@@ -5,6 +5,7 @@ go 1.26.5
 require github.com/GoogleCloudPlatform/functions-framework-go v1.9.2
 
 require (
+	cloud.google.com/go/functions v1.19.3 // indirect
 	github.com/cloudevents/sdk-go/v2 v2.16.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

@@ -6,17 +6,14 @@ import (
 	"github.com/go-chi/cors"
 )
 
-// CORS returns a middleware that applies permissive defaults suitable for APIs.
-// The configuration mirrors chi's recommended settings and can be adjusted as
-// requirements evolve.
-func CORS() func(http.Handler) http.Handler {
+// CORS applies the configured browser origins without allowing credentials.
+func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 	return cors.Handler(cors.Options{
-		AllowedOrigins: []string{"*"},
+		AllowedOrigins: allowedOrigins,
 		AllowedMethods: []string{
 			http.MethodGet,
 			http.MethodHead,
 			http.MethodPost,
-			http.MethodPut,
 			http.MethodPatch,
 			http.MethodDelete,
 			http.MethodOptions,
@@ -25,9 +22,9 @@ func CORS() func(http.Handler) http.Handler {
 			"Accept",
 			"Authorization",
 			"Content-Type",
-			"X-CSRF-Token",
 			"X-Request-ID",
 			"traceparent",
+			"tracestate",
 		},
 		ExposedHeaders: []string{
 			"Link",

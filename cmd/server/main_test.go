@@ -4,654 +4,538 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/danielgtaylor/huma/v2"
-	"github.com/danielgtaylor/huma/v2/adapters/humachi"
-	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/janisto/huma-observability"
+	"github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/janisto/huma-playground/internal/http/health"
-	"github.com/janisto/huma-playground/internal/http/v1/routes"
 	"github.com/janisto/huma-playground/internal/platform/auth"
-	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
-	"github.com/janisto/huma-playground/internal/platform/respond"
 	githubsvc "github.com/janisto/huma-playground/internal/service/github"
-	profilesvc "github.com/janisto/huma-playground/internal/service/profile"
 )
 
-func testServer() http.Handler {
-	return testServerWithLogger(zap.NewNop())
+type stubVerifier struct {
+	User  *auth.FirebaseUser
+	Error error
 }
 
-func testServerWithLogger(logger *zap.Logger) http.Handler {
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-	router := chi.NewRouter()
-	httpAccessLogger := appmiddleware.AccessLogger()
-	router.NotFound(httpAccessLogger(respond.NotFoundHandler()).ServeHTTP)
-	router.MethodNotAllowed(httpAccessLogger(respond.MethodNotAllowedHandler()).ServeHTTP)
-	router.Use(
-		obs.HTTPRequestContext(obs.HTTPRequestContextConfig{Logger: logger}),
-		respond.Recoverer(logger),
-		chimiddleware.ClientIPFromRemoteAddr,
-	)
-
-	// Root-level endpoints
-	router.Group(func(r chi.Router) {
-		r.Use(httpAccessLogger)
-		r.Get("/health", health.Handler)
-		r.Get("/redirect", func(w http.ResponseWriter, r *http.Request) {
-			respond.WriteRedirect(w, r, "/health", http.StatusMovedPermanently)
-		})
-	})
-
-	// Versioned API
-	router.Route("/v1", func(r chi.Router) {
-		cfg := huma.DefaultConfig("Huma Playground API", "test")
-		cfg.DocsPath = ""
-		cfg.Servers = []*huma.Server{
-			{URL: "/v1"},
-		}
-		api := humachi.New(r, cfg)
-		api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{Logger: logger}))
-		api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{Logger: logger}))
-		verifier := &auth.MockVerifier{User: auth.TestUser()}
-		profileService := profilesvc.NewMockProfileService()
-		githubService := githubsvc.NewMockGitHubService()
-		routes.Register(api, verifier, profileService, githubService)
-		huma.Get(api, "/panic", func(ctx context.Context, _ *struct{}) (*struct{}, error) {
-			panic("boom")
-		})
-	})
-
-	return router
+func (v *stubVerifier) Verify(context.Context, string) (*auth.FirebaseUser, error) {
+	return v.User, v.Error
 }
 
-func TestHealth(t *testing.T) {
-	srv := testServer()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "test-health-req")
-	req.Header.Set("Accept", "application/json")
-	resp := httptest.NewRecorder()
-	srv.ServeHTTP(resp, req)
+func testUser() *auth.FirebaseUser {
+	return &auth.FirebaseUser{UID: "test-user-123", Email: "test@example.com", EmailVerified: true}
+}
 
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected status 200 got %d", resp.Code)
+func testConfig(t *testing.T) config {
+	t.Helper()
+	cfg, err := loadConfig(func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("load config: %v", err)
 	}
-	assertRequestID(t, resp, "test-health-req")
+	return cfg
+}
 
-	var h health.Response
-	if err := json.Unmarshal(resp.Body.Bytes(), &h); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
+func testRouter(t *testing.T, cfg config) http.Handler {
+	t.Helper()
+	githubClient, err := githubsvc.NewClient(http.DefaultClient)
+	if err != nil {
+		t.Fatalf("create GitHub client: %v", err)
 	}
+	return newRouter(cfg, dependencies{
+		verifier: &stubVerifier{User: testUser()},
+		profiles: unavailableProfileStore{},
+		github:   githubClient,
+	}, zap.NewNop())
+}
 
-	if h.Status != "healthy" {
-		t.Fatalf("expected status 'healthy', got %s", h.Status)
+func TestLoadConfigDefaults(t *testing.T) {
+	cfg := testConfig(t)
+	if cfg.Address != "0.0.0.0:8080" || cfg.Environment != environmentDevelopment {
+		t.Fatalf("unexpected defaults: %#v", cfg)
+	}
+	if cfg.FirebaseMode != firebaseModeOffline || cfg.FirebaseProjectID != "demo-test-project" {
+		t.Fatalf("unexpected Firebase defaults: %#v", cfg)
+	}
+	if len(cfg.CORSOrigins) != 1 || cfg.CORSOrigins[0] != "*" {
+		t.Fatalf("unexpected CORS defaults: %v", cfg.CORSOrigins)
 	}
 }
 
-func TestRequestIDGeneratedWhenMissing(t *testing.T) {
-	srv := testServer()
+func TestLoadConfigRejectsUnsafeCombinations(t *testing.T) {
 	tests := []struct {
 		name string
+		env  map[string]string
+	}{
+		{name: "invalid port", env: map[string]string{"PORT": "70000"}},
+		{name: "invalid host", env: map[string]string{"HOST": "not a host"}},
+		{name: "invalid environment", env: map[string]string{"APP_ENVIRONMENT": "prod"}},
+		{name: "unsafe log level", env: map[string]string{"LOG_LEVEL": "fatal"}},
+		{name: "undocumented log level alias", env: map[string]string{"LOG_LEVEL": "warning"}},
+		{name: "invalid CORS origin", env: map[string]string{"CORS_ALLOWED_ORIGINS": "example.com/path"}},
+		{name: "offline production", env: map[string]string{"APP_ENVIRONMENT": "production"}},
+		{name: "live missing project", env: map[string]string{"FIREBASE_MODE": "live"}},
+		{
+			name: "live demo project",
+			env:  map[string]string{"FIREBASE_MODE": "live", "FIREBASE_PROJECT_ID": "demo-prod"},
+		},
+		{
+			name: "partial emulators",
+			env:  map[string]string{"FIREBASE_MODE": "emulator", "FIREBASE_AUTH_EMULATOR_HOST": "localhost:7110"},
+		},
+		{
+			name: "invalid emulator address",
+			env: map[string]string{
+				"FIREBASE_MODE":               "emulator",
+				"FIREBASE_AUTH_EMULATOR_HOST": "http://localhost:7110",
+				"FIRESTORE_EMULATOR_HOST":     "localhost:7130",
+			},
+		},
+		{
+			name: "emulator host contains whitespace",
+			env: map[string]string{
+				"FIREBASE_MODE":               "emulator",
+				"FIREBASE_AUTH_EMULATOR_HOST": "bad host:7110",
+				"FIRESTORE_EMULATOR_HOST":     "localhost:7130",
+			},
+		},
+		{
+			name: "production emulators",
+			env: map[string]string{
+				"APP_ENVIRONMENT":             "production",
+				"FIREBASE_MODE":               "emulator",
+				"FIREBASE_PROJECT_ID":         "demo-test",
+				"FIREBASE_AUTH_EMULATOR_HOST": "localhost:7110",
+				"FIRESTORE_EMULATOR_HOST":     "localhost:7130",
+			},
+		},
+		{
+			name: "production wildcard CORS",
+			env: map[string]string{
+				"APP_ENVIRONMENT":      "production",
+				"FIREBASE_MODE":        "live",
+				"FIREBASE_PROJECT_ID":  "real-project",
+				"CORS_ALLOWED_ORIGINS": "*",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := loadConfig(func(key string) string { return tt.env[key] })
+			if err == nil {
+				t.Fatal("expected configuration error")
+			}
+		})
+	}
+}
+
+func TestLoadConfigProduction(t *testing.T) {
+	values := map[string]string{
+		"APP_ENVIRONMENT":      "production",
+		"FIREBASE_MODE":        "live",
+		"FIREBASE_PROJECT_ID":  "real-project",
+		"CORS_ALLOWED_ORIGINS": "https://example.com, https://admin.example.com",
+		"LOG_LEVEL":            "warn",
+	}
+	cfg, err := loadConfig(func(key string) string { return values[key] })
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if len(cfg.CORSOrigins) != 2 || cfg.FirebaseProjectID != "real-project" {
+		t.Fatalf("unexpected config: %#v", cfg)
+	}
+}
+
+func TestLoadConfigEmulator(t *testing.T) {
+	values := map[string]string{
+		"FIREBASE_MODE":               "emulator",
+		"FIREBASE_PROJECT_ID":         "demo-local",
+		"FIREBASE_AUTH_EMULATOR_HOST": "[::1]:7110",
+		"FIRESTORE_EMULATOR_HOST":     "firestore:7130",
+	}
+	if _, err := loadConfig(func(key string) string { return values[key] }); err != nil {
+		t.Fatalf("expected valid host:port emulator configuration: %v", err)
+	}
+}
+
+func TestRouterServesHealthDocsAndOpenAPI(t *testing.T) {
+	cfg := testConfig(t)
+	router := testRouter(t, cfg)
+	for _, test := range []struct {
 		path string
 		want int
 	}{
-		{name: "health", path: "/health", want: http.StatusOK},
-		{name: "not found", path: "/missing", want: http.StatusNotFound},
-		{name: "huma route", path: "/v1/hello", want: http.StatusOK},
+		{path: "/health", want: http.StatusOK},
+		{path: "/v1/api-docs", want: http.StatusOK},
+		{path: "/v1/openapi.json", want: http.StatusOK},
+		{path: "/v1/schemas/ErrorModel.json", want: http.StatusOK},
+	} {
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, test.path, nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != test.want {
+			t.Fatalf("%s: expected %d, got %d: %s", test.path, test.want, response.Code, response.Body.String())
+		}
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tt.path, nil)
-			resp := httptest.NewRecorder()
-			srv.ServeHTTP(resp, req)
-
-			if resp.Code != tt.want {
-				t.Fatalf("expected status %d, got %d", tt.want, resp.Code)
+func TestAllOpenAPISchemasResolve(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/openapi.json", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("openapi: expected 200, got %d", response.Code)
+	}
+	var document struct {
+		Components struct {
+			Schemas map[string]json.RawMessage `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
+		t.Fatalf("decode OpenAPI: %v", err)
+	}
+	if len(document.Components.Schemas) == 0 {
+		t.Fatal("OpenAPI contains no component schemas")
+	}
+	for name := range document.Components.Schemas {
+		t.Run(name, func(t *testing.T) {
+			path := "/v1/schemas/" + url.PathEscape(name) + ".json"
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("%s: expected 200, got %d: %s", path, response.Code, response.Body.String())
 			}
-			assertValidRequestID(t, resp)
+			if contentType := response.Header().Get("Content-Type"); contentType != "application/json" {
+				t.Fatalf("%s: expected application/json, got %q", path, contentType)
+			}
 		})
 	}
 }
 
-func TestInvalidRequestIDIsReplaced(t *testing.T) {
-	srv := testServer()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "bad request id")
-	resp := httptest.NewRecorder()
-	srv.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected status 200 got %d", resp.Code)
+func TestRouterHealthAndRequestID(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
+	request.Header.Set(middleware.RequestIDHeader, "health-request")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", response.Code)
 	}
-	got := assertValidRequestID(t, resp)
-	if got == "bad request id" {
-		t.Fatalf("expected invalid request ID to be replaced")
+	if got := response.Header().Get(middleware.RequestIDHeader); got != "health-request" {
+		t.Fatalf("unexpected request ID %q", got)
 	}
-}
-
-func TestAccessLogsAreSplitBetweenChiAndHuma(t *testing.T) {
-	core, recorded := observer.New(zapcore.InfoLevel)
-	srv := testServerWithLogger(zap.New(core))
-
-	healthReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
-	healthReq.Header.Set(chimiddleware.RequestIDHeader, "access-health")
-	healthResp := httptest.NewRecorder()
-	srv.ServeHTTP(healthResp, healthReq)
-
-	if healthResp.Code != http.StatusOK {
-		t.Fatalf("expected health status 200, got %d", healthResp.Code)
-	}
-
-	humaReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/hello", nil)
-	humaReq.Header.Set(chimiddleware.RequestIDHeader, "access-huma")
-	humaResp := httptest.NewRecorder()
-	srv.ServeHTTP(humaResp, humaReq)
-
-	if humaResp.Code != http.StatusOK {
-		t.Fatalf("expected Huma status 200, got %d", humaResp.Code)
-	}
-
-	localAccessLogs := recorded.FilterMessage("http request completed").All()
-	if len(localAccessLogs) != 1 {
-		t.Fatalf("expected 1 local Chi access log, got %d", len(localAccessLogs))
-	}
-	localFields := localAccessLogs[0].ContextMap()
-	assertObservedField(t, localFields, "request_id", "access-health")
-	assertObservedField(t, localFields, "path", "/health")
-	assertObservedField(t, localFields, "status", int64(http.StatusOK))
-
-	humaAccessLogs := recorded.FilterMessage("request completed").All()
-	if len(humaAccessLogs) != 1 {
-		t.Fatalf("expected 1 Huma access log, got %d", len(humaAccessLogs))
-	}
-	humaFields := humaAccessLogs[0].ContextMap()
-	assertObservedField(t, humaFields, "request_id", "access-huma")
-	assertObservedField(t, humaFields, "status", int64(http.StatusOK))
-}
-
-func TestNotFoundReturnsProblemDetails(t *testing.T) {
-	srv := testServer()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "test-404-req")
-	resp := httptest.NewRecorder()
-	srv.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 got %d", resp.Code)
-	}
-	assertRequestID(t, resp, "test-404-req")
-	if ct := resp.Header().Get("Content-Type"); ct != "application/problem+json" {
-		t.Fatalf("expected application/problem+json content type, got %q", ct)
-	}
-
-	var problem huma.ErrorModel
-	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-		t.Fatalf("failed to unmarshal 404 response: %v", err)
-	}
-	if problem.Status != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d", problem.Status)
-	}
-	if problem.Title != "Not Found" {
-		t.Fatalf("unexpected title: %s", problem.Title)
-	}
-	if problem.Detail != "resource not found" {
-		t.Fatalf("unexpected detail: %s", problem.Detail)
+	var body health.Response
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode health: %v", err)
 	}
 }
 
-func TestMethodNotAllowedReturnsProblemDetails(t *testing.T) {
-	srv := testServer()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/health", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "test-405-req")
-	resp := httptest.NewRecorder()
-	srv.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405 got %d", resp.Code)
+func TestRouterDoesNotTrustForwardedHostForSchemaLinks(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://api.example.com/v1/hello", nil)
+	request.Header.Set("Forwarded", "host=forwarded-attacker.example")
+	request.Header.Set("X-Forwarded-Host", "x-forwarded-attacker.example")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
 	}
-	assertRequestID(t, resp, "test-405-req")
-	if allow := resp.Header().Get("Allow"); !strings.Contains(allow, http.MethodGet) {
-		t.Fatalf("expected Allow header to list GET, got %q", allow)
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
 	}
-	if ct := resp.Header().Get("Content-Type"); ct != "application/problem+json" {
-		t.Fatalf("expected application/problem+json content type, got %q", ct)
-	}
-
-	var problem huma.ErrorModel
-	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-		t.Fatalf("failed to unmarshal 405 response: %v", err)
-	}
-	if problem.Status != http.StatusMethodNotAllowed {
-		t.Fatalf("expected status 405, got %d", problem.Status)
-	}
-	if problem.Title != "Method Not Allowed" {
-		t.Fatalf("unexpected title: %s", problem.Title)
-	}
-	if !strings.Contains(problem.Detail, "POST") {
-		t.Fatalf("expected detail to mention POST, got %s", problem.Detail)
+	schema, _ := body["$schema"].(string)
+	if !strings.HasPrefix(schema, "https://api.example.com/v1/schemas/") {
+		t.Fatalf("unexpected schema URL %q", schema)
 	}
 }
 
-func TestRecovererReturnsProblemDetails(t *testing.T) {
-	srv := testServer()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/panic", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "test-500-req")
-	resp := httptest.NewRecorder()
-	srv.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 got %d", resp.Code)
-	}
-	assertRequestID(t, resp, "test-500-req")
-	if ct := resp.Header().Get("Content-Type"); ct != "application/problem+json" {
-		t.Fatalf("expected application/problem+json content type, got %q", ct)
-	}
-
-	var problem huma.ErrorModel
-	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-		t.Fatalf("failed to unmarshal 500 response: %v", err)
-	}
-	if problem.Status != http.StatusInternalServerError {
-		t.Fatalf("expected status 500, got %d", problem.Status)
-	}
-	if problem.Title != "Internal Server Error" {
-		t.Fatalf("unexpected title: %s", problem.Title)
-	}
-	if problem.Detail != "internal server error" {
-		t.Fatalf("unexpected detail: %s", problem.Detail)
+func TestRouterRejectsUnknownQuery(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/hello?typo=true", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", response.Code, response.Body.String())
 	}
 }
 
-func TestRedirect(t *testing.T) {
-	srv := testServer()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/redirect", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "test-301-req")
-	resp := httptest.NewRecorder()
-	srv.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusMovedPermanently {
-		t.Fatalf("expected 301 got %d", resp.Code)
-	}
-	assertRequestID(t, resp, "test-301-req")
-	if loc := resp.Header().Get("Location"); loc != "/health" {
-		t.Fatalf("expected Location /health, got %q", loc)
-	}
-}
-
-func assertRequestID(t *testing.T, resp *httptest.ResponseRecorder, want string) {
-	t.Helper()
-	if got := resp.Header().Get(chimiddleware.RequestIDHeader); got != want {
-		t.Fatalf("expected request ID response header %q, got %q", want, got)
-	}
-}
-
-func assertValidRequestID(t *testing.T, resp *httptest.ResponseRecorder) string {
-	t.Helper()
-	got := resp.Header().Get(chimiddleware.RequestIDHeader)
-	if !obs.DefaultValidateRequestID(got) {
-		t.Fatalf("expected valid request ID response header, got %q", got)
-	}
-	return got
-}
-
-func assertObservedField(t *testing.T, fields map[string]any, key string, want any) {
-	t.Helper()
-	if got := fields[key]; got != want {
-		t.Fatalf("expected log field %s=%v, got %v in %#v", key, want, got, fields)
-	}
-}
-
-func TestFallbackToJSONForUnknownAccept(t *testing.T) {
-	srv := testServer()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "test-fallback-req")
-	req.Header.Set("Accept", "text/plain")
-	resp := httptest.NewRecorder()
-	srv.ServeHTTP(resp, req)
-
-	// Health endpoint always returns JSON since it's a plain HTTP handler
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d", resp.Code)
-	}
-	if ct := resp.Header().Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("expected application/json content type, got %q", ct)
-	}
-
-	var h health.Response
-	if err := json.Unmarshal(resp.Body.Bytes(), &h); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
-	}
-	if h.Status != "healthy" {
-		t.Fatalf("expected status 'healthy', got %s", h.Status)
-	}
-}
-
-func TestWildcardAcceptReturnsJSON(t *testing.T) {
-	srv := testServer()
+func TestRouterMethodNotAllowedIncludesAllow(t *testing.T) {
+	router := testRouter(t, testConfig(t))
 	tests := []struct {
-		name   string
-		accept string
+		path  string
+		allow string
 	}{
-		{"wildcard all", "*/*"},
-		{"application wildcard", "application/*"},
-		{"no accept header", ""},
+		{path: "/health", allow: "GET"},
+		{path: "/v1/hello", allow: "GET, POST"},
+		{path: "/v1/profile", allow: "GET, POST, PATCH, DELETE"},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
-			req.Header.Set(chimiddleware.RequestIDHeader, "test-wildcard-req")
-			if tt.accept != "" {
-				req.Header.Set("Accept", tt.accept)
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPut, test.path, nil)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("expected 405, got %d: %s", response.Code, response.Body.String())
 			}
-			resp := httptest.NewRecorder()
-			srv.ServeHTTP(resp, req)
-
-			if resp.Code != http.StatusOK {
-				t.Fatalf("expected 200 OK, got %d", resp.Code)
-			}
-			if ct := resp.Header().Get("Content-Type"); ct != "application/json" {
-				t.Fatalf("expected application/json, got %q", ct)
-			}
-
-			var h health.Response
-			if err := json.Unmarshal(resp.Body.Bytes(), &h); err != nil {
-				t.Fatalf("failed to unmarshal response: %v", err)
-			}
-			if h.Status != "healthy" {
-				t.Fatalf("expected status 'healthy', got %s", h.Status)
+			if allow := response.Header().Get("Allow"); allow != test.allow {
+				t.Fatalf("expected Allow %q, got %q", test.allow, allow)
 			}
 		})
 	}
 }
 
-func TestPortEnvVar(t *testing.T) {
-	tests := []struct {
-		name     string
-		envValue string
-		want     string
-	}{
-		{"default when empty", "", "8080"},
-		{"custom port", "3000", "3000"},
-		{"another port", "9090", "9090"},
+func TestOfflineModeFailsProtectedRoutesClosed(t *testing.T) {
+	cfg := testConfig(t)
+	clients, err := newApplicationClients(t.Context(), cfg, zap.NewNop())
+	if err != nil {
+		t.Fatalf("new clients: %v", err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.envValue != "" {
-				t.Setenv("PORT", tt.envValue)
-			}
-			port := os.Getenv("PORT")
-			if port == "" {
-				port = "8080"
-			}
-			if port != tt.want {
-				t.Errorf("got port %q, want %q", port, tt.want)
-			}
-		})
-	}
-}
-
-func TestListenErrorChannel(t *testing.T) {
-	listenErr := make(chan error, 1)
-
-	// Simulate a listen error being sent
-	expectedErr := &net.OpError{Op: "listen", Net: "tcp", Err: errors.New("address already in use")}
-	go func() {
-		listenErr <- expectedErr
-	}()
-
-	select {
-	case err := <-listenErr:
-		if err == nil {
-			t.Fatal("expected error, got nil")
+	t.Cleanup(func() {
+		if closeErr := clients.Close(); closeErr != nil {
+			t.Errorf("close Firebase clients: %v", closeErr)
 		}
-		if !strings.Contains(err.Error(), "address already in use") {
-			t.Errorf("unexpected error: %v", err)
-		}
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("timeout waiting for error")
-	}
-}
-
-func TestServerShutdownOnSignal(t *testing.T) {
-	router := chi.NewRouter()
-	router.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
 	})
-
-	srv := &http.Server{
-		Addr:              ":0", // random available port
-		Handler:           router,
-		ReadHeaderTimeout: time.Second,
-	}
-
-	listenErr := make(chan error, 1)
-	started := make(chan struct{})
-
-	go func() {
-		var lc net.ListenConfig
-		ln, err := lc.Listen(context.Background(), "tcp", srv.Addr)
-		if err != nil {
-			listenErr <- err
-			return
-		}
-		close(started)
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			listenErr <- err
-		}
-	}()
-
-	select {
-	case <-started:
-		// Server started successfully
-	case err := <-listenErr:
-		t.Fatalf("server failed to start: %v", err)
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for server to start")
-	}
-
-	// Shutdown the server
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		t.Fatalf("shutdown error: %v", err)
-	}
-
-	// Verify no listen error was sent (ErrServerClosed is filtered)
-	select {
-	case err := <-listenErr:
-		t.Fatalf("unexpected listen error after shutdown: %v", err)
-	default:
-		// Expected: no error
+	router := newRouter(cfg, clients.dependencies, zap.NewNop())
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/profile", nil)
+	request.Header.Set("Authorization", "Bearer local-token")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", response.Code, response.Body.String())
 	}
 }
 
-func TestOpenAPICBORContentTypes(t *testing.T) {
-	router := chi.NewRouter()
-	cfg := huma.DefaultConfig("Test API", "1.0.0")
-	api := humachi.New(router, cfg)
-
-	// Add CBOR content type hook similar to main.go
-	api.OpenAPI().OnAddOperation = append(api.OpenAPI().OnAddOperation,
-		func(_ *huma.OpenAPI, op *huma.Operation) {
-			if op.RequestBody != nil && op.RequestBody.Content != nil {
-				if jsonContent, ok := op.RequestBody.Content["application/json"]; ok {
-					op.RequestBody.Content["application/cbor"] = jsonContent
-				}
-			}
-			for _, resp := range op.Responses {
-				if resp.Content == nil {
-					continue
-				}
-				if jsonContent, ok := resp.Content["application/json"]; ok {
-					resp.Content["application/cbor"] = jsonContent
-				}
-			}
-		},
-	)
-
-	// Register a route with request body and response
-	type TestInput struct {
-		Body struct {
-			Name string `json:"name"`
-		}
+func TestRouterUsesConfiguredPrefix(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.APIPrefix = "/api"
+	router := testRouter(t, cfg)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/items?limit=1", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
 	}
-	type TestOutput struct {
-		Body struct {
-			Message string `json:"message"`
-		}
-	}
-	huma.Post(api, "/test", func(_ context.Context, input *TestInput) (*TestOutput, error) {
-		return &TestOutput{Body: struct {
-			Message string `json:"message"`
-		}{Message: "Hello, " + input.Body.Name}}, nil
-	})
-
-	// Check OpenAPI spec for CBOR content types
-	spec := api.OpenAPI()
-	op := spec.Paths["/test"].Post
-
-	if op.RequestBody == nil {
-		t.Fatal("expected request body in operation")
-	}
-	if _, ok := op.RequestBody.Content["application/json"]; !ok {
-		t.Fatal("expected application/json in request body content")
-	}
-	if _, ok := op.RequestBody.Content["application/cbor"]; !ok {
-		t.Fatal("expected application/cbor in request body content")
-	}
-
-	// Check 200 response has CBOR
-	resp200 := op.Responses["200"]
-	if resp200 == nil {
-		t.Fatal("expected 200 response")
-		return
-	}
-	if _, ok := resp200.Content["application/json"]; !ok {
-		t.Fatal("expected application/json in 200 response content")
-	}
-	if _, ok := resp200.Content["application/cbor"]; !ok {
-		t.Fatal("expected application/cbor in 200 response content")
+	if link := response.Header().Get("Link"); !strings.Contains(link, "</api/items?") {
+		t.Fatalf("unexpected Link header %q", link)
 	}
 }
 
-func TestOpenAPICBORSkipsNilContent(t *testing.T) {
-	router := chi.NewRouter()
-	cfg := huma.DefaultConfig("Test API", "1.0.0")
-	api := humachi.New(router, cfg)
-
-	api.OpenAPI().OnAddOperation = append(api.OpenAPI().OnAddOperation,
-		func(_ *huma.OpenAPI, op *huma.Operation) {
-			if op.RequestBody != nil && op.RequestBody.Content != nil {
-				if jsonContent, ok := op.RequestBody.Content["application/json"]; ok {
-					op.RequestBody.Content["application/cbor"] = jsonContent
-				}
-			}
-			for _, resp := range op.Responses {
-				if resp.Content == nil {
-					continue
-				}
-				if jsonContent, ok := resp.Content["application/json"]; ok {
-					resp.Content["application/cbor"] = jsonContent
-				}
-			}
-		},
-	)
-
-	// Register a route without request body (GET)
-	huma.Get(api, "/no-body", func(_ context.Context, _ *struct{}) (*struct{}, error) {
-		return nil, nil
-	})
-
-	// Should not panic - verifies nil checks work
-	spec := api.OpenAPI()
-	op := spec.Paths["/no-body"].Get
-
-	if op.RequestBody != nil {
-		t.Fatal("expected no request body for GET")
+func TestRequestContextTimeout(t *testing.T) {
+	handler := requestContextTimeout(time.Millisecond)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		if !errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+			t.Errorf("unexpected context error: %v", r.Context().Err())
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", response.Code)
 	}
 }
 
 func TestServerConfiguration(t *testing.T) {
-	srv := &http.Server{
-		Addr:              ":8080",
-		ReadTimeout:       5 * time.Second,
-		ReadHeaderTimeout: 2 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    64 << 10,
-	}
-
-	if srv.ReadTimeout != 5*time.Second {
-		t.Errorf("expected ReadTimeout 5s, got %v", srv.ReadTimeout)
-	}
-	if srv.ReadHeaderTimeout != 2*time.Second {
-		t.Errorf("expected ReadHeaderTimeout 2s, got %v", srv.ReadHeaderTimeout)
-	}
-	if srv.WriteTimeout != 10*time.Second {
-		t.Errorf("expected WriteTimeout 10s, got %v", srv.WriteTimeout)
-	}
-	if srv.IdleTimeout != 60*time.Second {
-		t.Errorf("expected IdleTimeout 60s, got %v", srv.IdleTimeout)
-	}
-	if srv.MaxHeaderBytes != 64<<10 {
-		t.Errorf("expected MaxHeaderBytes 64KB, got %d", srv.MaxHeaderBytes)
+	cfg := testConfig(t)
+	server := newServer(cfg, http.NotFoundHandler())
+	if server.Addr != cfg.Address ||
+		server.ReadTimeout != 5*time.Second ||
+		server.WriteTimeout != 10*time.Second ||
+		server.MaxHeaderBytes != 64<<10 {
+		t.Fatalf("unexpected server: %#v", server)
 	}
 }
 
-func TestVersionVariable(t *testing.T) {
-	// Version is set at package level, verify it exists
-	if Version == "" {
-		t.Error("Version should have a default value")
+func TestServeReturnsListenError(t *testing.T) {
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
 	}
+	t.Cleanup(func() {
+		if closeErr := listener.Close(); closeErr != nil {
+			t.Errorf("close listener: %v", closeErr)
+		}
+	})
+	server := &http.Server{
+		Addr:              listener.Addr().String(),
+		Handler:           http.NotFoundHandler(),
+		ReadHeaderTimeout: time.Second,
+	}
+	err = serve(t.Context(), server, time.Second, zap.NewNop())
+	if err == nil || !strings.Contains(err.Error(), "address already in use") {
+		t.Fatalf("expected address-in-use error, got %v", err)
+	}
+}
+
+func TestServeDoesNotStartWithCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	server := &http.Server{
+		Addr:              "127.0.0.1:0",
+		Handler:           http.NotFoundHandler(),
+		ReadHeaderTimeout: time.Second,
+	}
+	if err := serve(ctx, server, time.Second, zap.NewNop()); err != nil {
+		t.Fatalf("expected canceled startup to be a clean no-op, got %v", err)
+	}
+}
+
+func TestOpenAPIMediaTypesMatchRuntime(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/openapi.json", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	type content struct {
+		Content map[string]json.RawMessage `json:"content"`
+	}
+	var document struct {
+		Paths map[string]map[string]struct {
+			RequestBody *content           `json:"requestBody"`
+			Responses   map[string]content `json:"responses"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
+		t.Fatalf("decode OpenAPI: %v", err)
+	}
+
+	problemResponses := 0
+	for path, methods := range document.Paths {
+		for method, operation := range methods {
+			if operation.RequestBody != nil {
+				_, hasJSON := operation.RequestBody.Content["application/json"]
+				_, hasCBOR := operation.RequestBody.Content["application/cbor"]
+				if hasJSON != hasCBOR {
+					t.Errorf("%s %s request JSON/CBOR mismatch", method, path)
+				}
+			}
+			for status, response := range operation.Responses {
+				_, hasJSON := response.Content["application/json"]
+				_, hasCBOR := response.Content["application/cbor"]
+				if hasJSON != hasCBOR {
+					t.Errorf("%s %s response %s JSON/CBOR mismatch", method, path, status)
+				}
+				_, hasProblemJSON := response.Content["application/problem+json"]
+				_, hasProblemCBOR := response.Content["application/problem+cbor"]
+				if hasProblemJSON != hasProblemCBOR {
+					t.Errorf("%s %s response %s Problem Details JSON/CBOR mismatch", method, path, status)
+				}
+				if hasProblemJSON {
+					problemResponses++
+				}
+			}
+		}
+	}
+	if problemResponses == 0 {
+		t.Fatal("OpenAPI contains no Problem Details responses")
+	}
+}
+
+func TestOpenAPIResponseStatusesAndSecurityMatchRuntime(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/openapi.json", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	var document struct {
+		Paths map[string]map[string]struct {
+			OperationID string                     `json:"operationId"`
+			Responses   map[string]json.RawMessage `json:"responses"`
+			Security    []map[string][]string      `json:"security"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
+		t.Fatalf("decode OpenAPI: %v", err)
+	}
+
+	githubStatuses := []string{"200", "403", "404", "422", "429", "500", "502", "503"}
+	expected := map[string]map[string][]string{
+		"/hello": {
+			"get":  {"200", "422", "500"},
+			"post": {"200", "400", "408", "413", "415", "422", "500"},
+		},
+		"/items": {"get": {"200", "400", "422", "500"}},
+		"/profile": {
+			"delete": {"204", "401", "404", "422", "500", "503"},
+			"get":    {"200", "401", "404", "422", "500", "503"},
+			"patch":  {"200", "400", "401", "404", "408", "413", "415", "422", "500", "503"},
+			"post":   {"201", "400", "401", "408", "409", "413", "415", "422", "500", "503"},
+		},
+		"/github/owners/{owner}":       {"get": githubStatuses},
+		"/github/owners/{owner}/repos": {"get": githubStatuses},
+		"/github/repos/{owner}/{repo}": {"get": githubStatuses},
+		"/github/repos/{owner}/{repo}/activity": {
+			"get": {"200", "400", "403", "404", "422", "429", "500", "502", "503"},
+		},
+		"/github/repos/{owner}/{repo}/languages": {"get": githubStatuses},
+		"/github/repos/{owner}/{repo}/tags":      {"get": githubStatuses},
+	}
+	operationIDs := make(map[string]string)
+	operationCount := 0
+	for path, methods := range expected {
+		for method, want := range methods {
+			operation, ok := document.Paths[path][method]
+			if !ok {
+				t.Fatalf("missing %s operation for %s", method, path)
+			}
+			operationCount++
+			got := slices.Sorted(maps.Keys(operation.Responses))
+			if !slices.Equal(got, want) {
+				t.Errorf("%s %s response statuses = %v, want %v", method, path, got, want)
+			}
+			if operation.OperationID == "" {
+				t.Errorf("%s %s has no operation ID", method, path)
+			} else if previous, duplicate := operationIDs[operation.OperationID]; duplicate {
+				t.Errorf("duplicate operation ID %q on %s %s and %s", operation.OperationID, method, path, previous)
+			} else {
+				operationIDs[operation.OperationID] = method + " " + path
+			}
+			hasBearer := false
+			for _, requirement := range operation.Security {
+				if _, ok := requirement[auth.BearerAuthScheme]; ok {
+					hasBearer = true
+				}
+			}
+			if wantBearer := path == "/profile"; hasBearer != wantBearer {
+				t.Errorf("%s %s bearer security = %t, want %t", method, path, hasBearer, wantBearer)
+			}
+		}
+	}
+	actualOperationCount := 0
+	for _, methods := range document.Paths {
+		actualOperationCount += len(methods)
+	}
+	if len(document.Paths) != len(expected) {
+		t.Errorf("OpenAPI paths = %d, want %d", len(document.Paths), len(expected))
+	}
+	if actualOperationCount != operationCount {
+		t.Errorf("OpenAPI operations = %d, want %d", actualOperationCount, operationCount)
+	}
+	if len(operationIDs) != operationCount {
+		t.Errorf("unique operation IDs = %d, operations = %d", len(operationIDs), operationCount)
+	}
+}
+
+func TestVersionDefault(t *testing.T) {
 	if Version != "dev" {
-		t.Errorf("expected default Version 'dev', got %q", Version)
-	}
-}
-
-func TestCBORAcceptHeader(t *testing.T) {
-	srv := testServer()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/hello", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "test-cbor-req")
-	req.Header.Set("Accept", "application/cbor")
-	resp := httptest.NewRecorder()
-	srv.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d", resp.Code)
-	}
-	if ct := resp.Header().Get("Content-Type"); ct != "application/cbor" {
-		t.Fatalf("expected application/cbor content type, got %q", ct)
-	}
-}
-
-func TestGitHubOwnerEndpoint(t *testing.T) {
-	srv := testServer()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/github/owners/octocat", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "test-github-owner")
-	resp := httptest.NewRecorder()
-	srv.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.Code)
-	}
-	if ct := resp.Header().Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("expected application/json, got %q", ct)
+		t.Fatalf("unexpected default version %q", Version)
 	}
 }

@@ -13,6 +13,19 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+type MockVerifier struct {
+	User  *FirebaseUser
+	Error error
+}
+
+func (v *MockVerifier) Verify(context.Context, string) (*FirebaseUser, error) {
+	return v.User, v.Error
+}
+
+func testUser() *FirebaseUser {
+	return &FirebaseUser{UID: "test-user-123", Email: "test@example.com", EmailVerified: true}
+}
+
 type testOutput struct {
 	Body struct {
 		UserID string `json:"user_id"`
@@ -51,13 +64,34 @@ func TestMiddlewareSkipsUnsecuredEndpoints(t *testing.T) {
 	verifier := &MockVerifier{Error: ErrInvalidToken}
 	router := setupTestAPI(verifier, false)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for unsecured endpoint, got %d", rec.Code)
+	}
+}
+
+func TestMiddlewareIgnoresUnrelatedSecurityScheme(t *testing.T) {
+	router := chi.NewRouter()
+	api := humachi.New(router, huma.DefaultConfig("Test", "1.0.0"))
+	api.UseMiddleware(NewAuthMiddleware(api, &MockVerifier{Error: ErrInvalidToken}))
+	huma.Register(api, huma.Operation{
+		OperationID: "api-key-endpoint",
+		Method:      http.MethodGet,
+		Path:        "/api-key",
+		Security:    []map[string][]string{{"apiKey": {}}},
+	}, func(context.Context, *struct{}) (*testOutput, error) {
+		return &testOutput{}, nil
+	})
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api-key", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected unrelated scheme to bypass Firebase, got %d", response.Code)
 	}
 }
 
@@ -96,10 +130,10 @@ func TestRegisterSecurityScheme(t *testing.T) {
 }
 
 func TestMiddlewareRequiresAuthHeader(t *testing.T) {
-	verifier := &MockVerifier{User: TestUser()}
+	verifier := &MockVerifier{User: testUser()}
 	router := setupTestAPI(verifier, true)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -113,10 +147,10 @@ func TestMiddlewareRequiresAuthHeader(t *testing.T) {
 }
 
 func TestMiddlewareRejectsInvalidAuthFormat(t *testing.T) {
-	verifier := &MockVerifier{User: TestUser()}
+	verifier := &MockVerifier{User: testUser()}
 	router := setupTestAPI(verifier, true)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
 	rec := httptest.NewRecorder()
 
@@ -132,7 +166,7 @@ func TestMiddlewareAuthenticatesValidToken(t *testing.T) {
 	verifier := &MockVerifier{User: user}
 	router := setupTestAPI(verifier, true)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	rec := httptest.NewRecorder()
 
@@ -157,7 +191,7 @@ func TestMiddlewareRejectsExpiredToken(t *testing.T) {
 	verifier := &MockVerifier{Error: ErrTokenExpired}
 	router := setupTestAPI(verifier, true)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer expired-token")
 	rec := httptest.NewRecorder()
 
@@ -175,7 +209,7 @@ func TestMiddlewareRejectsRevokedToken(t *testing.T) {
 	verifier := &MockVerifier{Error: ErrTokenRevoked}
 	router := setupTestAPI(verifier, true)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer revoked-token")
 	rec := httptest.NewRecorder()
 
@@ -190,7 +224,7 @@ func TestMiddlewareHandlesCertificateFetchError(t *testing.T) {
 	verifier := &MockVerifier{Error: ErrCertificateFetch}
 	router := setupTestAPI(verifier, true)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer token")
 	rec := httptest.NewRecorder()
 
@@ -204,11 +238,25 @@ func TestMiddlewareHandlesCertificateFetchError(t *testing.T) {
 	}
 }
 
+func TestMiddlewareHandlesUnavailableDependency(t *testing.T) {
+	router := setupTestAPI(&MockVerifier{Error: ErrAuthUnavailable}, true)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
+	request.Header.Set("Authorization", "Bearer some-token")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", response.Code)
+	}
+	if response.Header().Get("Retry-After") != "30" {
+		t.Fatalf("expected Retry-After, got %q", response.Header().Get("Retry-After"))
+	}
+}
+
 func TestMiddlewareRejectsDisabledUser(t *testing.T) {
 	verifier := &MockVerifier{Error: ErrUserDisabled}
 	router := setupTestAPI(verifier, true)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer disabled-user-token")
 	rec := httptest.NewRecorder()
 
@@ -223,14 +271,31 @@ func TestMiddlewareRejectsUnknownVerifierError(t *testing.T) {
 	verifier := &MockVerifier{Error: errors.New("unexpected verification error")}
 	router := setupTestAPI(verifier, true)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer some-token")
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 for unknown verifier error, got %d", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for unknown verifier error, got %d", rec.Code)
+	}
+}
+
+func TestMiddlewareRejectsMissingIdentity(t *testing.T) {
+	for _, verifier := range []Verifier{
+		&MockVerifier{},
+		&MockVerifier{User: &FirebaseUser{}},
+		nil,
+	} {
+		router := setupTestAPI(verifier, true)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", "Bearer token")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+		}
 	}
 }
 
@@ -244,6 +309,7 @@ func TestCategorizeAuthError(t *testing.T) {
 		{"token revoked", ErrTokenRevoked, "token_revoked"},
 		{"user disabled", ErrUserDisabled, "user_disabled"},
 		{"certificate fetch", ErrCertificateFetch, "certificate_fetch_failed"},
+		{"dependency unavailable", ErrAuthUnavailable, "dependency_unavailable"},
 		{"invalid token", ErrInvalidToken, "invalid_token"},
 		{"unknown error", errors.New("something unexpected"), "unknown"},
 	}
@@ -259,7 +325,7 @@ func TestCategorizeAuthError(t *testing.T) {
 }
 
 func TestUserFromContextReturnsNilWithoutAuth(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	user := UserFromContext(ctx)
 	if user != nil {
 		t.Fatal("expected nil user from unauthenticated context")
@@ -268,7 +334,7 @@ func TestUserFromContextReturnsNilWithoutAuth(t *testing.T) {
 
 func TestUserFromContextReturnsUser(t *testing.T) {
 	expected := &FirebaseUser{UID: "context-user"}
-	ctx := context.WithValue(context.Background(), userContextKey{}, expected)
+	ctx := context.WithValue(t.Context(), userContextKey{}, expected)
 
 	user := UserFromContext(ctx)
 	if user == nil {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pagination Endpoint"
+  short_description: "Build cursor-paginated Huma list endpoints"
+  default_prompt: "Use $pagination-endpoint to implement and test a cursor-paginated Huma list endpoint."

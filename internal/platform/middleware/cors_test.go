@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,8 +14,8 @@ func TestCORSAllowsGETOrigin(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	h := CORS()(fn)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://localhost/resource", nil)
+	h := CORS([]string{"*"})(fn)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/resource", nil)
 	req.Header.Set("Origin", "http://example.com")
 	resp := httptest.NewRecorder()
 
@@ -54,8 +53,8 @@ func TestCORSHandlesPreflightWithoutCallingNext(t *testing.T) {
 		called = true
 	})
 
-	h := CORS()(fn)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "http://localhost/resource", nil)
+	h := CORS([]string{"*"})(fn)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "http://localhost/resource", nil)
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
 	req.Header.Set("Access-Control-Request-Headers", "Content-Type")
@@ -85,8 +84,8 @@ func TestCORSAllowsXRequestIDHeader(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	h := CORS()(fn)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "http://localhost/resource", nil)
+	h := CORS([]string{"*"})(fn)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "http://localhost/resource", nil)
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
 	req.Header.Set("Access-Control-Request-Headers", "X-Request-ID")
@@ -103,25 +102,51 @@ func TestCORSAllowsXRequestIDHeader(t *testing.T) {
 	}
 }
 
-func TestCORSAllowsTraceparentHeader(t *testing.T) {
+func TestCORSAllowsTraceContextHeaders(t *testing.T) {
 	fn := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	h := CORS()(fn)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "http://localhost/resource", nil)
+	h := CORS([]string{"*"})(fn)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "http://localhost/resource", nil)
 	req.Header.Set("Origin", "http://example.com")
 	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
-	req.Header.Set("Access-Control-Request-Headers", "traceparent")
+	req.Header.Set("Access-Control-Request-Headers", "traceparent, tracestate")
 	resp := httptest.NewRecorder()
 
 	h.ServeHTTP(resp, req)
 
 	if resp.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for preflight with traceparent, got %d", resp.Code)
+		t.Fatalf("expected status 200 for preflight with trace context, got %d", resp.Code)
 	}
 	allowHeaders := resp.Header().Get("Access-Control-Allow-Headers")
-	if !containsHeader(allowHeaders, "traceparent") {
-		t.Fatalf("expected Access-Control-Allow-Headers to contain traceparent, got %q", allowHeaders)
+	for _, header := range []string{"traceparent", "tracestate"} {
+		if !containsHeader(allowHeaders, header) {
+			t.Fatalf("expected Access-Control-Allow-Headers to contain %s, got %q", header, allowHeaders)
+		}
+	}
+}
+
+func TestCORSRestrictsConfiguredOrigins(t *testing.T) {
+	handler := CORS([]string{"https://example.com"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, test := range []struct {
+		origin string
+		want   string
+	}{
+		{origin: "https://example.com", want: "https://example.com"},
+		{origin: "https://attacker.example", want: ""},
+	} {
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/resource", nil)
+		request.Header.Set("Origin", test.origin)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if got := response.Header().Get("Access-Control-Allow-Origin"); got != test.want {
+			t.Fatalf("%s: expected %q, got %q", test.origin, test.want, got)
+		}
+		if got := response.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+			t.Fatalf("credentials unexpectedly enabled: %q", got)
+		}
 	}
 }

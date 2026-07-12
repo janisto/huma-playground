@@ -1,6 +1,9 @@
 # Git
 .git
 .gitignore
+.github
+.agents
+.vscode
 
 # IDE
 .idea
@@ -13,6 +16,8 @@
 *.out
 coverage.out
 coverage.html
+coverage-summary.txt
+integration-coverage*
 
 # Documentation
 *.md
@@ -30,6 +35,8 @@ assets/
 .env
 .env.*
 !.env.example
+service-account*.json
+*-firebase-adminsdk-*.json
 
 # Go workspace (local development only)
 go.work

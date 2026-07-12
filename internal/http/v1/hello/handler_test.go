@@ -2,7 +2,6 @@ package hello
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,15 +15,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/janisto/huma-observability"
-
-	"github.com/janisto/huma-playground/internal/platform/respond"
 )
 
 func newTestRouter() chi.Router {
 	router := chi.NewRouter()
 	router.Use(
 		chimiddleware.ClientIPFromRemoteAddr,
-		respond.Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("HelloTest", "test"))
 	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{}))
@@ -36,7 +32,7 @@ func newTestRouter() chi.Router {
 func TestGetJSON(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/hello", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/hello", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-get-json")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -63,7 +59,7 @@ func TestGetJSON(t *testing.T) {
 func TestGetCBOR(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/hello", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/hello", nil)
 	req.Header.Set("Accept", "application/cbor")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-get-cbor")
 	resp := httptest.NewRecorder()
@@ -89,14 +85,14 @@ func TestPostJSONSuccess(t *testing.T) {
 	router := newTestRouter()
 
 	body := `{"name":"Test"}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/hello", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-post-json")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d", resp.Code)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 	if ct := resp.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("expected application/json, got %s", ct)
@@ -118,15 +114,15 @@ func TestPostCBORSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cbor marshal: %v", err)
 	}
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", bytes.NewReader(cborBody))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/hello", bytes.NewReader(cborBody))
 	req.Header.Set("Content-Type", "application/cbor")
 	req.Header.Set("Accept", "application/cbor")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-post-cbor")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d", resp.Code)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
 	}
 	if ct := resp.Header().Get("Content-Type"); ct != "application/cbor" {
 		t.Errorf("expected application/cbor, got %s", ct)
@@ -145,7 +141,7 @@ func TestPostJSONValidationErrorDefaultsToJSON(t *testing.T) {
 	router := newTestRouter()
 
 	body := `{"name":""}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/hello", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-error-json-default")
 	resp := httptest.NewRecorder()
@@ -174,7 +170,7 @@ func TestPostJSONValidationErrorWithCBORAccept(t *testing.T) {
 	router := newTestRouter()
 
 	body := `{"name":""}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/hello", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/cbor")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-error-json-cbor-accept")
@@ -204,7 +200,7 @@ func TestPostCBORValidationErrorDefaultsToJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cbor marshal: %v", err)
 	}
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", bytes.NewReader(cborBody))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/hello", bytes.NewReader(cborBody))
 	req.Header.Set("Content-Type", "application/cbor")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-error-cbor-json-default")
 	resp := httptest.NewRecorder()
@@ -233,7 +229,7 @@ func TestPostCBORValidationErrorWithCBORAccept(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cbor marshal: %v", err)
 	}
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/hello", bytes.NewReader(cborBody))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/hello", bytes.NewReader(cborBody))
 	req.Header.Set("Content-Type", "application/cbor")
 	req.Header.Set("Accept", "application/cbor")
 	req.Header.Set(chimiddleware.RequestIDHeader, "hello-error-cbor-cbor-accept")
@@ -256,5 +252,59 @@ func TestPostCBORValidationErrorWithCBORAccept(t *testing.T) {
 	}
 	if problem.Title != "Unprocessable Entity" {
 		t.Errorf("expected title 'Unprocessable Entity', got %s", problem.Title)
+	}
+}
+
+func TestPostJSONBoundaryContract(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		contentType string
+		want        int
+	}{
+		{
+			name:        "JSON with charset",
+			body:        `{"name":"Ada"}`,
+			contentType: "application/json; charset=utf-8",
+			want:        http.StatusOK,
+		},
+		{name: "empty", body: "", contentType: "application/json", want: http.StatusBadRequest},
+		{name: "null", body: "null", contentType: "application/json", want: http.StatusUnprocessableEntity},
+		{
+			name:        "unknown field",
+			body:        `{"name":"Ada","unknown":true}`,
+			contentType: "application/json",
+			want:        http.StatusUnprocessableEntity,
+		},
+		{
+			name:        "multiple values",
+			body:        `{"name":"Ada"} {}`,
+			contentType: "application/json",
+			want:        http.StatusBadRequest,
+		},
+		{name: "malformed", body: `{"name":`, contentType: "application/json", want: http.StatusBadRequest},
+		{
+			name:        "unsupported media type",
+			body:        `{"name":"Ada"}`,
+			contentType: "text/plain",
+			want:        http.StatusUnsupportedMediaType,
+		},
+	}
+	router := newTestRouter()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(
+				t.Context(),
+				http.MethodPost,
+				"/hello",
+				strings.NewReader(test.body),
+			)
+			request.Header.Set("Content-Type", test.contentType)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("expected %d, got %d: %s", test.want, response.Code, response.Body.String())
+			}
+		})
 	}
 }

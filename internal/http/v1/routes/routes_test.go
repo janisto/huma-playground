@@ -16,12 +16,65 @@ import (
 	"github.com/janisto/huma-observability"
 
 	"github.com/janisto/huma-playground/internal/platform/auth"
-	"github.com/janisto/huma-playground/internal/platform/respond"
 	githubsvc "github.com/janisto/huma-playground/internal/service/github"
 	profilesvc "github.com/janisto/huma-playground/internal/service/profile"
 )
 
+type stubVerifier struct {
+	User  *auth.FirebaseUser
+	Error error
+}
+
+func (v *stubVerifier) Verify(context.Context, string) (*auth.FirebaseUser, error) {
+	return v.User, v.Error
+}
+
+func testUser() *auth.FirebaseUser {
+	return &auth.FirebaseUser{UID: "test-user-123", Email: "test@example.com", EmailVerified: true}
+}
+
 type mockProfileService struct{}
+
+type mockGitHubService struct{}
+
+func (mockGitHubService) GetOwner(context.Context, string) (*githubsvc.Owner, error) {
+	return &githubsvc.Owner{
+		Login:     "octocat",
+		CreatedAt: time.Date(2011, 1, 25, 18, 44, 36, 0, time.UTC),
+		UpdatedAt: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+	}, nil
+}
+
+func (mockGitHubService) ListRepos(context.Context, string) ([]githubsvc.RepoSummary, error) {
+	return []githubsvc.RepoSummary{}, nil
+}
+
+func (mockGitHubService) GetRepo(context.Context, string, string) (*githubsvc.Repo, error) {
+	return &githubsvc.Repo{RepoSummary: githubsvc.RepoSummary{
+		Name:      "git-consortium",
+		FullName:  "octocat/git-consortium",
+		CreatedAt: time.Date(2011, 1, 25, 18, 44, 36, 0, time.UTC),
+		UpdatedAt: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+	}}, nil
+}
+
+func (mockGitHubService) ListActivity(
+	context.Context,
+	string,
+	string,
+	int,
+	string,
+) (*githubsvc.ActivityPage, error) {
+	return &githubsvc.ActivityPage{Activities: []githubsvc.Activity{}}, nil
+}
+
+func (mockGitHubService) ListLanguages(context.Context, string, string) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
+
+func (mockGitHubService) ListTags(context.Context, string, string) ([]githubsvc.Tag, error) {
+	return []githubsvc.Tag{}, nil
+}
 
 func (m *mockProfileService) Create(
 	_ context.Context,
@@ -30,26 +83,25 @@ func (m *mockProfileService) Create(
 ) (*profilesvc.Profile, error) {
 	now := time.Now().UTC()
 	return &profilesvc.Profile{
-		ID:          userID,
-		Firstname:   params.Firstname,
-		Lastname:    params.Lastname,
-		Email:       params.Email,
-		PhoneNumber: params.PhoneNumber,
-		Marketing:   params.Marketing,
-		Terms:       params.Terms,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           userID,
+		FirstName:    params.FirstName,
+		LastName:     params.LastName,
+		ContactEmail: params.ContactEmail,
+		PhoneNumber:  params.PhoneNumber,
+		Marketing:    params.Marketing,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}, nil
 }
 
 func (m *mockProfileService) Get(_ context.Context, userID string) (*profilesvc.Profile, error) {
 	return &profilesvc.Profile{
-		ID:        userID,
-		Firstname: "Test",
-		Lastname:  "User",
-		Email:     "test@example.com",
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
+		ID:           userID,
+		FirstName:    "Test",
+		LastName:     "User",
+		ContactEmail: "test@example.com",
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
 	}, nil
 }
 
@@ -59,12 +111,12 @@ func (m *mockProfileService) Update(
 	_ profilesvc.UpdateParams,
 ) (*profilesvc.Profile, error) {
 	return &profilesvc.Profile{
-		ID:        userID,
-		Firstname: "Updated",
-		Lastname:  "User",
-		Email:     "test@example.com",
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
+		ID:           userID,
+		FirstName:    "Updated",
+		LastName:     "User",
+		ContactEmail: "test@example.com",
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
 	}, nil
 }
 
@@ -76,22 +128,21 @@ func newTestRouter() chi.Router {
 	router := chi.NewRouter()
 	router.Use(
 		chimiddleware.ClientIPFromRemoteAddr,
-		respond.Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("RoutesTest", "test"))
 	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{}))
 	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{}))
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	profileService := &mockProfileService{}
-	githubService := githubsvc.NewMockGitHubService()
-	Register(api, verifier, profileService, githubService)
+	githubService := mockGitHubService{}
+	Register(api, "/v1", verifier, profileService, githubService)
 	return router
 }
 
 func TestRegisterRoutesHello(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/hello", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/hello", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-hello")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -104,7 +155,7 @@ func TestRegisterRoutesHello(t *testing.T) {
 func TestRegisterRoutesItems(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/items", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/items", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-items")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -117,7 +168,7 @@ func TestRegisterRoutesItems(t *testing.T) {
 func TestRegisterRoutesProfileGet(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/profile", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/profile", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-get")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -131,7 +182,7 @@ func TestRegisterRoutesProfileGet(t *testing.T) {
 func TestRegisterRoutesProfileUnauthorized(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/profile", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/profile", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-noauth")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -152,7 +203,7 @@ func TestRegisterRoutesProfileUnauthorized(t *testing.T) {
 func TestRegisterRoutesProfileDelete(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/profile", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/profile", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-delete")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -166,7 +217,7 @@ func TestRegisterRoutesProfileDelete(t *testing.T) {
 func TestRegisterRoutesGitHubOwner(t *testing.T) {
 	router := newTestRouter()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/octocat", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "routes-github-owner")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -180,7 +231,7 @@ func TestRegisterRoutesGitHubRepo(t *testing.T) {
 	router := newTestRouter()
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium",
 		nil,

@@ -14,11 +14,24 @@ functions:
   - changed-files:
       - any-glob-to-any-file: 'functions/**'
 
-# Documentation changes in README.md
+# Documentation and agent guidance
 documentation:
   - changed-files:
       - any-glob-to-any-file:
           - 'README.md'
+          - 'AGENTS.md'
+          - '.agents/**/*.md'
+          - '.github/**/*.md'
+
+tooling:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'Justfile'
+          - 'Dockerfile'
+          - 'firebase.json'
+          - '.github/workflows/**'
+          - '.github/dependabot.yml'
+          - '.golangci.yml'
 
 # Branch-name based labels
 feature:

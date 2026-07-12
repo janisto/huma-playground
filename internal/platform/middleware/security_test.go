@@ -1,118 +1,64 @@
 package middleware
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-func TestSecurityMiddlewareSetsHeaders(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+func TestSecurityHeadersApplyToEveryRoute(t *testing.T) {
+	handler := Security("/v1")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, path := range []string{"/health", "/v1/api-docs", "/v1/api-docs-lookalike", "/v1/profile"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
+			expected := map[string]string{
+				"Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+				"Referrer-Policy":         "no-referrer",
+				"X-Content-Type-Options":  "nosniff",
+				"X-Frame-Options":         "DENY",
+			}
+			for name, want := range expected {
+				if got := response.Header().Get(name); got != want {
+					t.Errorf("%s: expected %q, got %q", name, want, got)
+				}
+			}
+		})
+	}
+}
 
-	h := Security()(handler)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	resp := httptest.NewRecorder()
-
-	h.ServeHTTP(resp, req)
-
+func TestCachePolicy(t *testing.T) {
 	tests := []struct {
-		header string
+		method string
+		path   string
 		want   string
 	}{
-		{"Cache-Control", "no-store"},
-		{"Content-Security-Policy", "frame-ancestors 'none'"},
-		{"Cross-Origin-Opener-Policy", "same-origin"},
-		{"Cross-Origin-Resource-Policy", "same-origin"},
-		{
-			"Permissions-Policy",
-			"accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
-		},
-		{"Referrer-Policy", "strict-origin-when-cross-origin"},
-		{"X-Content-Type-Options", "nosniff"},
-		{"X-Frame-Options", "DENY"},
+		{method: http.MethodGet, path: "/health", want: "no-store"},
+		{method: http.MethodGet, path: "/v1/profile", want: "no-store"},
+		{method: http.MethodGet, path: "/v1/api-docs", want: "no-cache"},
+		{method: http.MethodGet, path: "/v1/openapi.json", want: "no-cache"},
+		{method: http.MethodGet, path: "/v1/openapi-3.0.json", want: "no-cache"},
+		{method: http.MethodGet, path: "/v1/schemas/ErrorModel.json", want: "no-cache"},
+		{method: http.MethodGet, path: "/v1/items", want: "no-cache"},
+		{method: http.MethodGet, path: "/v1/items-lookalike", want: "no-store"},
+		{method: http.MethodPost, path: "/v1/hello", want: "no-store"},
+		{method: http.MethodGet, path: "/api/items", want: "no-store"},
 	}
-
-	for _, tt := range tests {
-		got := resp.Header().Get(tt.header)
-		if got != tt.want {
-			t.Errorf("%s: expected %q, got %q", tt.header, tt.want, got)
-		}
-	}
-}
-
-func TestSecurityMiddlewarePreservesDownstreamResponse(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Custom", "value")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte("test body"))
-	})
-
-	h := Security()(handler)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/test", nil)
-	resp := httptest.NewRecorder()
-
-	h.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusCreated {
-		t.Fatalf("expected status 201, got %d", resp.Code)
-	}
-	if resp.Header().Get("X-Custom") != "value" {
-		t.Fatalf("expected X-Custom header to be preserved")
-	}
-	if resp.Body.String() != "test body" {
-		t.Fatalf("expected body to be preserved")
+	for _, test := range tests {
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil)
+			if got := cachePolicy(request, "/v1"); got != test.want {
+				t.Fatalf("expected %q, got %q", test.want, got)
+			}
+		})
 	}
 }
 
-func TestSecurityMiddlewareDoesNotOverrideDownstreamHeaders(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "max-age=3600")
-		w.WriteHeader(http.StatusOK)
-	})
-
-	h := Security()(handler)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	resp := httptest.NewRecorder()
-
-	h.ServeHTTP(resp, req)
-
-	got := resp.Header().Get("Cache-Control")
-	if got != "max-age=3600" {
-		t.Errorf("expected downstream Cache-Control to be preserved, got %q", got)
-	}
-}
-
-func TestSecurityMiddlewareSkipsExcludedPaths(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	h := Security("/api-docs", "/health")(handler)
-
-	tests := []struct {
-		path        string
-		wantHeaders bool
-	}{
-		{"/api-docs", false},
-		{"/api-docs/", false},
-		{"/health", false},
-		{"/health/live", false},
-		{"/api", true},
-		{"/users", true},
-	}
-
-	for _, tt := range tests {
-		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tt.path, nil)
-		resp := httptest.NewRecorder()
-
-		h.ServeHTTP(resp, req)
-
-		hasHeaders := resp.Header().Get("X-Content-Type-Options") == "nosniff"
-		if hasHeaders != tt.wantHeaders {
-			t.Errorf("%s: expected headers=%v, got headers=%v", tt.path, tt.wantHeaders, hasHeaders)
-		}
+func TestCachePolicyUsesConfiguredPrefix(t *testing.T) {
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/items", nil)
+	if got := cachePolicy(request, "/api"); got != "no-cache" {
+		t.Fatalf("expected no-cache, got %q", got)
 	}
 }

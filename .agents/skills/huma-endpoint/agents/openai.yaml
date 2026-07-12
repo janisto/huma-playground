@@ -1,0 +1,4 @@
+interface:
+  display_name: "Huma Endpoint"
+  short_description: "Build project-standard Huma v2 API endpoints"
+  default_prompt: "Use $huma-endpoint to implement a Huma v2 endpoint with the repository routing, validation, response, OpenAPI, and test conventions."
