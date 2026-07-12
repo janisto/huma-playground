@@ -180,6 +180,24 @@ application. Huma rejects `null`, arrays, strings, numbers, and booleans with 42
 contains an explicit `null` regression case. That behavior matches this repository's documented split: malformed JSON
 syntax is 400, while syntactically valid JSON that violates the operation schema is 422. No Huma decoder fix is needed.
 
+## Pull request review follow-up
+
+The automated review of commit `abbf299` produced four comments. Each was checked against Go 1.26.5, the composed
+router, and live runtime responses rather than accepted mechanically:
+
+- The `go fix -diff` comment is invalid. Go 1.26.5 documents `-diff` directly on `go fix`; the local recipe and hosted
+  quality job pass.
+- The API docs CSP comment is invalid. Huma's docs handler replaces the generic security middleware value with its
+  pinned Stoplight-specific CSP. A live `/v1/api-docs` response permits the exact versioned unpkg script and stylesheet,
+  same-origin schema fetches, and required inline styles while retaining sandbox and frame restrictions.
+- The mounted-router `Allow` comment is invalid for this composition. Focused and full-router tests prove 405 responses
+  for `/v1/hello` and `/v1/profile` include their complete methods. `allowedMethods` matches through the active Chi route
+  tree using the full mounted request path.
+- The canceled authentication comment is valid. A verifier can return `context.Canceled` while the HTTP request context
+  remains active; returning without writing then risks an empty 200. The middleware now returns 503 with `Retry-After`
+  for that upstream cancellation, while a genuinely canceled request exits without attempting a response. Both paths
+  have focused regression tests.
+
 ## Original review verdict
 
 The following verdict records the pre-implementation state at `c5991fe`. It is retained as the rationale for the changes and is superseded by the implementation result at the end of this file.

@@ -39,11 +39,15 @@ func NewAuthMiddleware(api huma.API, verifier Verifier) func(huma.Context, func(
 
 		user, err := verifier.Verify(ctx.Context(), token)
 		if err != nil {
+			if errors.Is(err, context.Canceled) && ctx.Context().Err() != nil {
+				return
+			}
 			reason := categorizeAuthError(err)
 			obs.Logger(ctx.Context()).Warn("auth failed: token verification failed",
 				zap.String("reason", reason))
 
 			if errors.Is(err, context.Canceled) {
+				writeAuthUnavailable(api, ctx)
 				return
 			}
 			if isCredentialError(err) {
@@ -108,6 +112,8 @@ func categorizeAuthError(err error) string {
 		return "dependency_unavailable"
 	case errors.Is(err, ErrInvalidToken):
 		return "invalid_token"
+	case errors.Is(err, context.Canceled):
+		return "dependency_unavailable"
 	default:
 		return "unknown"
 	}

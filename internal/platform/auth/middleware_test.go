@@ -252,6 +252,33 @@ func TestMiddlewareHandlesUnavailableDependency(t *testing.T) {
 	}
 }
 
+func TestMiddlewareHandlesVerifierCancellation(t *testing.T) {
+	router := setupTestAPI(&MockVerifier{Error: context.Canceled}, true)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
+	request.Header.Set("Authorization", "Bearer some-token")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Retry-After") != "30" {
+		t.Fatalf("expected Retry-After, got %q", response.Header().Get("Retry-After"))
+	}
+}
+
+func TestMiddlewareStopsOnCanceledRequest(t *testing.T) {
+	router := setupTestAPI(&MockVerifier{Error: context.Canceled}, true)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	request := httptest.NewRequestWithContext(ctx, http.MethodGet, "/test", nil)
+	request.Header.Set("Authorization", "Bearer some-token")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Body.Len() != 0 {
+		t.Fatalf("expected no response after request cancellation, got %s", response.Body.String())
+	}
+}
+
 func TestMiddlewareRejectsDisabledUser(t *testing.T) {
 	verifier := &MockVerifier{Error: ErrUserDisabled}
 	router := setupTestAPI(verifier, true)
@@ -311,6 +338,7 @@ func TestCategorizeAuthError(t *testing.T) {
 		{"certificate fetch", ErrCertificateFetch, "certificate_fetch_failed"},
 		{"dependency unavailable", ErrAuthUnavailable, "dependency_unavailable"},
 		{"invalid token", ErrInvalidToken, "invalid_token"},
+		{"verifier canceled", context.Canceled, "dependency_unavailable"},
 		{"unknown error", errors.New("something unexpected"), "unknown"},
 	}
 
