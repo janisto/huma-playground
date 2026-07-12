@@ -97,10 +97,11 @@ download:
 tidy:
     go mod tidy
 
-# Update all dependencies to latest versions
+# Update all dependencies in the application and function modules
 [group('lifecycle')]
 update: && tidy
     go get -u -t ./...
+    cd functions && go get -u -t ./... && go mod tidy
 
 # Recreate project from clean state
 [group('lifecycle')]
