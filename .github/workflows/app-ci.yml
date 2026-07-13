@@ -175,7 +175,7 @@ jobs:
 
       - name: Review dependency changes
         if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@v4.9.0
+        uses: actions/dependency-review-action@v5.0.0
 
   container:
     runs-on: ubuntu-latest
