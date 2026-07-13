@@ -198,6 +198,27 @@ router, and live runtime responses rather than accepted mechanically:
   for that upstream cancellation, while a genuinely canceled request exits without attempting a response. Both paths
   have focused regression tests.
 
+### Second review pass
+
+The automated review of commit `d7de692` produced four more comments:
+
+- The repeated API docs CSP comment is invalid. Huma v2.38.0's docs handler overwrites the generic middleware CSP with
+  the pinned Stoplight Elements policy after the middleware runs. A composed-router regression test now asserts the
+  complete effective CSP, including the exact script and stylesheet sources.
+- The Firestore compatibility comment is not applicable to this example. The repository has no production deployment
+  or persistent migration target, and emulator state is disposable. The schema change is also semantic, not only a
+  rename: `contact_email` is explicitly user-supplied rather than the verified Firebase identity email. Shipping a
+  dual-schema decoder or migration for nonexistent deployed data would obscure the intended storage contract. The raw
+  storage test now correctly rejects the actual old `firstname`, `lastname`, `email`, and `terms` keys.
+- The repeated `go fix -diff` comment is invalid. Go 1.26.5 supports the flag directly, `just modernize-check` passes,
+  and the hosted quality job has already executed the recipe successfully.
+- The emulator-host whitespace comment is valid. Configuration validation previously trimmed the values, while the
+  Firebase SDK reads the original environment variables. Startup now rejects leading or trailing whitespace instead of
+  accepting a value different from the one the SDK consumes, with regression cases for both emulator variables.
+
+Validation passed with focused configuration and composed-router tests, `just modernize-check`, the required Firestore
+emulator lane for `TestFirestoreCreate`, and the full `just build`, `just test`, `just lint`, and `just fmt-check` gates.
+
 ## Original review verdict
 
 The following verdict records the pre-implementation state at `c5991fe`. It is retained as the rationale for the changes and is superseded by the implementation result at the end of this file.

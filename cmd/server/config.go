@@ -59,8 +59,13 @@ func loadConfig(getenv func(string) string) (config, error) {
 
 	mode := valueOrDefault(strings.TrimSpace(getenv("FIREBASE_MODE")), firebaseModeOffline)
 	projectID := strings.TrimSpace(getenv("FIREBASE_PROJECT_ID"))
-	authEmulator := strings.TrimSpace(getenv("FIREBASE_AUTH_EMULATOR_HOST"))
-	firestoreEmulator := strings.TrimSpace(getenv("FIRESTORE_EMULATOR_HOST"))
+	authEmulatorRaw := getenv("FIREBASE_AUTH_EMULATOR_HOST")
+	firestoreEmulatorRaw := getenv("FIRESTORE_EMULATOR_HOST")
+	authEmulator := strings.TrimSpace(authEmulatorRaw)
+	firestoreEmulator := strings.TrimSpace(firestoreEmulatorRaw)
+	if authEmulator != authEmulatorRaw || firestoreEmulator != firestoreEmulatorRaw {
+		return config{}, errors.New("firebase emulator hosts must not contain leading or trailing whitespace")
+	}
 	if firebaseErr := validateFirebaseConfig(
 		environment,
 		mode,

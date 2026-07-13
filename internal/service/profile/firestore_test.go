@@ -111,7 +111,7 @@ func TestFirestoreCreate(t *testing.T) {
 			t.Errorf("expected Firestore field %q in %#v", key, data)
 		}
 	}
-	for _, legacy := range []string{"firstName", "lastName", "email", "terms"} {
+	for _, legacy := range []string{"firstname", "lastname", "email", "terms"} {
 		if _, exists := data[legacy]; exists {
 			t.Errorf("unexpected legacy Firestore field %q", legacy)
 		}

@@ -108,6 +108,22 @@ func TestLoadConfigRejectsUnsafeCombinations(t *testing.T) {
 			},
 		},
 		{
+			name: "Auth emulator host has surrounding whitespace",
+			env: map[string]string{
+				"FIREBASE_MODE":               "emulator",
+				"FIREBASE_AUTH_EMULATOR_HOST": " localhost:7110",
+				"FIRESTORE_EMULATOR_HOST":     "localhost:7130",
+			},
+		},
+		{
+			name: "Firestore emulator host has surrounding whitespace",
+			env: map[string]string{
+				"FIREBASE_MODE":               "emulator",
+				"FIREBASE_AUTH_EMULATOR_HOST": "localhost:7110",
+				"FIRESTORE_EMULATOR_HOST":     "localhost:7130 ",
+			},
+		},
+		{
 			name: "production emulators",
 			env: map[string]string{
 				"APP_ENVIRONMENT":             "production",
@@ -184,6 +200,24 @@ func TestRouterServesHealthDocsAndOpenAPI(t *testing.T) {
 		if response.Code != test.want {
 			t.Fatalf("%s: expected %d, got %d: %s", test.path, test.want, response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestRouterDocsUseRendererContentSecurityPolicy(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/api-docs", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", response.Code, response.Body.String())
+	}
+	const want = "default-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'none'; " +
+		"frame-ancestors 'none'; sandbox allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox; " +
+		"script-src https://unpkg.com/@stoplight/elements@9.0.15/web-components.min.js; " +
+		"style-src 'unsafe-inline' https://unpkg.com/@stoplight/elements@9.0.15/styles.min.css"
+	if got := response.Header().Get("Content-Security-Policy"); got != want {
+		t.Fatalf("unexpected API docs Content-Security-Policy:\nwant: %s\n got: %s", want, got)
 	}
 }
 
