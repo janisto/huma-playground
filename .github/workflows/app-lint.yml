@@ -1,4 +1,4 @@
-name: App code quality (linting and formatting)
+name: App code quality
 
 on:
   push:
@@ -8,21 +8,22 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
-  issues: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
-  lint:
+  quality:
     runs-on: ubuntu-latest
-    env:
-      GOTOOLCHAIN: local
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v6.5.0
@@ -30,8 +31,43 @@ jobs:
           go-version: '1.26.x'
           check-latest: true
           cache: true
+          cache-dependency-path: |
+            go.sum
+            functions/go.sum
 
-      - name: golangci-lint
+      - name: Set up Just
+        uses: extractions/setup-just@v4.0.0
+
+      - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v9.3.0
         with:
-          version: v2.11
+          version: v2.12.2
+          install-only: true
+
+      - name: Check formatting
+        run: just fmt-check
+
+      - name: Lint both modules
+        run: just lint
+
+      - name: Check module files
+        run: just tidy-check
+
+      - name: Validate workflows
+        run: just workflow-check
+
+      - name: Check Go modernizations
+        run: just modernize-check
+
+      - name: Check patches
+        run: git diff --check
+
+  lint:
+    if: ${{ always() }}
+    needs: [quality]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require quality job
+        env:
+          QUALITY: ${{ needs.quality.result }}
+        run: test "$QUALITY" = success

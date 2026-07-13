@@ -13,5 +13,7 @@ type Response struct {
 // Handler is a plain HTTP handler for the health check endpoint.
 func Handler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(Response{Status: "healthy"})
+	if err := json.NewEncoder(w).Encode(Response{Status: "healthy"}); err != nil {
+		return
+	}
 }

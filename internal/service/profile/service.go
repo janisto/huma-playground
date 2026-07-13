@@ -10,46 +10,41 @@ import (
 var (
 	ErrNotFound      = errors.New("profile not found")
 	ErrAlreadyExists = errors.New("profile already exists")
+	ErrUnavailable   = errors.New("profile store unavailable")
 )
 
 // Profile represents stored profile data.
 type Profile struct {
-	ID          string
-	Firstname   string
-	Lastname    string
-	Email       string
-	PhoneNumber string
-	Marketing   bool
-	Terms       bool
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	FirstName    string
+	LastName     string
+	ContactEmail string
+	PhoneNumber  string
+	Marketing    bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // CreateParams for creating a profile.
 type CreateParams struct {
-	Firstname   string
-	Lastname    string
-	Email       string
-	PhoneNumber string
-	Marketing   bool
-	Terms       bool
+	FirstName    string
+	LastName     string
+	ContactEmail string
+	PhoneNumber  string
+	Marketing    bool
 }
 
 // UpdateParams for updating a profile.
 type UpdateParams struct {
-	Firstname   *string
-	Lastname    *string
-	Email       *string
-	PhoneNumber *string
-	Marketing   *bool
+	FirstName    *string
+	LastName     *string
+	ContactEmail *string
+	PhoneNumber  *string
+	Marketing    *bool
 }
 
-// Service defines profile operations.
-//
-// Implementations must normalize input data:
-//   - Email: lowercase and trim whitespace
-//   - PhoneNumber: trim whitespace
-type Service interface {
+// Store defines profile persistence operations.
+type Store interface {
 	Create(ctx context.Context, userID string, params CreateParams) (*Profile, error)
 	Get(ctx context.Context, userID string) (*Profile, error)
 	Update(ctx context.Context, userID string, params UpdateParams) (*Profile, error)

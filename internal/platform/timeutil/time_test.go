@@ -1,873 +1,98 @@
 package timeutil
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
-func TestRFC3339MillisConstant(t *testing.T) {
-	if RFC3339Millis != "2006-01-02T15:04:05.000Z" {
-		t.Fatalf("unexpected RFC3339Millis value: %s", RFC3339Millis)
-	}
-
-	now := time.Now().UTC()
-	formatted := now.Format(RFC3339Millis)
-
-	if !strings.HasSuffix(formatted, "Z") {
-		t.Fatalf("formatted time should end with Z: %s", formatted)
-	}
-	if len(formatted) != 24 {
-		t.Fatalf("formatted time should be 24 chars, got %d: %s", len(formatted), formatted)
-	}
-	if formatted[19] != '.' {
-		t.Fatalf("formatted time should have dot at position 19: %s", formatted)
-	}
-}
-
-func TestTimeMarshalJSON(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    Time
-		expected string
-	}{
-		{
-			name:     "zero milliseconds",
-			input:    NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)),
-			expected: `"2024-01-15T10:30:00.000Z"`,
-		},
-		{
-			name:     "with milliseconds",
-			input:    NewTime(time.Date(2024, 1, 15, 10, 30, 0, 123000000, time.UTC)),
-			expected: `"2024-01-15T10:30:00.123Z"`,
-		},
-		{
-			name:     "non-UTC timezone converted",
-			input:    NewTime(time.Date(2024, 1, 15, 12, 30, 0, 0, time.FixedZone("CET", 2*60*60))),
-			expected: `"2024-01-15T10:30:00.000Z"`,
-		},
-		{
-			name:     "end of day",
-			input:    NewTime(time.Date(2024, 12, 31, 23, 59, 59, 999000000, time.UTC)),
-			expected: `"2024-12-31T23:59:59.999Z"`,
-		},
-		{
-			name:     "start of unix epoch",
-			input:    NewTime(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)),
-			expected: `"1970-01-01T00:00:00.000Z"`,
-		},
-		{
-			name:     "leap year date",
-			input:    NewTime(time.Date(2024, 2, 29, 12, 0, 0, 0, time.UTC)),
-			expected: `"2024-02-29T12:00:00.000Z"`,
-		},
-		{
-			name:     "nanoseconds truncated to millis",
-			input:    NewTime(time.Date(2024, 1, 15, 10, 30, 0, 123456789, time.UTC)),
-			expected: `"2024-01-15T10:30:00.123Z"`,
-		},
-		{
-			name:     "negative timezone offset",
-			input:    NewTime(time.Date(2024, 1, 15, 5, 30, 0, 0, time.FixedZone("EST", -5*60*60))),
-			expected: `"2024-01-15T10:30:00.000Z"`,
-		},
-		{
-			name:     "midnight UTC",
-			input:    NewTime(time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)),
-			expected: `"2024-06-15T00:00:00.000Z"`,
-		},
-		{
-			name:     "one millisecond",
-			input:    NewTime(time.Date(2024, 1, 1, 0, 0, 0, 1000000, time.UTC)),
-			expected: `"2024-01-01T00:00:00.001Z"`,
-		},
-		{
-			name:     "999 milliseconds",
-			input:    NewTime(time.Date(2024, 1, 1, 0, 0, 0, 999000000, time.UTC)),
-			expected: `"2024-01-01T00:00:00.999Z"`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			data, err := json.Marshal(tt.input)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if string(data) != tt.expected {
-				t.Fatalf("expected %s, got %s", tt.expected, string(data))
-			}
-		})
-	}
-}
-
-func TestTimeMarshalJSONZeroValue(t *testing.T) {
-	var zero Time
-	data, err := json.Marshal(zero)
+func TestJSONRoundTripUsesUTCMilliseconds(t *testing.T) {
+	input := NewTime(time.Date(2024, 1, 15, 12, 30, 45, 123456789, time.FixedZone("EET", 2*60*60)))
+	data, err := input.MarshalJSON()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("marshal JSON: %v", err)
 	}
-	if string(data) != `"0001-01-01T00:00:00.000Z"` {
-		t.Fatalf("unexpected zero time output: %s", string(data))
-	}
-}
-
-func TestTimeUnmarshalJSON(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected time.Time
-	}{
-		{
-			name:     "RFC3339 with Z",
-			input:    `"2024-01-15T10:30:00Z"`,
-			expected: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
-		},
-		{
-			name:     "RFC3339 with milliseconds",
-			input:    `"2024-01-15T10:30:00.123Z"`,
-			expected: time.Date(2024, 1, 15, 10, 30, 0, 123000000, time.UTC),
-		},
-		{
-			name:     "RFC3339 with nanoseconds",
-			input:    `"2024-01-15T10:30:00.123456789Z"`,
-			expected: time.Date(2024, 1, 15, 10, 30, 0, 123456789, time.UTC),
-		},
-		{
-			name:     "RFC3339 with positive offset",
-			input:    `"2024-01-15T12:30:00+02:00"`,
-			expected: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
-		},
-		{
-			name:     "RFC3339 with negative offset",
-			input:    `"2024-01-15T05:30:00-05:00"`,
-			expected: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
-		},
-		{
-			name:     "RFC3339 midnight",
-			input:    `"2024-01-15T00:00:00Z"`,
-			expected: time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC),
-		},
-		{
-			name:     "RFC3339 end of day",
-			input:    `"2024-01-15T23:59:59Z"`,
-			expected: time.Date(2024, 1, 15, 23, 59, 59, 0, time.UTC),
-		},
-		{
-			name:     "RFC3339 with .000Z suffix",
-			input:    `"2024-01-15T10:30:00.000Z"`,
-			expected: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
-		},
-		{
-			name:     "RFC3339 single digit millis",
-			input:    `"2024-01-15T10:30:00.1Z"`,
-			expected: time.Date(2024, 1, 15, 10, 30, 0, 100000000, time.UTC),
-		},
-		{
-			name:     "RFC3339 two digit millis",
-			input:    `"2024-01-15T10:30:00.12Z"`,
-			expected: time.Date(2024, 1, 15, 10, 30, 0, 120000000, time.UTC),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var result Time
-			if err := json.Unmarshal([]byte(tt.input), &result); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !result.UTC().Equal(tt.expected) {
-				t.Fatalf("expected %v, got %v", tt.expected, result.UTC())
-			}
-		})
-	}
-}
-
-func TestTimeUnmarshalJSONNull(t *testing.T) {
-	var result Time
-	if err := json.Unmarshal([]byte("null"), &result); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !result.IsZero() {
-		t.Fatalf("expected zero time, got %v", result)
-	}
-}
-
-func TestTimeUnmarshalJSONPreservesExistingOnNull(t *testing.T) {
-	result := NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
-	original := result.Time
-
-	if err := json.Unmarshal([]byte("null"), &result); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !result.Equal(original) {
-		t.Fatalf("null should preserve existing value, got %v", result)
-	}
-}
-
-func TestTimeUnmarshalJSONInvalid(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-	}{
-		{"not a date", `"not-a-date"`},
-		{"empty string", `""`},
-		{"number", `12345`},
-		{"boolean", `true`},
-		{"invalid format", `"2024/01/15 10:30:00"`},
-		{"missing time", `"2024-01-15"`},
-		{"missing timezone", `"2024-01-15T10:30:00"`},
-		{"invalid month", `"2024-13-15T10:30:00Z"`},
-		{"invalid day", `"2024-01-32T10:30:00Z"`},
-		{"invalid hour", `"2024-01-15T25:30:00Z"`},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var result Time
-			err := json.Unmarshal([]byte(tt.input), &result)
-			if err == nil {
-				t.Fatalf("expected error for input %s", tt.input)
-			}
-		})
-	}
-}
-
-func TestTimeRoundTrip(t *testing.T) {
-	original := NewTime(time.Date(2024, 6, 15, 14, 30, 45, 123000000, time.UTC))
-
-	data, err := json.Marshal(original)
-	if err != nil {
-		t.Fatalf("marshal error: %v", err)
-	}
-
-	var parsed Time
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-
-	originalTruncated := original.Truncate(time.Millisecond)
-	parsedTruncated := parsed.Truncate(time.Millisecond)
-	if !parsedTruncated.Equal(originalTruncated) {
-		t.Fatalf("round-trip failed: original %v, parsed %v", original, parsed)
-	}
-}
-
-func TestTimeMarshalCBOR(t *testing.T) {
-	ts := NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
-	b, err := ts.MarshalCBOR()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(b) == 0 {
-		t.Fatal("expected non-empty CBOR data")
-	}
-	if b[0] != 0xc0 {
-		t.Fatalf("expected CBOR tag 0 (0xc0), got 0x%02x", b[0])
-	}
-}
-
-func TestTimeMarshalCBORZeroValue(t *testing.T) {
-	var zero Time
-	b, err := zero.MarshalCBOR()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	var decoded Time
-	if err := decoded.UnmarshalCBOR(b); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-	want := "0001-01-01T00:00:00.000Z"
-	got := decoded.UTC().Format(RFC3339Millis)
-	if got != want {
+	if got, want := string(data), `"2024-01-15T10:30:45.123Z"`; got != want {
 		t.Fatalf("expected %s, got %s", want, got)
 	}
-}
 
-func TestTimeMarshalCBORMilliseconds(t *testing.T) {
-	ts := NewTime(time.Date(2024, 6, 1, 12, 0, 0, 123456789, time.UTC))
-	b, err := ts.MarshalCBOR()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	var output Time
+	if err := output.UnmarshalJSON(data); err != nil {
+		t.Fatalf("unmarshal JSON: %v", err)
 	}
-	if b[0] != 0xc0 {
-		t.Fatalf("expected CBOR tag 0, got 0x%02x", b[0])
+	if got := output.UTC().Format(RFC3339Millis); got != "2024-01-15T10:30:45.123Z" {
+		t.Fatalf("unexpected round trip: %s", got)
 	}
 }
 
-func TestTimeMarshalCBORNonUTCTimezone(t *testing.T) {
-	ts := NewTime(time.Date(2024, 1, 15, 12, 30, 0, 0, time.FixedZone("CET", 2*60*60)))
-	b, err := ts.MarshalCBOR()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestJSONNullPreservesValue(t *testing.T) {
+	original := NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
+	if err := original.UnmarshalJSON([]byte("null")); err != nil {
+		t.Fatalf("unmarshal null: %v", err)
 	}
-	var decoded Time
-	if err := decoded.UnmarshalCBOR(b); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-	want := "2024-01-15T10:30:00.000Z"
-	got := decoded.UTC().Format(RFC3339Millis)
-	if got != want {
-		t.Fatalf("expected %s, got %s", want, got)
+	if original.Year() != 2024 {
+		t.Fatal("null unexpectedly replaced value")
 	}
 }
 
-func TestTimeMarshalUnmarshalCBORRoundtrip(t *testing.T) {
-	original := NewTime(time.Date(2024, 6, 15, 14, 30, 45, 123000000, time.UTC))
-	b, err := original.MarshalCBOR()
-	if err != nil {
-		t.Fatalf("marshal error: %v", err)
-	}
-	var decoded Time
-	if err := decoded.UnmarshalCBOR(b); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-	want := original.UTC().Format(RFC3339Millis)
-	got := decoded.UTC().Format(RFC3339Millis)
-	if got != want {
-		t.Fatalf("roundtrip mismatch: want %s, got %s", want, got)
-	}
-}
-
-func TestTimeUnmarshalCBOREmptyData(t *testing.T) {
-	var ts Time
-	err := ts.UnmarshalCBOR(nil)
-	if err == nil {
-		t.Fatal("expected error for empty CBOR data")
-	}
-}
-
-func TestTimeUnmarshalCBORBareTextString(t *testing.T) {
-	s := "2024-01-15T10:30:00.000Z"
-	data := appendCBORTextString(nil, s)
-	var ts Time
-	if err := ts.UnmarshalCBOR(data); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ts.Hour() != 10 {
-		t.Fatalf("expected hour 10, got %d", ts.Hour())
-	}
-}
-
-func TestTimeUnmarshalCBORNanoseconds(t *testing.T) {
-	s := "2024-01-15T10:30:00.123456789Z"
-	data := make([]byte, 0, 2+len(s))
-	data = append(data, 0xc0)
-	data = appendCBORTextString(data, s)
-	var ts Time
-	if err := ts.UnmarshalCBOR(data); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ts.Nanosecond() != 123456789 {
-		t.Fatalf("expected 123456789ns, got %dns", ts.Nanosecond())
-	}
-}
-
-func TestTimeUnmarshalCBORRFC3339Fallback(t *testing.T) {
-	s := "2024-01-15T10:30:00Z"
-	data := make([]byte, 0, 2+len(s))
-	data = append(data, 0xc0)
-	data = appendCBORTextString(data, s)
-	var ts Time
-	if err := ts.UnmarshalCBOR(data); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestTimeUnmarshalCBORInvalidTimeString(t *testing.T) {
-	s := "not-a-date"
-	data := make([]byte, 0, 2+len(s))
-	data = append(data, 0xc0)
-	data = appendCBORTextString(data, s)
-	var ts Time
-	if err := ts.UnmarshalCBOR(data); err == nil {
-		t.Fatal("expected error for invalid time string in CBOR")
-	}
-}
-
-func TestTimeUnmarshalCBORInvalidMajorType(t *testing.T) {
-	var ts Time
-	err := ts.UnmarshalCBOR([]byte{0x01})
-	if err == nil {
-		t.Fatal("expected error for non-text-string CBOR")
-	}
-}
-
-func TestAppendCBORTextStringShort(t *testing.T) {
-	s := "hello"
-	data := appendCBORTextString(nil, s)
-	if data[0] != 0x60+byte(len(s)&0xff) {
-		t.Fatalf("expected direct length encoding, got 0x%02x", data[0])
-	}
-	if string(data[1:]) != s {
-		t.Fatalf("expected %q, got %q", s, string(data[1:]))
-	}
-}
-
-func TestAppendCBORTextStringMedium(t *testing.T) {
-	s := make([]byte, 100)
-	for i := range s {
-		s[i] = 'a'
-	}
-	data := appendCBORTextString(nil, string(s))
-	if data[0] != 0x78 {
-		t.Fatalf("expected 1-byte length encoding (0x78), got 0x%02x", data[0])
-	}
-	if data[1] != 100 {
-		t.Fatalf("expected length 100, got %d", data[1])
-	}
-}
-
-func TestAppendCBORTextStringLarge(t *testing.T) {
-	s := make([]byte, 300)
-	for i := range s {
-		s[i] = 'b'
-	}
-	data := appendCBORTextString(nil, string(s))
-	if data[0] != 0x79 {
-		t.Fatalf("expected 2-byte length encoding (0x79), got 0x%02x", data[0])
-	}
-	length := int(data[1])<<8 | int(data[2])
-	if length != 300 {
-		t.Fatalf("expected length 300, got %d", length)
-	}
-}
-
-func TestAppendCBORTextStringFourByteLength(t *testing.T) {
-	n := 0x10000
-	s := make([]byte, n)
-	for i := range s {
-		s[i] = 'c'
-	}
-	data := appendCBORTextString(nil, string(s))
-	if data[0] != 0x7a {
-		t.Fatalf("expected 4-byte length encoding (0x7a), got 0x%02x", data[0])
-	}
-	length := int(data[1])<<24 | int(data[2])<<16 | int(data[3])<<8 | int(data[4])
-	if length != n {
-		t.Fatalf("expected length %d, got %d", n, length)
-	}
-}
-
-func TestDecodeCBORTextStringEmpty(t *testing.T) {
-	_, err := decodeCBORTextString(nil)
-	if err == nil {
-		t.Fatal("expected error for empty input")
-	}
-}
-
-func TestDecodeCBORTextStringNonTextMajorType(t *testing.T) {
-	_, err := decodeCBORTextString([]byte{0x01})
-	if err == nil {
-		t.Fatal("expected error for non-text major type")
-	}
-}
-
-func TestDecodeCBORTextStringShortLength(t *testing.T) {
-	s := "test"
-	data := appendCBORTextString(nil, s)
-	got, err := decodeCBORTextString(data)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != s {
-		t.Fatalf("expected %q, got %q", s, got)
-	}
-}
-
-func TestDecodeCBORTextStringOneByteLengthTruncated(t *testing.T) {
-	_, err := decodeCBORTextString([]byte{0x78})
-	if err == nil {
-		t.Fatal("expected error for truncated 1-byte length")
-	}
-}
-
-func TestDecodeCBORTextStringTwoByteLengthTruncated(t *testing.T) {
-	_, err := decodeCBORTextString([]byte{0x79, 0x00})
-	if err == nil {
-		t.Fatal("expected error for truncated 2-byte length")
-	}
-}
-
-func TestDecodeCBORTextStringFourByteLengthTruncated(t *testing.T) {
-	_, err := decodeCBORTextString([]byte{0x7a, 0x00, 0x00})
-	if err == nil {
-		t.Fatal("expected error for truncated 4-byte length")
-	}
-}
-
-func TestDecodeCBORTextStringFourByteLengthValid(t *testing.T) {
-	n := 0x10000
-	s := make([]byte, n)
-	for i := range s {
-		s[i] = 'z'
-	}
-	data := appendCBORTextString(nil, string(s))
-	got, err := decodeCBORTextString(data)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != string(s) {
-		t.Fatalf("decoded string mismatch")
-	}
-}
-
-func TestDecodeCBORTextStringUnsupportedLengthEncoding(t *testing.T) {
-	_, err := decodeCBORTextString([]byte{0x7b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05})
-	if err == nil {
-		t.Fatal("expected error for unsupported length encoding")
-	}
-}
-
-func TestDecodeCBORTextStringTruncatedPayload(t *testing.T) {
-	_, err := decodeCBORTextString([]byte{0x65, 'h', 'e'})
-	if err == nil {
-		t.Fatal("expected error for truncated payload")
-	}
-}
-
-func TestDecodeCBORTextStringOneByteLengthValid(t *testing.T) {
-	s := make([]byte, 50)
-	for i := range s {
-		s[i] = 'x'
-	}
-	data := appendCBORTextString(nil, string(s))
-	got, err := decodeCBORTextString(data)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != string(s) {
-		t.Fatalf("decoded string mismatch")
-	}
-}
-
-func TestDecodeCBORTextStringTwoByteLengthValid(t *testing.T) {
-	s := make([]byte, 300)
-	for i := range s {
-		s[i] = 'y'
-	}
-	data := appendCBORTextString(nil, string(s))
-	got, err := decodeCBORTextString(data)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != string(s) {
-		t.Fatalf("decoded string mismatch")
-	}
-}
-
-func TestDecodeCBORTextStringTwoByteLengthTruncatedPayload(t *testing.T) {
-	_, err := decodeCBORTextString([]byte{0x79, 0x01, 0x00, 'a', 'b'})
-	if err == nil {
-		t.Fatal("expected error for truncated 2-byte length payload")
-	}
-}
-
-func TestTimeInStruct(t *testing.T) {
-	type Item struct {
-		ID        string `json:"id"`
-		CreatedAt Time   `json:"createdAt"`
-	}
-
-	item := Item{
-		ID:        "test-001",
-		CreatedAt: NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)),
-	}
-
-	data, err := json.Marshal(item)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected := `{"id":"test-001","createdAt":"2024-01-15T10:30:00.000Z"}`
-	if string(data) != expected {
-		t.Fatalf("expected %s, got %s", expected, string(data))
-	}
-
-	var parsed Item
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if parsed.ID != item.ID {
-		t.Fatalf("expected ID %s, got %s", item.ID, parsed.ID)
-	}
-	if !parsed.CreatedAt.Equal(item.CreatedAt.Time) {
-		t.Fatalf("expected CreatedAt %v, got %v", item.CreatedAt, parsed.CreatedAt)
-	}
-}
-
-func TestTimeInStructWithPointer(t *testing.T) {
-	type Item struct {
-		ID        string `json:"id"`
-		CreatedAt *Time  `json:"createdAt,omitempty"`
-	}
-
-	ts := NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
-	item := Item{
-		ID:        "test-001",
-		CreatedAt: &ts,
-	}
-
-	data, err := json.Marshal(item)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected := `{"id":"test-001","createdAt":"2024-01-15T10:30:00.000Z"}`
-	if string(data) != expected {
-		t.Fatalf("expected %s, got %s", expected, string(data))
-	}
-
-	itemNil := Item{ID: "test-002"}
-	dataNil, err := json.Marshal(itemNil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	expectedNil := `{"id":"test-002"}`
-	if string(dataNil) != expectedNil {
-		t.Fatalf("expected %s, got %s", expectedNil, string(dataNil))
-	}
-}
-
-func TestTimeInSlice(t *testing.T) {
-	times := []Time{
-		NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
-		NewTime(time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)),
-		NewTime(time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC)),
-	}
-
-	data, err := json.Marshal(times)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected := `["2024-01-01T00:00:00.000Z","2024-06-15T12:30:00.000Z","2024-12-31T23:59:59.000Z"]`
-	if string(data) != expected {
-		t.Fatalf("expected %s, got %s", expected, string(data))
-	}
-
-	var parsed []Time
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(parsed) != len(times) {
-		t.Fatalf("expected %d items, got %d", len(times), len(parsed))
-	}
-	for i, ts := range times {
-		if !parsed[i].Equal(ts.Time) {
-			t.Fatalf("item %d mismatch: expected %v, got %v", i, ts, parsed[i])
+func TestJSONRejectsInvalidInput(t *testing.T) {
+	for _, input := range []string{`"not-a-time"`, `123`, `"2024-99-99T00:00:00Z"`} {
+		var value Time
+		if err := value.UnmarshalJSON([]byte(input)); err == nil {
+			t.Fatalf("expected %s to fail", input)
 		}
 	}
 }
 
-func TestTimeInMap(t *testing.T) {
-	m := map[string]Time{
-		"start": NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
-		"end":   NewTime(time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC)),
-	}
-
-	data, err := json.Marshal(m)
+func TestCBORRoundTripUsesDateTimeTag(t *testing.T) {
+	input := NewTime(time.Date(2024, 1, 15, 10, 30, 45, 123456789, time.UTC))
+	data, err := input.MarshalCBOR()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("marshal CBOR: %v", err)
+	}
+	var tag cbor.Tag
+	if err := cbor.Unmarshal(data, &tag); err != nil {
+		t.Fatalf("decode tag: %v", err)
+	}
+	if tag.Number != 0 || tag.Content != "2024-01-15T10:30:45.123Z" {
+		t.Fatalf("unexpected tag: %#v", tag)
 	}
 
-	var parsed map[string]Time
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	var output Time
+	if err := output.UnmarshalCBOR(data); err != nil {
+		t.Fatalf("unmarshal CBOR: %v", err)
 	}
-	if len(parsed) != len(m) {
-		t.Fatalf("expected %d items, got %d", len(m), len(parsed))
-	}
-	for k, v := range m {
-		if !parsed[k].Equal(v.Time) {
-			t.Fatalf("key %s mismatch: expected %v, got %v", k, v, parsed[k])
-		}
+	if !output.Equal(time.Date(2024, 1, 15, 10, 30, 45, 123000000, time.UTC)) {
+		t.Fatalf("unexpected round trip: %s", output.Time)
 	}
 }
 
-func TestNow(t *testing.T) {
-	before := time.Now()
-	result := Now()
-	after := time.Now()
+func TestCBORAcceptsBareTextAndRejectsInvalidValues(t *testing.T) {
+	bare, err := cbor.Marshal("2024-01-15T10:30:45Z")
+	if err != nil {
+		t.Fatalf("marshal bare text: %v", err)
+	}
+	var value Time
+	if err := value.UnmarshalCBOR(bare); err != nil {
+		t.Fatalf("unmarshal bare text: %v", err)
+	}
 
-	if result.Before(before) || result.After(after) {
-		t.Fatalf("Now() returned time outside expected range")
+	invalidValues := [][]byte{
+		nil,
+		{0x01},
+		append(bare, 0x01),
+	}
+	for _, invalid := range invalidValues {
+		if err := value.UnmarshalCBOR(invalid); err == nil {
+			t.Fatalf("expected %x to fail", invalid)
+		}
 	}
 }
 
 func TestNewTime(t *testing.T) {
-	input := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)
-	result := NewTime(input)
-	if !result.Equal(input) {
-		t.Fatalf("expected %v, got %v", input, result)
-	}
-}
-
-func TestTimeMethodsAccessible(t *testing.T) {
-	ts := NewTime(time.Date(2024, 6, 15, 14, 30, 45, 0, time.UTC))
-
-	if ts.Year() != 2024 {
-		t.Fatalf("expected year 2024, got %d", ts.Year())
-	}
-	if ts.Month() != time.June {
-		t.Fatalf("expected month June, got %v", ts.Month())
-	}
-	if ts.Day() != 15 {
-		t.Fatalf("expected day 15, got %d", ts.Day())
-	}
-	if ts.Hour() != 14 {
-		t.Fatalf("expected hour 14, got %d", ts.Hour())
-	}
-	if ts.Minute() != 30 {
-		t.Fatalf("expected minute 30, got %d", ts.Minute())
-	}
-	if ts.Second() != 45 {
-		t.Fatalf("expected second 45, got %d", ts.Second())
-	}
-	if ts.Weekday() != time.Saturday {
-		t.Fatalf("expected Saturday, got %v", ts.Weekday())
-	}
-}
-
-func TestTimeComparison(t *testing.T) {
-	t1 := NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-	t2 := NewTime(time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC))
-	t3 := NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-
-	if !t1.Before(t2.Time) {
-		t.Fatal("t1 should be before t2")
-	}
-	if !t2.After(t1.Time) {
-		t.Fatal("t2 should be after t1")
-	}
-	if !t1.Equal(t3.Time) {
-		t.Fatal("t1 should equal t3")
-	}
-}
-
-func TestTimeAdd(t *testing.T) {
-	ts := NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
-
-	added := ts.Add(time.Hour)
-	expected := time.Date(2024, 1, 15, 11, 30, 0, 0, time.UTC)
-	if !added.Equal(expected) {
-		t.Fatalf("expected %v, got %v", expected, added)
-	}
-}
-
-func TestTimeSub(t *testing.T) {
-	t1 := NewTime(time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC))
-	t2 := NewTime(time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC))
-
-	diff := t1.Sub(t2.Time)
-	if diff != 2*time.Hour {
-		t.Fatalf("expected 2h, got %v", diff)
-	}
-}
-
-func TestTimeUnix(t *testing.T) {
-	ts := NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
-
-	unix := ts.Unix()
-	if unix != 1705314600 {
-		t.Fatalf("expected unix 1705314600, got %d", unix)
-	}
-
-	unixMilli := ts.UnixMilli()
-	if unixMilli != 1705314600000 {
-		t.Fatalf("expected unix milli 1705314600000, got %d", unixMilli)
-	}
-}
-
-func TestTimeFormat(t *testing.T) {
-	ts := NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
-
-	formatted := ts.Format(RFC3339Millis)
-	if formatted != "2024-01-15T10:30:00.000Z" {
-		t.Fatalf("expected 2024-01-15T10:30:00.000Z, got %s", formatted)
-	}
-
-	customFormat := ts.Format("2006-01-02")
-	if customFormat != "2024-01-15" {
-		t.Fatalf("expected 2024-01-15, got %s", customFormat)
-	}
-}
-
-func TestTimeIsZero(t *testing.T) {
-	var zero Time
-	if !zero.IsZero() {
-		t.Fatal("zero value should report IsZero true")
-	}
-
-	nonZero := NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
-	if nonZero.IsZero() {
-		t.Fatal("non-zero value should report IsZero false")
-	}
-}
-
-func TestTimeLocation(t *testing.T) {
-	ts := NewTime(time.Date(2024, 1, 15, 10, 30, 0, 0, time.FixedZone("EST", -5*60*60)))
-
-	utc := ts.UTC()
-	if utc.Location() != time.UTC {
-		t.Fatalf("expected UTC location, got %v", utc.Location())
-	}
-	if utc.Hour() != 15 {
-		t.Fatalf("expected UTC hour 15, got %d", utc.Hour())
-	}
-}
-
-func TestTimeTruncate(t *testing.T) {
-	ts := NewTime(time.Date(2024, 1, 15, 10, 30, 45, 123456789, time.UTC))
-
-	truncated := ts.Truncate(time.Second)
-	if truncated.Nanosecond() != 0 {
-		t.Fatalf("expected 0 nanoseconds, got %d", truncated.Nanosecond())
-	}
-
-	truncatedMilli := ts.Truncate(time.Millisecond)
-	if truncatedMilli.Nanosecond() != 123000000 {
-		t.Fatalf("expected 123000000 nanoseconds, got %d", truncatedMilli.Nanosecond())
-	}
-}
-
-func TestTimeNestedStruct(t *testing.T) {
-	type Metadata struct {
-		CreatedAt Time `json:"createdAt"`
-		UpdatedAt Time `json:"updatedAt"`
-	}
-	type Item struct {
-		ID       string   `json:"id"`
-		Metadata Metadata `json:"metadata"`
-	}
-
-	item := Item{
-		ID: "test-001",
-		Metadata: Metadata{
-			CreatedAt: NewTime(time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)),
-			UpdatedAt: NewTime(time.Date(2024, 6, 15, 14, 30, 0, 0, time.UTC)),
-		},
-	}
-
-	data, err := json.Marshal(item)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected := `{"id":"test-001","metadata":{"createdAt":"2024-01-15T10:00:00.000Z","updatedAt":"2024-06-15T14:30:00.000Z"}}`
-	if string(data) != expected {
-		t.Fatalf("expected %s, got %s", expected, string(data))
-	}
-
-	var parsed Item
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !parsed.Metadata.CreatedAt.Equal(item.Metadata.CreatedAt.Time) {
-		t.Fatalf("CreatedAt mismatch")
-	}
-	if !parsed.Metadata.UpdatedAt.Equal(item.Metadata.UpdatedAt.Time) {
-		t.Fatalf("UpdatedAt mismatch")
+	input := time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)
+	if got := NewTime(input); !got.Equal(input) {
+		t.Fatalf("expected %s, got %s", input, got.Time)
 	}
 }

@@ -5,9 +5,10 @@ import (
 	"errors"
 	"sync"
 	"testing"
-	"time"
 
 	"cloud.google.com/go/firestore"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/janisto/huma-playground/internal/testutil"
 )
@@ -17,9 +18,9 @@ func setupFirestoreTest(t *testing.T) (*FirestoreStore, func()) {
 
 	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
-	testutil.ClearEmulators(t)
+	testutil.ClearFirestore(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	client, err := firestore.NewClient(ctx, testutil.ProjectID)
 	if err != nil {
 		t.Fatalf("failed to create Firestore client: %v", err)
@@ -28,24 +29,40 @@ func setupFirestoreTest(t *testing.T) (*FirestoreStore, func()) {
 	store := NewFirestoreStore(client)
 	cleanup := func() {
 		testutil.ClearFirestore(t)
-		_ = client.Close()
+		if err := client.Close(); err != nil {
+			t.Errorf("close Firestore client: %v", err)
+		}
 	}
 
 	return store, cleanup
+}
+
+func createTestProfile(
+	t *testing.T,
+	store *FirestoreStore,
+	ctx context.Context,
+	userID string,
+	params CreateParams,
+) *Profile {
+	t.Helper()
+	profile, err := store.Create(ctx, userID, params)
+	if err != nil {
+		t.Fatalf("create profile %q: %v", userID, err)
+	}
+	return profile
 }
 
 func TestFirestoreCreate(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	params := CreateParams{
-		Firstname:   "John",
-		Lastname:    "Doe",
-		Email:       "JOHN@EXAMPLE.COM",
-		PhoneNumber: "+358401234567",
-		Marketing:   true,
-		Terms:       true,
+		FirstName:    "John",
+		LastName:     "Doe",
+		ContactEmail: "JOHN@EXAMPLE.COM",
+		PhoneNumber:  "+358401234567",
+		Marketing:    true,
 	}
 
 	p, err := store.Create(ctx, "user-123", params)
@@ -56,14 +73,14 @@ func TestFirestoreCreate(t *testing.T) {
 	if p.ID != "user-123" {
 		t.Errorf("expected ID user-123, got %s", p.ID)
 	}
-	if p.Firstname != "John" {
-		t.Errorf("expected firstname John, got %s", p.Firstname)
+	if p.FirstName != "John" {
+		t.Errorf("expected firstName John, got %s", p.FirstName)
 	}
-	if p.Lastname != "Doe" {
-		t.Errorf("expected lastname Doe, got %s", p.Lastname)
+	if p.LastName != "Doe" {
+		t.Errorf("expected lastName Doe, got %s", p.LastName)
 	}
-	if p.Email != "john@example.com" {
-		t.Errorf("expected email to be lowercased, got %s", p.Email)
+	if p.ContactEmail != "JOHN@EXAMPLE.COM" {
+		t.Errorf("expected contactEmail to be preserved, got %s", p.ContactEmail)
 	}
 	if p.PhoneNumber != "+358401234567" {
 		t.Errorf("expected phone +358401234567, got %s", p.PhoneNumber)
@@ -71,14 +88,33 @@ func TestFirestoreCreate(t *testing.T) {
 	if !p.Marketing {
 		t.Error("expected marketing true")
 	}
-	if !p.Terms {
-		t.Error("expected terms true")
-	}
 	if p.CreatedAt.IsZero() {
 		t.Error("expected CreatedAt to be set")
 	}
 	if p.UpdatedAt.IsZero() {
 		t.Error("expected UpdatedAt to be set")
+	}
+	document, err := store.client.Collection(profilesCollection).Doc("user-123").Get(ctx)
+	if err != nil {
+		t.Fatalf("read raw document: %v", err)
+	}
+	data := document.Data()
+	for _, key := range []string{
+		"first_name",
+		"last_name",
+		"contact_email",
+		"phone_number",
+		"created_at",
+		"updated_at",
+	} {
+		if _, exists := data[key]; !exists {
+			t.Errorf("expected Firestore field %q in %#v", key, data)
+		}
+	}
+	for _, legacy := range []string{"firstname", "lastname", "email", "terms"} {
+		if _, exists := data[legacy]; exists {
+			t.Errorf("unexpected legacy Firestore field %q", legacy)
+		}
 	}
 }
 
@@ -86,12 +122,11 @@ func TestFirestoreCreateDuplicate(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	params := CreateParams{
-		Firstname: "John",
-		Lastname:  "Doe",
-		Email:     "john@example.com",
-		Terms:     true,
+		FirstName:    "John",
+		LastName:     "Doe",
+		ContactEmail: "john@example.com",
 	}
 
 	_, err := store.Create(ctx, "user-dup", params)
@@ -109,16 +144,15 @@ func TestFirestoreGet(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	params := CreateParams{
-		Firstname:   "Jane",
-		Lastname:    "Smith",
-		Email:       "jane@example.com",
-		PhoneNumber: "+358409876543",
-		Marketing:   false,
-		Terms:       true,
+		FirstName:    "Jane",
+		LastName:     "Smith",
+		ContactEmail: "jane@example.com",
+		PhoneNumber:  "+358409876543",
+		Marketing:    false,
 	}
-	_, _ = store.Create(ctx, "user-get", params)
+	createTestProfile(t, store, ctx, "user-get", params)
 
 	p, err := store.Get(ctx, "user-get")
 	if err != nil {
@@ -128,11 +162,11 @@ func TestFirestoreGet(t *testing.T) {
 	if p.ID != "user-get" {
 		t.Errorf("expected ID user-get, got %s", p.ID)
 	}
-	if p.Firstname != "Jane" {
-		t.Errorf("expected firstname Jane, got %s", p.Firstname)
+	if p.FirstName != "Jane" {
+		t.Errorf("expected firstName Jane, got %s", p.FirstName)
 	}
-	if p.Lastname != "Smith" {
-		t.Errorf("expected lastname Smith, got %s", p.Lastname)
+	if p.LastName != "Smith" {
+		t.Errorf("expected lastName Smith, got %s", p.LastName)
 	}
 }
 
@@ -140,7 +174,7 @@ func TestFirestoreGetNotFound(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	_, err := store.Get(ctx, "nonexistent")
 	if !errors.Is(err, ErrNotFound) {
@@ -152,37 +186,41 @@ func TestFirestoreUpdatePartial(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	params := CreateParams{
-		Firstname:   "John",
-		Lastname:    "Doe",
-		Email:       "john@example.com",
-		PhoneNumber: "+358401234567",
-		Marketing:   false,
-		Terms:       true,
+		FirstName:    "John",
+		LastName:     "Doe",
+		ContactEmail: "john@example.com",
+		PhoneNumber:  "+358401234567",
+		Marketing:    false,
 	}
-	created, _ := store.Create(ctx, "user-update", params)
+	created := createTestProfile(t, store, ctx, "user-update", params)
+	if _, err := store.client.Collection(profilesCollection).Doc("user-update").Set(
+		ctx,
+		map[string]any{"future_field": "preserved"},
+		firestore.MergeAll,
+	); err != nil {
+		t.Fatalf("add future field: %v", err)
+	}
 
-	time.Sleep(10 * time.Millisecond)
-
-	newFirstname := "Johnny"
+	newFirstName := "Johnny"
 	newMarketing := true
 	updated, err := store.Update(ctx, "user-update", UpdateParams{
-		Firstname: &newFirstname,
+		FirstName: &newFirstName,
 		Marketing: &newMarketing,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if updated.Firstname != "Johnny" {
-		t.Errorf("expected firstname Johnny, got %s", updated.Firstname)
+	if updated.FirstName != "Johnny" {
+		t.Errorf("expected firstName Johnny, got %s", updated.FirstName)
 	}
-	if updated.Lastname != "Doe" {
-		t.Errorf("expected lastname Doe (unchanged), got %s", updated.Lastname)
+	if updated.LastName != "Doe" {
+		t.Errorf("expected lastName Doe (unchanged), got %s", updated.LastName)
 	}
-	if updated.Email != "john@example.com" {
-		t.Errorf("expected email unchanged, got %s", updated.Email)
+	if updated.ContactEmail != "john@example.com" {
+		t.Errorf("expected contactEmail unchanged, got %s", updated.ContactEmail)
 	}
 	if !updated.Marketing {
 		t.Error("expected marketing to be updated to true")
@@ -190,31 +228,37 @@ func TestFirestoreUpdatePartial(t *testing.T) {
 	if !updated.UpdatedAt.After(created.CreatedAt) {
 		t.Error("expected UpdatedAt to be after CreatedAt")
 	}
+	document, err := store.client.Collection(profilesCollection).Doc("user-update").Get(ctx)
+	if err != nil {
+		t.Fatalf("read updated document: %v", err)
+	}
+	if got := document.Data()["future_field"]; got != "preserved" {
+		t.Fatalf("partial update removed future field: %v", got)
+	}
 }
 
-func TestFirestoreUpdateEmailNormalization(t *testing.T) {
+func TestFirestoreUpdatePreservesContactEmail(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	params := CreateParams{
-		Firstname: "Test",
-		Lastname:  "User",
-		Email:     "test@example.com",
-		Terms:     true,
+		FirstName:    "Test",
+		LastName:     "User",
+		ContactEmail: "test@example.com",
 	}
-	_, _ = store.Create(ctx, "user-email", params)
+	createTestProfile(t, store, ctx, "user-contactEmail", params)
 
 	newEmail := "  UPDATED@EXAMPLE.COM  "
-	updated, err := store.Update(ctx, "user-email", UpdateParams{
-		Email: &newEmail,
+	updated, err := store.Update(ctx, "user-contactEmail", UpdateParams{
+		ContactEmail: &newEmail,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if updated.Email != "updated@example.com" {
-		t.Errorf("expected email to be normalized, got %s", updated.Email)
+	if updated.ContactEmail != "  UPDATED@EXAMPLE.COM  " {
+		t.Errorf("expected contactEmail to be preserved, got %s", updated.ContactEmail)
 	}
 }
 
@@ -222,42 +266,41 @@ func TestFirestoreUpdateAllFields(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	params := CreateParams{
-		Firstname:   "John",
-		Lastname:    "Doe",
-		Email:       "john@example.com",
-		PhoneNumber: "+358401234567",
-		Marketing:   false,
-		Terms:       true,
+		FirstName:    "John",
+		LastName:     "Doe",
+		ContactEmail: "john@example.com",
+		PhoneNumber:  "+358401234567",
+		Marketing:    false,
 	}
-	_, _ = store.Create(ctx, "user-all", params)
+	createTestProfile(t, store, ctx, "user-all", params)
 
-	newFirstname := "Jane"
-	newLastname := "Smith"
+	newFirstName := "Jane"
+	newLastName := "Smith"
 	newEmail := "jane@example.com"
 	newPhone := "+358409876543"
 	newMarketing := true
 
 	updated, err := store.Update(ctx, "user-all", UpdateParams{
-		Firstname:   &newFirstname,
-		Lastname:    &newLastname,
-		Email:       &newEmail,
-		PhoneNumber: &newPhone,
-		Marketing:   &newMarketing,
+		FirstName:    &newFirstName,
+		LastName:     &newLastName,
+		ContactEmail: &newEmail,
+		PhoneNumber:  &newPhone,
+		Marketing:    &newMarketing,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if updated.Firstname != "Jane" {
-		t.Errorf("expected firstname Jane, got %s", updated.Firstname)
+	if updated.FirstName != "Jane" {
+		t.Errorf("expected firstName Jane, got %s", updated.FirstName)
 	}
-	if updated.Lastname != "Smith" {
-		t.Errorf("expected lastname Smith, got %s", updated.Lastname)
+	if updated.LastName != "Smith" {
+		t.Errorf("expected lastName Smith, got %s", updated.LastName)
 	}
-	if updated.Email != "jane@example.com" {
-		t.Errorf("expected email jane@example.com, got %s", updated.Email)
+	if updated.ContactEmail != "jane@example.com" {
+		t.Errorf("expected contactEmail jane@example.com, got %s", updated.ContactEmail)
 	}
 	if updated.PhoneNumber != "+358409876543" {
 		t.Errorf("expected phone +358409876543, got %s", updated.PhoneNumber)
@@ -265,19 +308,16 @@ func TestFirestoreUpdateAllFields(t *testing.T) {
 	if !updated.Marketing {
 		t.Error("expected marketing true")
 	}
-	if !updated.Terms {
-		t.Error("expected terms to remain true")
-	}
 }
 
 func TestFirestoreUpdateNotFound(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	newName := "Test"
-	_, err := store.Update(ctx, "nonexistent", UpdateParams{Firstname: &newName})
+	_, err := store.Update(ctx, "nonexistent", UpdateParams{FirstName: &newName})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -287,14 +327,13 @@ func TestFirestoreDelete(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	params := CreateParams{
-		Firstname: "Delete",
-		Lastname:  "Me",
-		Email:     "delete@example.com",
-		Terms:     true,
+		FirstName:    "Delete",
+		LastName:     "Me",
+		ContactEmail: "delete@example.com",
 	}
-	_, _ = store.Create(ctx, "user-delete", params)
+	createTestProfile(t, store, ctx, "user-delete", params)
 
 	err := store.Delete(ctx, "user-delete")
 	if err != nil {
@@ -311,7 +350,7 @@ func TestFirestoreDeleteNotFound(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	err := store.Delete(ctx, "nonexistent")
 	if !errors.Is(err, ErrNotFound) {
@@ -323,14 +362,13 @@ func TestFirestoreDeleteTwice(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	params := CreateParams{
-		Firstname: "Delete",
-		Lastname:  "Twice",
-		Email:     "twice@example.com",
-		Terms:     true,
+		FirstName:    "Delete",
+		LastName:     "Twice",
+		ContactEmail: "twice@example.com",
 	}
-	_, _ = store.Create(ctx, "user-twice", params)
+	createTestProfile(t, store, ctx, "user-twice", params)
 
 	err := store.Delete(ctx, "user-twice")
 	if err != nil {
@@ -347,7 +385,7 @@ func TestFirestoreConcurrentCreate(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	const numGoroutines = 10
 	results := make(chan error, numGoroutines)
 
@@ -355,10 +393,9 @@ func TestFirestoreConcurrentCreate(t *testing.T) {
 	for range numGoroutines {
 		wg.Go(func() {
 			_, err := store.Create(ctx, "concurrent-user", CreateParams{
-				Firstname: "Test",
-				Lastname:  "User",
-				Email:     "test@example.com",
-				Terms:     true,
+				FirstName:    "Test",
+				LastName:     "User",
+				ContactEmail: "test@example.com",
 			})
 			results <- err
 		})
@@ -390,13 +427,15 @@ func TestFirestoreConcurrentDelete(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx := context.Background()
-	_, _ = store.Create(ctx, "delete-concurrent", CreateParams{
-		Firstname: "Delete",
-		Lastname:  "Concurrent",
-		Email:     "concurrent@example.com",
-		Terms:     true,
+	ctx := t.Context()
+	_, err := store.Create(ctx, "delete-concurrent", CreateParams{
+		FirstName:    "Delete",
+		LastName:     "Concurrent",
+		ContactEmail: "concurrent@example.com",
 	})
+	if err != nil {
+		t.Fatalf("create profile: %v", err)
+	}
 
 	const numGoroutines = 10
 	results := make(chan error, numGoroutines)
@@ -431,7 +470,7 @@ func TestFirestoreConcurrentDelete(t *testing.T) {
 }
 
 func TestFirestoreInterfaceCompliance(t *testing.T) {
-	var _ Service = (*FirestoreStore)(nil)
+	var _ Store = (*FirestoreStore)(nil)
 }
 
 func TestCategorizeError(t *testing.T) {
@@ -442,6 +481,7 @@ func TestCategorizeError(t *testing.T) {
 	}{
 		{"already exists", ErrAlreadyExists, "already_exists"},
 		{"not found", ErrNotFound, "not_found"},
+		{"unavailable", ErrUnavailable, "unavailable"},
 		{"internal error", errors.New("unexpected"), "internal_error"},
 	}
 
@@ -455,16 +495,48 @@ func TestCategorizeError(t *testing.T) {
 	}
 }
 
+func TestClassifyDependencyError(t *testing.T) {
+	for _, code := range []codes.Code{
+		codes.Aborted,
+		codes.DeadlineExceeded,
+		codes.ResourceExhausted,
+		codes.Unavailable,
+	} {
+		t.Run(code.String(), func(t *testing.T) {
+			err := classifyDependencyError(status.Error(code, "temporary"))
+			if !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("expected ErrUnavailable, got %v", err)
+			}
+		})
+	}
+	if err := classifyDependencyError(context.DeadlineExceeded); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("expected deadline to be unavailable, got %v", err)
+	}
+	if err := classifyDependencyError(
+		context.Canceled,
+	); !errors.Is(err, context.Canceled) ||
+		errors.Is(err, ErrUnavailable) {
+		t.Fatalf("expected cancellation to remain cancellation, got %v", err)
+	}
+	if err := classifyDependencyError(status.Error(codes.InvalidArgument, "bad data")); errors.Is(err, ErrUnavailable) {
+		t.Fatalf("did not expect invalid argument to be unavailable: %v", err)
+	}
+}
+
 func TestNewFirestoreStore(t *testing.T) {
 	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	client, err := firestore.NewClient(ctx, testutil.ProjectID)
 	if err != nil {
 		t.Fatalf("failed to create Firestore client: %v", err)
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("close Firestore client: %v", err)
+		}
+	}()
 
 	store := NewFirestoreStore(client)
 	if store == nil {
@@ -480,7 +552,7 @@ func TestFirestoreGetCancelledContext(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := store.Get(ctx, "user-canceled")
@@ -496,14 +568,13 @@ func TestFirestoreCreateCancelledContext(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := store.Create(ctx, "user-canceled", CreateParams{
-		Firstname: "Test",
-		Lastname:  "User",
-		Email:     "test@example.com",
-		Terms:     true,
+		FirstName:    "Test",
+		LastName:     "User",
+		ContactEmail: "test@example.com",
 	})
 	if err == nil {
 		t.Fatal("expected error with canceled context")
@@ -514,11 +585,11 @@ func TestFirestoreUpdateCancelledContext(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	newName := "Test"
-	_, err := store.Update(ctx, "user-canceled", UpdateParams{Firstname: &newName})
+	_, err := store.Update(ctx, "user-canceled", UpdateParams{FirstName: &newName})
 	if err == nil {
 		t.Fatal("expected error with canceled context")
 	}
@@ -528,7 +599,7 @@ func TestFirestoreDeleteCancelledContext(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := store.Delete(ctx, "user-canceled")

@@ -15,7 +15,11 @@ func newTestServer(handler http.HandlerFunc) *httptest.Server {
 }
 
 func newTestClient(serverURL string) *Client {
-	return NewClient(http.DefaultClient, WithBaseURL(serverURL))
+	client, err := NewClient(http.DefaultClient, WithBaseURL(serverURL))
+	if err != nil {
+		panic(err)
+	}
+	return client
 }
 
 func TestGetOwner(t *testing.T) {
@@ -40,7 +44,7 @@ func TestGetOwner(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	owner, err := client.GetOwner(context.Background(), "octocat")
+	owner, err := client.GetOwner(t.Context(), "octocat")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +92,7 @@ func TestListRepos(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	repos, err := client.ListRepos(context.Background(), "octocat")
+	repos, err := client.ListRepos(t.Context(), "octocat")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -133,7 +137,7 @@ func TestGetRepo(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	repo, err := client.GetRepo(context.Background(), "octocat", "hello-world")
+	repo, err := client.GetRepo(t.Context(), "octocat", "hello-world")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -171,7 +175,7 @@ func TestGetRepoNilLicense(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	repo, err := client.GetRepo(context.Background(), "octocat", "no-license")
+	repo, err := client.GetRepo(t.Context(), "octocat", "no-license")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -206,7 +210,7 @@ func TestListActivity(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	page, err := client.ListActivity(context.Background(), "octocat", "hello-world", 10, "")
+	page, err := client.ListActivity(t.Context(), "octocat", "hello-world", 10, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -235,7 +239,7 @@ func TestListActivityWithCursor(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	page, err := client.ListActivity(context.Background(), "octocat", "hello-world", 10, "cursor-xyz")
+	page, err := client.ListActivity(t.Context(), "octocat", "hello-world", 10, "cursor-xyz")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -260,7 +264,7 @@ func TestListActivityNilActor(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	page, err := client.ListActivity(context.Background(), "octocat", "hello-world", 10, "")
+	page, err := client.ListActivity(t.Context(), "octocat", "hello-world", 10, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -283,7 +287,7 @@ func TestListLanguages(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	langs, err := client.ListLanguages(context.Background(), "octocat", "hello-world")
+	langs, err := client.ListLanguages(t.Context(), "octocat", "hello-world")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -316,7 +320,7 @@ func TestListTags(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	tags, err := client.ListTags(context.Background(), "octocat", "hello-world")
+	tags, err := client.ListTags(t.Context(), "octocat", "hello-world")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -339,7 +343,7 @@ func TestNotFoundError(t *testing.T) {
 
 	client := newTestClient(srv.URL)
 
-	_, err := client.GetOwner(context.Background(), "nonexistent")
+	_, err := client.GetOwner(t.Context(), "nonexistent")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -358,14 +362,14 @@ func TestNotFoundError(t *testing.T) {
 
 func TestForbiddenError(t *testing.T) {
 	srv := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("X-RateLimit-Remaining", "10")
+		w.Header().Set("X-Ratelimit-Remaining", "10")
 		w.WriteHeader(http.StatusForbidden)
 	})
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
 
-	_, err := client.GetOwner(context.Background(), "octocat")
+	_, err := client.GetOwner(t.Context(), "octocat")
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("expected ErrForbidden, got %v", err)
 	}
@@ -384,15 +388,15 @@ func TestForbiddenError(t *testing.T) {
 
 func TestRateLimitedError(t *testing.T) {
 	srv := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("X-RateLimit-Remaining", "0")
-		w.Header().Set("X-RateLimit-Reset", "1700000000")
+		w.Header().Set("X-Ratelimit-Remaining", "0")
+		w.Header().Set("X-Ratelimit-Reset", "1700000000")
 		w.WriteHeader(http.StatusForbidden)
 	})
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
 
-	_, err := client.GetOwner(context.Background(), "octocat")
+	_, err := client.GetOwner(t.Context(), "octocat")
 	if !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected ErrRateLimited, got %v", err)
 	}
@@ -415,15 +419,15 @@ func TestRateLimitedError(t *testing.T) {
 func TestRateLimited403WithRetryAfter(t *testing.T) {
 	srv := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "60")
-		w.Header().Set("X-RateLimit-Remaining", "10")
-		w.Header().Set("X-RateLimit-Reset", "1700000000")
+		w.Header().Set("X-Ratelimit-Remaining", "10")
+		w.Header().Set("X-Ratelimit-Reset", "1700000000")
 		w.WriteHeader(http.StatusForbidden)
 	})
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
 
-	_, err := client.GetOwner(context.Background(), "octocat")
+	_, err := client.GetOwner(t.Context(), "octocat")
 	if !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected ErrRateLimited, got %v", err)
 	}
@@ -443,15 +447,15 @@ func TestRateLimited403WithRetryAfter(t *testing.T) {
 func TestRateLimitedHTTP429(t *testing.T) {
 	srv := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "60")
-		w.Header().Set("X-RateLimit-Remaining", "0")
-		w.Header().Set("X-RateLimit-Reset", "1700000000")
+		w.Header().Set("X-Ratelimit-Remaining", "0")
+		w.Header().Set("X-Ratelimit-Reset", "1700000000")
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
 
-	_, err := client.GetOwner(context.Background(), "octocat")
+	_, err := client.GetOwner(t.Context(), "octocat")
 	if !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected ErrRateLimited, got %v", err)
 	}
@@ -529,7 +533,7 @@ func TestUpstreamError(t *testing.T) {
 
 	client := newTestClient(srv.URL)
 
-	_, err := client.GetOwner(context.Background(), "octocat")
+	_, err := client.GetOwner(t.Context(), "octocat")
 	if !errors.Is(err, ErrUpstream) {
 		t.Fatalf("expected ErrUpstream, got %v", err)
 	}
@@ -588,7 +592,7 @@ func TestMalformedJSON(t *testing.T) {
 
 	client := newTestClient(srv.URL)
 
-	_, err := client.GetOwner(context.Background(), "octocat")
+	_, err := client.GetOwner(t.Context(), "octocat")
 	if err == nil {
 		t.Fatal("expected error for malformed JSON")
 	}
@@ -602,7 +606,7 @@ func TestContextCancellation(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := client.GetOwner(ctx, "octocat")
@@ -613,7 +617,7 @@ func TestContextCancellation(t *testing.T) {
 
 func TestListLanguagesContextCancellation(t *testing.T) {
 	client := newTestClient("http://127.0.0.1")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := client.ListLanguages(ctx, "octocat", "hello-world")
@@ -640,8 +644,11 @@ func TestTokenSentAsBearer(t *testing.T) {
 	})
 	defer srv.Close()
 
-	client := NewClient(http.DefaultClient, WithBaseURL(srv.URL), WithToken("test-token-123"))
-	_, err := client.GetOwner(context.Background(), "octocat")
+	client, err := NewClient(http.DefaultClient, WithBaseURL(srv.URL), WithToken("test-token-123"))
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	_, err = client.GetOwner(t.Context(), "octocat")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -663,7 +670,7 @@ func TestNoTokenNoAuthHeader(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	_, err := client.GetOwner(context.Background(), "octocat")
+	_, err := client.GetOwner(t.Context(), "octocat")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -677,8 +684,8 @@ func TestRequiredHeaders(t *testing.T) {
 		if r.Header.Get("Accept") != "application/vnd.github+json" {
 			t.Errorf("expected Accept application/vnd.github+json, got %s", r.Header.Get("Accept"))
 		}
-		if r.Header.Get("X-GitHub-Api-Version") != "2022-11-28" {
-			t.Errorf("expected X-GitHub-Api-Version 2022-11-28, got %s", r.Header.Get("X-GitHub-Api-Version"))
+		if r.Header.Get("X-Github-Api-Version") != "2022-11-28" {
+			t.Errorf("expected X-GitHub-Api-Version 2022-11-28, got %s", r.Header.Get("X-Github-Api-Version"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -690,7 +697,7 @@ func TestRequiredHeaders(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	_, err := client.GetOwner(context.Background(), "octocat")
+	_, err := client.GetOwner(t.Context(), "octocat")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -748,6 +755,57 @@ func TestInterfaceCompliance(t *testing.T) {
 	var _ Service = (*Client)(nil)
 }
 
+func TestNewClientValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		client  *http.Client
+		baseURL string
+	}{
+		{name: "nil HTTP client", client: nil, baseURL: "https://api.github.com"},
+		{name: "relative URL", client: http.DefaultClient, baseURL: "/api"},
+		{name: "unsupported scheme", client: http.DefaultClient, baseURL: "file:///tmp/api"},
+		{name: "malformed URL", client: http.DefaultClient, baseURL: "://bad"},
+		{name: "missing host", client: http.DefaultClient, baseURL: "https:api.github.com"},
+		{name: "credentials", client: http.DefaultClient, baseURL: "https://user@example.com"},
+		{name: "path", client: http.DefaultClient, baseURL: "https://example.com/api"},
+		{name: "query", client: http.DefaultClient, baseURL: "https://example.com?version=1"},
+		{name: "fragment", client: http.DefaultClient, baseURL: "https://example.com#api"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := NewClient(test.client, WithBaseURL(test.baseURL)); err == nil {
+				t.Fatal("expected constructor error")
+			}
+		})
+	}
+	if _, err := NewClient(http.DefaultClient, WithBaseURL("https://api.github.com/")); err != nil {
+		t.Fatalf("expected origin with trailing slash to be valid: %v", err)
+	}
+}
+
+func TestResponseBoundaryValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "multiple JSON values", body: `{}` + "\n" + `{}`},
+		{name: "oversized response", body: `{"padding":"` + strings.Repeat("a", maxResponseSize) + `"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(test.body))
+			})
+			defer server.Close()
+
+			if _, err := newTestClient(server.URL).GetOwner(t.Context(), "octocat"); err == nil {
+				t.Fatal("expected response validation error")
+			}
+		})
+	}
+}
+
 func TestPathEscaping(t *testing.T) {
 	srv := newTestServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.RawQuery != "" {
@@ -766,7 +824,7 @@ func TestPathEscaping(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	_, err := client.GetOwner(context.Background(), "octocat?foo=bar")
+	_, err := client.GetOwner(t.Context(), "octocat?foo=bar")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -784,7 +842,7 @@ func TestParseTimeInvalid(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	_, err := client.GetOwner(context.Background(), "octocat")
+	_, err := client.GetOwner(t.Context(), "octocat")
 	if err == nil {
 		t.Fatal("expected error for invalid timestamp")
 	}
@@ -802,7 +860,7 @@ func TestParseTimeEmpty(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv.URL)
-	_, err := client.GetOwner(context.Background(), "octocat")
+	_, err := client.GetOwner(t.Context(), "octocat")
 	if err == nil {
 		t.Fatal("expected error for missing timestamp")
 	}
@@ -837,4 +895,13 @@ func TestToRepoSummaryRejectsInvalidTimestamps(t *testing.T) {
 			}
 		})
 	}
+}
+
+func FuzzParseLinkHeader(f *testing.F) {
+	f.Add("")
+	f.Add(`<https://api.github.com/repos/o/r/activity?after=abc>; rel="next"`)
+	f.Add("malformed")
+	f.Fuzz(func(_ *testing.T, header string) {
+		_ = parseLinkHeader(header)
+	})
 }

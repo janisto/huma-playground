@@ -33,7 +33,7 @@ func TestInitializeClientsWithEmulator(t *testing.T) {
 	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	clients, err := InitializeClients(ctx, Config{ProjectID: testutil.ProjectID})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -55,7 +55,7 @@ func TestInitializeClientsCancelledContext(t *testing.T) {
 	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	// The Firebase Admin SDK does not consistently check context cancellation
@@ -66,6 +66,8 @@ func TestInitializeClientsCancelledContext(t *testing.T) {
 		t.Fatalf("expected nil or context.Canceled, got %v", err)
 	}
 	if clients != nil {
-		_ = clients.Close()
+		if closeErr := clients.Close(); closeErr != nil {
+			t.Errorf("close Firebase clients: %v", closeErr)
+		}
 	}
 }

@@ -16,15 +16,92 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/janisto/huma-observability"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/janisto/huma-playground/internal/platform/auth"
-	"github.com/janisto/huma-playground/internal/platform/respond"
 	profilesvc "github.com/janisto/huma-playground/internal/service/profile"
 )
+
+type stubVerifier struct {
+	User  *auth.FirebaseUser
+	Error error
+}
+
+func (v *stubVerifier) Verify(context.Context, string) (*auth.FirebaseUser, error) {
+	return v.User, v.Error
+}
+
+func testUser() *auth.FirebaseUser {
+	return &auth.FirebaseUser{UID: "test-user-123", Email: "test@example.com", EmailVerified: true}
+}
 
 type mockService struct {
 	profile *profilesvc.Profile
 	err     error
+}
+
+type memoryStore struct {
+	mu       sync.Mutex
+	profiles map[string]*profilesvc.Profile
+}
+
+func newMemoryStore() *memoryStore {
+	return &memoryStore{profiles: make(map[string]*profilesvc.Profile)}
+}
+
+func (s *memoryStore) Create(
+	_ context.Context,
+	userID string,
+	params profilesvc.CreateParams,
+) (*profilesvc.Profile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.profiles[userID]; exists {
+		return nil, profilesvc.ErrAlreadyExists
+	}
+	now := time.Now().UTC()
+	profile := &profilesvc.Profile{
+		ID:           userID,
+		FirstName:    params.FirstName,
+		LastName:     params.LastName,
+		ContactEmail: params.ContactEmail,
+		PhoneNumber:  params.PhoneNumber,
+		Marketing:    params.Marketing,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	s.profiles[userID] = profile
+	return profile, nil
+}
+
+func (s *memoryStore) Get(_ context.Context, userID string) (*profilesvc.Profile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	profile, exists := s.profiles[userID]
+	if !exists {
+		return nil, profilesvc.ErrNotFound
+	}
+	result := *profile
+	return &result, nil
+}
+
+func (s *memoryStore) Update(
+	context.Context,
+	string,
+	profilesvc.UpdateParams,
+) (*profilesvc.Profile, error) {
+	return nil, errors.New("update is not implemented by this test store")
+}
+
+func (s *memoryStore) Delete(_ context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.profiles[userID]; !exists {
+		return profilesvc.ErrNotFound
+	}
+	delete(s.profiles, userID)
+	return nil
 }
 
 func (m *mockService) Create(
@@ -37,15 +114,14 @@ func (m *mockService) Create(
 	}
 	now := time.Now().UTC()
 	return &profilesvc.Profile{
-		ID:          userID,
-		Firstname:   params.Firstname,
-		Lastname:    params.Lastname,
-		Email:       params.Email,
-		PhoneNumber: params.PhoneNumber,
-		Marketing:   params.Marketing,
-		Terms:       params.Terms,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           userID,
+		FirstName:    params.FirstName,
+		LastName:     params.LastName,
+		ContactEmail: params.ContactEmail,
+		PhoneNumber:  params.PhoneNumber,
+		Marketing:    params.Marketing,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}, nil
 }
 
@@ -61,14 +137,14 @@ func (m *mockService) Update(_ context.Context, _ string, params profilesvc.Upda
 		return nil, m.err
 	}
 	p := *m.profile
-	if params.Firstname != nil {
-		p.Firstname = *params.Firstname
+	if params.FirstName != nil {
+		p.FirstName = *params.FirstName
 	}
-	if params.Lastname != nil {
-		p.Lastname = *params.Lastname
+	if params.LastName != nil {
+		p.LastName = *params.LastName
 	}
-	if params.Email != nil {
-		p.Email = *params.Email
+	if params.ContactEmail != nil {
+		p.ContactEmail = *params.ContactEmail
 	}
 	if params.PhoneNumber != nil {
 		p.PhoneNumber = *params.PhoneNumber
@@ -84,42 +160,44 @@ func (m *mockService) Delete(_ context.Context, _ string) error {
 	return m.err
 }
 
-func newTestRouter(svc profilesvc.Service, verifier auth.Verifier) chi.Router {
+func newTestRouter(svc profilesvc.Store, verifier auth.Verifier) chi.Router {
+	return newTestRouterWithLogger(svc, verifier, zap.NewNop())
+}
+
+func newTestRouterWithLogger(svc profilesvc.Store, verifier auth.Verifier, logger *zap.Logger) chi.Router {
 	router := chi.NewRouter()
 	router.Use(
 		chimiddleware.ClientIPFromRemoteAddr,
-		respond.Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("ProfileTest", "test"))
-	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{}))
-	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{}))
+	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{Logger: logger}))
+	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{Logger: logger}))
 	api.UseMiddleware(auth.NewAuthMiddleware(api, verifier))
-	Register(api, svc)
+	Register(api, "/v1", svc)
 	return router
 }
 
 func testProfile() *profilesvc.Profile {
 	now := time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)
 	return &profilesvc.Profile{
-		ID:          "test-user-123",
-		Firstname:   "John",
-		Lastname:    "Doe",
-		Email:       "john@example.com",
-		PhoneNumber: "+358401234567",
-		Marketing:   true,
-		Terms:       true,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           "test-user-123",
+		FirstName:    "John",
+		LastName:     "Doe",
+		ContactEmail: "john@example.com",
+		PhoneNumber:  "+358401234567",
+		Marketing:    true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 }
 
 func TestCreateProfileSuccess(t *testing.T) {
 	svc := &mockService{}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"+358401234567","marketing":true,"terms":true}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/profile", strings.NewReader(body))
+	body := `{"firstName":"John","lastName":"Doe","contactEmail":"john@example.com","phoneNumber":"+358401234567","marketing":true}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	req.Header.Set(chimiddleware.RequestIDHeader, "create-profile-test")
@@ -141,21 +219,21 @@ func TestCreateProfileSuccess(t *testing.T) {
 		t.Fatalf("json unmarshal: %v", err)
 	}
 
-	if profile.Firstname != "John" {
-		t.Errorf("expected firstname John, got %s", profile.Firstname)
+	if profile.FirstName != "John" {
+		t.Errorf("expected firstName John, got %s", profile.FirstName)
 	}
-	if profile.Email != "john@example.com" {
-		t.Errorf("expected email john@example.com, got %s", profile.Email)
+	if profile.ContactEmail != "john@example.com" {
+		t.Errorf("expected contactEmail john@example.com, got %s", profile.ContactEmail)
 	}
 }
 
-func TestCreateProfileTermsRequired(t *testing.T) {
+func TestCreateProfileRejectsLegacyTermsField(t *testing.T) {
 	svc := &mockService{}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"+358401234567","marketing":true,"terms":false}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/profile", strings.NewReader(body))
+	body := `{"firstName":"John","lastName":"Doe","contactEmail":"john@example.com","phoneNumber":"+358401234567","marketing":true,"terms":false}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -178,11 +256,11 @@ func TestCreateProfileTermsRequired(t *testing.T) {
 
 func TestCreateProfileConflict(t *testing.T) {
 	svc := &mockService{err: profilesvc.ErrAlreadyExists}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"+358401234567","marketing":false,"terms":true}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/profile", strings.NewReader(body))
+	body := `{"firstName":"John","lastName":"Doe","contactEmail":"john@example.com","phoneNumber":"+358401234567","marketing":false}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -196,11 +274,11 @@ func TestCreateProfileConflict(t *testing.T) {
 
 func TestCreateProfileUnauthorized(t *testing.T) {
 	svc := &mockService{}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"+358401234567","terms":true}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/profile", strings.NewReader(body))
+	body := `{"firstName":"John","lastName":"Doe","contactEmail":"john@example.com","phoneNumber":"+358401234567"}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 
@@ -218,10 +296,10 @@ func TestCreateProfileUnauthorized(t *testing.T) {
 
 func TestGetProfileSuccess(t *testing.T) {
 	svc := &mockService{profile: testProfile()}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/profile", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/profile", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	req.Header.Set(chimiddleware.RequestIDHeader, "get-profile-test")
 	resp := httptest.NewRecorder()
@@ -240,17 +318,17 @@ func TestGetProfileSuccess(t *testing.T) {
 	if profile.ID != "test-user-123" {
 		t.Errorf("expected id test-user-123, got %s", profile.ID)
 	}
-	if profile.Firstname != "John" {
-		t.Errorf("expected firstname John, got %s", profile.Firstname)
+	if profile.FirstName != "John" {
+		t.Errorf("expected firstName John, got %s", profile.FirstName)
 	}
 }
 
 func TestGetProfileNotFound(t *testing.T) {
 	svc := &mockService{err: profilesvc.ErrNotFound}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/profile", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/profile", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
 
@@ -263,11 +341,11 @@ func TestGetProfileNotFound(t *testing.T) {
 
 func TestUpdateProfileSuccess(t *testing.T) {
 	svc := &mockService{profile: testProfile()}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"Jane"}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/profile", strings.NewReader(body))
+	body := `{"firstName":"Jane"}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	req.Header.Set(chimiddleware.RequestIDHeader, "update-profile-test")
@@ -284,20 +362,20 @@ func TestUpdateProfileSuccess(t *testing.T) {
 		t.Fatalf("json unmarshal: %v", err)
 	}
 
-	if profile.Firstname != "Jane" {
-		t.Errorf("expected firstname Jane, got %s", profile.Firstname)
+	if profile.FirstName != "Jane" {
+		t.Errorf("expected firstName Jane, got %s", profile.FirstName)
 	}
-	if profile.Lastname != "Doe" {
-		t.Errorf("expected lastname Doe (unchanged), got %s", profile.Lastname)
+	if profile.LastName != "Doe" {
+		t.Errorf("expected lastName Doe (unchanged), got %s", profile.LastName)
 	}
 }
 
 func TestUpdateProfileEmptyBody(t *testing.T) {
 	svc := &mockService{profile: testProfile()}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/profile", strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/profile", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -319,11 +397,11 @@ func TestUpdateProfileEmptyBody(t *testing.T) {
 
 func TestUpdateProfileNotFound(t *testing.T) {
 	svc := &mockService{err: profilesvc.ErrNotFound}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"Jane"}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/profile", strings.NewReader(body))
+	body := `{"firstName":"Jane"}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -337,10 +415,10 @@ func TestUpdateProfileNotFound(t *testing.T) {
 
 func TestDeleteProfileSuccess(t *testing.T) {
 	svc := &mockService{}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/profile", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/profile", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	req.Header.Set(chimiddleware.RequestIDHeader, "delete-profile-test")
 	resp := httptest.NewRecorder()
@@ -354,10 +432,10 @@ func TestDeleteProfileSuccess(t *testing.T) {
 
 func TestDeleteProfileNotFound(t *testing.T) {
 	svc := &mockService{err: profilesvc.ErrNotFound}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/profile", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/profile", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
 
@@ -370,11 +448,11 @@ func TestDeleteProfileNotFound(t *testing.T) {
 
 func TestProfileValidationInvalidEmail(t *testing.T) {
 	svc := &mockService{}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"invalid-email","phoneNumber":"+358401234567","terms":true}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/profile", strings.NewReader(body))
+	body := `{"firstName":"John","lastName":"Doe","contactEmail":"invalid-contactEmail","phoneNumber":"+358401234567"}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -388,11 +466,11 @@ func TestProfileValidationInvalidEmail(t *testing.T) {
 
 func TestProfileValidationInvalidPhone(t *testing.T) {
 	svc := &mockService{}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"12345","terms":true}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/profile", strings.NewReader(body))
+	body := `{"firstName":"John","lastName":"Doe","contactEmail":"john@example.com","phoneNumber":"12345"}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -404,13 +482,26 @@ func TestProfileValidationInvalidPhone(t *testing.T) {
 	}
 }
 
+func TestProfileValidationRejectsSurroundingWhitespace(t *testing.T) {
+	router := newTestRouter(&mockService{}, &stubVerifier{User: testUser()})
+	body := `{"firstName":" John ","lastName":"Doe","contactEmail":"john@example.com","phoneNumber":"+358401234567"}`
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profile", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer valid-token")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestProfileValidationMissingRequired(t *testing.T) {
 	svc := &mockService{}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John"}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/profile", strings.NewReader(body))
+	body := `{"firstName":"John"}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -423,20 +514,19 @@ func TestProfileValidationMissingRequired(t *testing.T) {
 }
 
 func TestDeleteProfileTwice(t *testing.T) {
-	mockSvc := profilesvc.NewMockProfileService()
-	_, _ = mockSvc.Create(context.Background(), "user-123", profilesvc.CreateParams{
-		Firstname: "Test",
-		Lastname:  "User",
-		Email:     "test@example.com",
-		Terms:     true,
+	mockSvc := newMemoryStore()
+	_, _ = mockSvc.Create(t.Context(), "user-123", profilesvc.CreateParams{
+		FirstName:    "Test",
+		LastName:     "User",
+		ContactEmail: "test@example.com",
 	})
 
-	verifier := &auth.MockVerifier{
+	verifier := &stubVerifier{
 		User: &auth.FirebaseUser{UID: "user-123", Email: "test@example.com"},
 	}
 	router := newTestRouter(mockSvc, verifier)
 
-	req1 := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/profile", nil)
+	req1 := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/profile", nil)
 	req1.Header.Set("Authorization", "Bearer valid-token")
 	resp1 := httptest.NewRecorder()
 	router.ServeHTTP(resp1, req1)
@@ -445,7 +535,7 @@ func TestDeleteProfileTwice(t *testing.T) {
 		t.Fatalf("first delete: expected 204, got %d", resp1.Code)
 	}
 
-	req2 := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/profile", nil)
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/profile", nil)
 	req2.Header.Set("Authorization", "Bearer valid-token")
 	resp2 := httptest.NewRecorder()
 	router.ServeHTTP(resp2, req2)
@@ -457,11 +547,11 @@ func TestDeleteProfileTwice(t *testing.T) {
 
 func TestCreateProfileInternalServerError(t *testing.T) {
 	svc := &mockService{err: errors.New("unexpected database error")}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"John","lastname":"Doe","email":"john@example.com","phoneNumber":"+358401234567","marketing":false,"terms":true}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/profile", strings.NewReader(body))
+	body := `{"firstName":"John","lastName":"Doe","contactEmail":"john@example.com","phoneNumber":"+358401234567","marketing":false}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -481,12 +571,64 @@ func TestCreateProfileInternalServerError(t *testing.T) {
 	}
 }
 
+func TestProfileUnexpectedErrorIsLoggedOnce(t *testing.T) {
+	core, logs := observer.New(zap.ErrorLevel)
+	router := newTestRouterWithLogger(
+		&mockService{err: errors.New("unexpected database error")},
+		&stubVerifier{User: testUser()},
+		zap.New(core),
+	)
+
+	body := `{"firstName":"John","lastName":"Doe","contactEmail":"john@example.com","phoneNumber":"+358401234567","marketing":false}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profile", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", resp.Code, resp.Body.String())
+	}
+	entries := logs.FilterMessage("profile operation failed").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected one profile failure log, got %d", len(entries))
+	}
+	if operation := entries[0].ContextMap()["operation"]; operation != "create" {
+		t.Fatalf("unexpected operation field %#v", operation)
+	}
+}
+
+func TestProfileUnavailableErrorIsLoggedOnce(t *testing.T) {
+	core, logs := observer.New(zap.WarnLevel)
+	router := newTestRouterWithLogger(
+		&mockService{err: profilesvc.ErrUnavailable},
+		&stubVerifier{User: testUser()},
+		zap.New(core),
+	)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/profile", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", resp.Code, resp.Body.String())
+	}
+	entries := logs.FilterMessage("profile store unavailable").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected one profile unavailable log, got %d", len(entries))
+	}
+	if operation := entries[0].ContextMap()["operation"]; operation != "get" {
+		t.Fatalf("unexpected operation field %#v", operation)
+	}
+}
+
 func TestGetProfileInternalServerError(t *testing.T) {
 	svc := &mockService{err: errors.New("unexpected database error")}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/profile", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/profile", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
 
@@ -499,11 +641,11 @@ func TestGetProfileInternalServerError(t *testing.T) {
 
 func TestUpdateProfileInternalServerError(t *testing.T) {
 	svc := &mockService{err: errors.New("unexpected database error")}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	body := `{"firstname":"Jane"}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/profile", strings.NewReader(body))
+	body := `{"firstName":"Jane"}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/profile", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
@@ -517,10 +659,10 @@ func TestUpdateProfileInternalServerError(t *testing.T) {
 
 func TestDeleteProfileInternalServerError(t *testing.T) {
 	svc := &mockService{err: errors.New("unexpected database error")}
-	verifier := &auth.MockVerifier{User: auth.TestUser()}
+	verifier := &stubVerifier{User: testUser()}
 	router := newTestRouter(svc, verifier)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/profile", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/profile", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	resp := httptest.NewRecorder()
 
@@ -532,15 +674,14 @@ func TestDeleteProfileInternalServerError(t *testing.T) {
 }
 
 func TestDeleteProfileConcurrent(t *testing.T) {
-	mockSvc := profilesvc.NewMockProfileService()
-	_, _ = mockSvc.Create(context.Background(), "user-123", profilesvc.CreateParams{
-		Firstname: "Test",
-		Lastname:  "User",
-		Email:     "test@example.com",
-		Terms:     true,
+	mockSvc := newMemoryStore()
+	_, _ = mockSvc.Create(t.Context(), "user-123", profilesvc.CreateParams{
+		FirstName:    "Test",
+		LastName:     "User",
+		ContactEmail: "test@example.com",
 	})
 
-	verifier := &auth.MockVerifier{
+	verifier := &stubVerifier{
 		User: &auth.FirebaseUser{UID: "user-123", Email: "test@example.com"},
 	}
 	router := newTestRouter(mockSvc, verifier)
@@ -551,7 +692,7 @@ func TestDeleteProfileConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	for range numGoroutines {
 		wg.Go(func() {
-			req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/profile", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/profile", nil)
 			req.Header.Set("Authorization", "Bearer valid-token")
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)

@@ -22,13 +22,17 @@ func Register(api huma.API, prefix string) {
 		Summary:     "List items with cursor-based pagination",
 		Description: "Returns a paginated list of items. Use the cursor from the Link header to navigate between pages.",
 		Tags:        []string{"Items"},
+		Errors: []int{
+			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
+		},
 	}, func(_ context.Context, input *ItemsListInput) (*ItemsListOutput, error) {
 		cursor, err := pagination.DecodeCursor(input.Cursor)
 		if err != nil {
 			return nil, huma.Error400BadRequest("invalid cursor format")
 		}
 
-		if cursor.Type != "" && cursor.Type != cursorType {
+		if input.Cursor != "" && cursor.Type != cursorType {
 			return nil, huma.Error400BadRequest("cursor type mismatch")
 		}
 

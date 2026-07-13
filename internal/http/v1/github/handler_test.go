@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,9 +15,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/janisto/huma-observability"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/janisto/huma-playground/internal/platform/pagination"
-	"github.com/janisto/huma-playground/internal/platform/respond"
 	githubsvc "github.com/janisto/huma-playground/internal/service/github"
 )
 
@@ -80,14 +82,17 @@ func (m *mockGitHubService) ListTags(_ context.Context, _, _ string) ([]githubsv
 var _ githubsvc.Service = (*mockGitHubService)(nil)
 
 func newTestRouter(svc githubsvc.Service) chi.Router {
+	return newTestRouterWithLogger(svc, zap.NewNop())
+}
+
+func newTestRouterWithLogger(svc githubsvc.Service, logger *zap.Logger) chi.Router {
 	router := chi.NewRouter()
 	router.Use(
 		chimiddleware.ClientIPFromRemoteAddr,
-		respond.Recoverer(),
 	)
 	api := humachi.New(router, huma.DefaultConfig("GitHubTest", "test"))
-	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{}))
-	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{}))
+	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{Logger: logger}))
+	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{Logger: logger}))
 	Register(api, svc, "")
 	return router
 }
@@ -150,7 +155,7 @@ func TestGetOwnerSuccess(t *testing.T) {
 	svc := &mockGitHubService{owner: testOwner()}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/octocat", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "get-owner-test")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -183,7 +188,7 @@ func TestGetOwnerNotFound(t *testing.T) {
 	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/unknown", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/unknown", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -200,11 +205,23 @@ func TestGetOwnerNotFound(t *testing.T) {
 	}
 }
 
+func TestGetOwnerRejectsInvalidLogin(t *testing.T) {
+	router := newTestRouter(&mockGitHubService{})
+	for _, owner := range []string{"invalid.name", "invalid--name", "invalid-"} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/"+owner, nil)
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		if resp.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s: expected 422, got %d: %s", owner, resp.Code, resp.Body.String())
+		}
+	}
+}
+
 func TestGetOwnerUpstreamError(t *testing.T) {
 	svc := &mockGitHubService{err: githubsvc.ErrUpstream}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/octocat", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -221,13 +238,59 @@ func TestGetOwnerUpstreamError(t *testing.T) {
 	}
 }
 
+func TestGitHubUnexpectedErrorIsLoggedOnce(t *testing.T) {
+	core, logs := observer.New(zap.ErrorLevel)
+	router := newTestRouterWithLogger(
+		&mockGitHubService{err: errors.New("unexpected transport error")},
+		zap.New(core),
+	)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", resp.Code, resp.Body.String())
+	}
+	entries := logs.FilterMessage("github upstream request failed").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected one GitHub failure log, got %d", len(entries))
+	}
+	if operation := entries[0].ContextMap()["operation"]; operation != "get_owner" {
+		t.Fatalf("unexpected operation field %#v", operation)
+	}
+}
+
+func TestGitHubTimeoutIsLoggedOnce(t *testing.T) {
+	core, logs := observer.New(zap.WarnLevel)
+	router := newTestRouterWithLogger(
+		&mockGitHubService{err: context.DeadlineExceeded},
+		zap.New(core),
+	)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", resp.Code, resp.Body.String())
+	}
+	entries := logs.FilterMessage("github upstream request timed out").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected one GitHub timeout log, got %d", len(entries))
+	}
+	if operation := entries[0].ContextMap()["operation"]; operation != "get_owner" {
+		t.Fatalf("unexpected operation field %#v", operation)
+	}
+}
+
 // --- ListOwnerRepos ---
 
 func TestListOwnerReposSuccess(t *testing.T) {
 	svc := &mockGitHubService{repos: []githubsvc.RepoSummary{testRepoSummary()}}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/octocat/repos", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat/repos", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "list-repos-test")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -252,7 +315,7 @@ func TestListOwnerReposNotFound(t *testing.T) {
 	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/unknown/repos", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/unknown/repos", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -265,7 +328,7 @@ func TestListOwnerReposUpstreamError(t *testing.T) {
 	svc := &mockGitHubService{err: githubsvc.ErrUpstream}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/octocat/repos", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat/repos", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -281,7 +344,7 @@ func TestGetRepoSuccess(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium",
 		nil,
@@ -309,6 +372,25 @@ func TestGetRepoSuccess(t *testing.T) {
 	}
 }
 
+func TestGetRepoRejectsDotSegments(t *testing.T) {
+	for _, repo := range []string{".", "..", "..."} {
+		t.Run(repo, func(t *testing.T) {
+			router := newTestRouter(&mockGitHubService{repo: testRepo()})
+			req := httptest.NewRequestWithContext(
+				t.Context(),
+				http.MethodGet,
+				"/github/repos/octocat/"+repo,
+				nil,
+			)
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+			if resp.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("expected 422, got %d: %s", resp.Code, resp.Body.String())
+			}
+		})
+	}
+}
+
 func TestGetRepoNilTopicsReturnsEmptyArray(t *testing.T) {
 	repo := testRepo()
 	repo.Topics = nil
@@ -316,7 +398,7 @@ func TestGetRepoNilTopicsReturnsEmptyArray(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium",
 		nil,
@@ -345,7 +427,7 @@ func TestGetRepoNotFound(t *testing.T) {
 	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/repos/octocat/unknown", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/repos/octocat/unknown", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -359,7 +441,7 @@ func TestGetRepoUpstreamError(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium",
 		nil,
@@ -382,7 +464,7 @@ func TestListActivitySuccess(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium/activity",
 		nil,
@@ -423,7 +505,7 @@ func TestListActivityWithPagination(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium/activity",
 		nil,
@@ -446,7 +528,7 @@ func TestListActivityInvalidCursor(t *testing.T) {
 	svc := &mockGitHubService{}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(),
+	req := httptest.NewRequestWithContext(t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium/activity?cursor=not-valid-base64!",
 		nil,
@@ -473,7 +555,7 @@ func TestListActivityCursorTypeMismatch(t *testing.T) {
 
 	cursor := pagination.Cursor{Type: "wrong-type", Value: "some-value"}.Encode()
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium/activity?cursor="+cursor,
 		nil,
@@ -494,12 +576,29 @@ func TestListActivityCursorTypeMismatch(t *testing.T) {
 	}
 }
 
+func TestListActivityCursorRequiresType(t *testing.T) {
+	svc := &mockGitHubService{}
+	router := newTestRouter(svc)
+	cursor := pagination.Cursor{Value: "some-value"}.Encode()
+	req := httptest.NewRequestWithContext(
+		t.Context(),
+		http.MethodGet,
+		"/github/repos/octocat/git-consortium/activity?cursor="+cursor,
+		nil,
+	)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", resp.Code, resp.Body.String())
+	}
+}
+
 func TestListActivityNotFound(t *testing.T) {
 	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/unknown/activity",
 		nil,
@@ -517,7 +616,7 @@ func TestListActivityUpstreamError(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium/activity",
 		nil,
@@ -537,7 +636,7 @@ func TestGetLanguagesSuccess(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium/languages",
 		nil,
@@ -570,7 +669,7 @@ func TestGetLanguagesNotFound(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/unknown/languages",
 		nil,
@@ -588,7 +687,7 @@ func TestGetLanguagesUpstreamError(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium/languages",
 		nil,
@@ -610,7 +709,7 @@ func TestListTagsSuccess(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium/tags",
 		nil,
@@ -643,7 +742,7 @@ func TestListTagsNotFound(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/unknown/tags",
 		nil,
@@ -661,7 +760,7 @@ func TestListTagsUpstreamError(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
-		context.Background(),
+		t.Context(),
 		http.MethodGet,
 		"/github/repos/octocat/git-consortium/tags",
 		nil,
@@ -680,7 +779,7 @@ func TestGetOwnerForbidden(t *testing.T) {
 	svc := &mockGitHubService{err: githubsvc.ErrForbidden}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/octocat", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -701,7 +800,7 @@ func TestGetOwnerRateLimited(t *testing.T) {
 	svc := &mockGitHubService{err: githubsvc.ErrRateLimited}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/octocat", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -727,7 +826,7 @@ func TestGetOwnerRateLimitedPropagatesRetryHeaders(t *testing.T) {
 	}}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/octocat", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -738,7 +837,7 @@ func TestGetOwnerRateLimitedPropagatesRetryHeaders(t *testing.T) {
 	if retryAfter := resp.Header().Get("Retry-After"); retryAfter != "60" {
 		t.Fatalf("expected Retry-After 60, got %q", retryAfter)
 	}
-	if reset := resp.Header().Get("X-RateLimit-Reset"); reset != "1700000000" {
+	if reset := resp.Header().Get("X-Ratelimit-Reset"); reset != "1700000000" {
 		t.Fatalf("expected X-RateLimit-Reset 1700000000, got %q", reset)
 	}
 }
@@ -749,7 +848,7 @@ func TestResponseContentType(t *testing.T) {
 	svc := &mockGitHubService{owner: testOwner()}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/octocat", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
@@ -765,7 +864,7 @@ func TestErrorProblemDetailsFormat(t *testing.T) {
 	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/github/owners/unknown", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/unknown", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 

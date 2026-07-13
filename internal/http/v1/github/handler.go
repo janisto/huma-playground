@@ -10,6 +10,8 @@ import (
 	"strconv"
 
 	"github.com/danielgtaylor/huma/v2"
+	obs "github.com/janisto/huma-observability"
+	"go.uber.org/zap"
 
 	"github.com/janisto/huma-playground/internal/platform/pagination"
 	"github.com/janisto/huma-playground/internal/platform/timeutil"
@@ -17,6 +19,17 @@ import (
 )
 
 const activityCursorType = "gh-activity"
+
+var githubErrors = []int{
+	http.StatusForbidden,
+	http.StatusNotFound,
+	http.StatusUnprocessableEntity,
+	http.StatusTooManyRequests,
+	http.StatusBadGateway,
+	http.StatusServiceUnavailable,
+}
+
+var githubActivityErrors = append([]int{http.StatusBadRequest}, githubErrors...)
 
 // Register wires GitHub routes into the provided API router.
 func Register(api huma.API, svc githubsvc.Service, prefix string) {
@@ -27,10 +40,11 @@ func Register(api huma.API, svc githubsvc.Service, prefix string) {
 		Summary:     "Get a GitHub user or organization",
 		Description: "Returns public profile information for the specified GitHub user or organization.",
 		Tags:        []string{"GitHub"},
+		Errors:      githubErrors,
 	}, func(ctx context.Context, input *OwnerGetInput) (*OwnerGetOutput, error) {
 		owner, err := svc.GetOwner(ctx, input.Owner)
 		if err != nil {
-			return nil, mapServiceError(err)
+			return nil, mapServiceError(ctx, "get_owner", err)
 		}
 		result := toHTTPOwner(owner)
 		return &OwnerGetOutput{Body: result}, nil
@@ -43,10 +57,11 @@ func Register(api huma.API, svc githubsvc.Service, prefix string) {
 		Summary:     "List repositories for a GitHub user",
 		Description: "Returns up to 30 repositories for the specified GitHub user or organization.",
 		Tags:        []string{"GitHub"},
+		Errors:      githubErrors,
 	}, func(ctx context.Context, input *OwnerGetInput) (*OwnerReposListOutput, error) {
 		repos, err := svc.ListRepos(ctx, input.Owner)
 		if err != nil {
-			return nil, mapServiceError(err)
+			return nil, mapServiceError(ctx, "list_owner_repositories", err)
 		}
 		httpRepos := toHTTPRepoSummaries(repos)
 		return &OwnerReposListOutput{Body: OwnerReposListData{
@@ -62,10 +77,11 @@ func Register(api huma.API, svc githubsvc.Service, prefix string) {
 		Summary:     "Get a GitHub repository",
 		Description: "Returns detailed information for the specified GitHub repository.",
 		Tags:        []string{"GitHub"},
+		Errors:      githubErrors,
 	}, func(ctx context.Context, input *RepoGetInput) (*RepoGetOutput, error) {
 		repo, err := svc.GetRepo(ctx, input.Owner, input.Repo)
 		if err != nil {
-			return nil, mapServiceError(err)
+			return nil, mapServiceError(ctx, "get_repository", err)
 		}
 		result := toHTTPRepo(repo)
 		return &RepoGetOutput{Body: result}, nil
@@ -78,19 +94,20 @@ func Register(api huma.API, svc githubsvc.Service, prefix string) {
 		Summary:     "List repository activity",
 		Description: "Returns paginated activity events for the specified GitHub repository.",
 		Tags:        []string{"GitHub"},
+		Errors:      githubActivityErrors,
 	}, func(ctx context.Context, input *RepoActivityListInput) (*RepoActivityListOutput, error) {
 		cursor, err := pagination.DecodeCursor(input.Cursor)
 		if err != nil {
 			return nil, huma.Error400BadRequest("invalid cursor format")
 		}
 
-		if cursor.Type != "" && cursor.Type != activityCursorType {
+		if input.Cursor != "" && cursor.Type != activityCursorType {
 			return nil, huma.Error400BadRequest("cursor type mismatch")
 		}
 
 		page, err := svc.ListActivity(ctx, input.Owner, input.Repo, input.DefaultLimit(), cursor.Value)
 		if err != nil {
-			return nil, mapServiceError(err)
+			return nil, mapServiceError(ctx, "list_repository_activity", err)
 		}
 
 		var linkHeader string
@@ -124,10 +141,11 @@ func Register(api huma.API, svc githubsvc.Service, prefix string) {
 		Summary:     "Get repository languages",
 		Description: "Returns programming languages used in the specified repository with byte counts.",
 		Tags:        []string{"GitHub"},
+		Errors:      githubErrors,
 	}, func(ctx context.Context, input *RepoGetInput) (*RepoLanguagesGetOutput, error) {
 		languages, err := svc.ListLanguages(ctx, input.Owner, input.Repo)
 		if err != nil {
-			return nil, mapServiceError(err)
+			return nil, mapServiceError(ctx, "get_repository_languages", err)
 		}
 		return &RepoLanguagesGetOutput{Body: LanguagesData{
 			Languages: toHTTPLanguages(languages),
@@ -141,10 +159,11 @@ func Register(api huma.API, svc githubsvc.Service, prefix string) {
 		Summary:     "List repository tags",
 		Description: "Returns up to 30 tags for the specified GitHub repository.",
 		Tags:        []string{"GitHub"},
+		Errors:      githubErrors,
 	}, func(ctx context.Context, input *RepoGetInput) (*RepoTagsListOutput, error) {
 		tags, err := svc.ListTags(ctx, input.Owner, input.Repo)
 		if err != nil {
-			return nil, mapServiceError(err)
+			return nil, mapServiceError(ctx, "list_repository_tags", err)
 		}
 		httpTags := toHTTPTags(tags)
 		return &RepoTagsListOutput{Body: RepoTagsListData{
@@ -154,7 +173,12 @@ func Register(api huma.API, svc githubsvc.Service, prefix string) {
 	})
 }
 
-func mapServiceError(err error) error {
+func mapServiceError(ctx context.Context, operation string, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		obs.Logger(ctx).Warn("github upstream request timed out",
+			zap.String("operation", operation), zap.Error(err))
+		return huma.Error503ServiceUnavailable("upstream service temporarily unavailable")
+	}
 	if upstreamErr, ok := errors.AsType[*githubsvc.UpstreamError](err); ok {
 		switch upstreamErr.Kind {
 		case githubsvc.UpstreamErrorKindNotFound:
@@ -166,7 +190,7 @@ func mapServiceError(err error) error {
 				headers.Set("Retry-After", upstreamErr.RetryAfter)
 			}
 			if upstreamErr.RateLimitReset != "" {
-				headers.Set("X-RateLimit-Reset", upstreamErr.RateLimitReset)
+				headers.Set("X-Ratelimit-Reset", upstreamErr.RateLimitReset)
 			}
 			if len(headers) > 0 {
 				return huma.ErrorWithHeaders(rateLimitErr, headers)
@@ -175,6 +199,8 @@ func mapServiceError(err error) error {
 		case githubsvc.UpstreamErrorKindForbidden:
 			return huma.Error403Forbidden("access denied")
 		default:
+			obs.Logger(ctx).Error("github upstream request failed",
+				zap.String("operation", operation), zap.Error(err))
 			return huma.Error502BadGateway("upstream error")
 		}
 	}
@@ -188,6 +214,8 @@ func mapServiceError(err error) error {
 	case errors.Is(err, githubsvc.ErrForbidden):
 		return huma.Error403Forbidden("access denied")
 	default:
+		obs.Logger(ctx).Error("github upstream request failed",
+			zap.String("operation", operation), zap.Error(err))
 		return huma.Error502BadGateway("upstream error")
 	}
 }

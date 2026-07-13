@@ -38,17 +38,19 @@ Huma Playground is a minimal REST API skeleton built with [Huma](https://github.
 
 ### Key Features
 
-- Chi middleware stack with security headers, CORS, real IP detection, request size limits, and panic recovery
+- Chi middleware stack with untrusted forwarding-header removal, security headers, environment-aware CORS, direct-peer IP recording, request size limits, and panic recovery
 - Huma observability middleware via `github.com/janisto/huma-observability` for router-wide request IDs, Huma access logs, request-scoped Zap loggers, and trace metadata enrichment
 - Plain response bodies with RFC 9457 Problem Details for errors
 - Content negotiation supporting JSON and CBOR formats
 - Cursor-based pagination with RFC 8288 Link headers
 - Firebase Authentication with JWT validation via Huma middleware
-- Firestore integration with transaction-safe CRUD operations and audit logging
+- Firestore integration with atomic create, transaction-safe partial update, existence-checked delete, and audit logging
+- Explicit offline, emulator, and live Firebase modes with fail-closed protected routes
+- Separate minimal Go Cloud Run function module with a local Functions Framework runner
 
 ### Tech & Tooling
 
-- Language/runtime: Go 1.26+
+- Language/runtime: Go 1.26.5+ (repository pin: 1.26.5)
 - Frameworks/libs: Huma v2, Chi v5, Zap, go-chi/cors, Firebase Admin SDK
 - Testing: Go standard `testing` package, Firebase Emulators
 - Task runner: [Just](https://github.com/casey/just) (required for pinned Go toolchain)
@@ -61,21 +63,28 @@ Huma Playground is a minimal REST API skeleton built with [Huma](https://github.
 The project includes a `Justfile` for common development tasks. Run `just` to list available commands.
 
 Key recipes:
-- `just build` - Build the application
+- `just build` - Build both Go modules
 - `just run` - Run the server
-- `just test` - Run all tests
+- `just test` - Test both Go modules
+- `just test-race` - Run both modules with the race detector
+- `just test-integration-ci` - Require emulator-backed tests and generate separate integration coverage
+- `just functions-smoke` - Probe the registered function target
 - `just coverage` - Run tests and generate coverage report
-- `just lint` - Run linter
+- `just lint` - Lint both Go modules
+- `just fmt-check` - Reject formatting drift
+- `just tidy-check` - Reject module-file drift
+- `just workflow-check` - Validate GitHub Actions
 - `just fmt` - Apply formatters
 - `just fix` - Run linter and apply formatters
 - `just check` - Full check (build + test + lint)
 - `just qa` - Quality assurance (tidy + fix + build + test)
-- `just vuln` - Check for vulnerabilities
+- `just vuln` - Check both modules for reachable vulnerabilities
+- `just container-smoke` - Build and probe the final non-root image
 - `just install` - Download module dependencies (alias for download)
 - `just fresh` - Recreate project from clean state
 - `just emulators` - Start Firebase emulators (Auth + Firestore)
 
-The Justfile uses `set dotenv-load` so all recipes automatically load `.env`. This means `just test` and `just coverage` pick up emulator environment variables (e.g. `FIRESTORE_EMULATOR_HOST`) without manual export, ensuring integration tests run when emulators are available. The `.env` also sets `GOTOOLCHAIN` to pin the Go version, preventing automatic upgrades from a newer local Go installation. Always prefer `just` recipes over raw `go` or `golangci-lint` commands:
+The Justfile uses `set dotenv-load` so all recipes automatically load `.env`, including the repository's `GOTOOLCHAIN` pin. Emulator tests configure their fixed local endpoints through `internal/testutil` and do not depend on `.env`; emulator variables in `.env` are only needed when running the application itself in emulator mode. Always prefer `just` recipes over raw `go` or `golangci-lint` commands.
 
 ---
 
@@ -83,7 +92,7 @@ The Justfile uses `set dotenv-load` so all recipes automatically load `.env`. Th
 
 ### Requirements
 
-- Go 1.26+
+- Go 1.26.5+
 - Just
 - Firebase CLI (for emulators): `npm install -g firebase-tools`
 
@@ -108,7 +117,7 @@ just run
 The server starts on port 8080 with endpoints:
 - `http://localhost:8080/health` - health probe
 - `http://localhost:8080/v1/api-docs` - interactive API explorer
-- `http://localhost:8080/v1/openapi` - OpenAPI schema
+- `http://localhost:8080/v1/openapi.json` - OpenAPI schema
 - `http://localhost:8080/v1/github/owners/{owner}` - GitHub owner info
 - `http://localhost:8080/v1/github/owners/{owner}/repos` - GitHub owner repos
 - `http://localhost:8080/v1/github/repos/{owner}/{repo}` - GitHub repo details
@@ -140,6 +149,8 @@ The coverage recipe runs `go test -v -covermode=atomic -coverpkg=./... -coverpro
 
 The project uses [golangci-lint](https://golangci-lint.run/) v2 for static analysis and code formatting. Configuration is defined in `.golangci.yml`.
 
+The enabled checks emphasize correctness and reproducibility: error wrapping and nil handling, context and response-body safety, canonical HTTP headers, Zap call structure, duration and slice mistakes, receiver consistency, modern testing APIs, compiler directives, security-sensitive Unicode, and unused or wasted work. Avoid subjective complexity thresholds and blanket exclusions.
+
 Run linter:
 
 ```bash
@@ -163,7 +174,10 @@ just fix
 ## Project Structure
 
 ```
+.agents/skills/        # Reusable project-specific agent skills
+.github/agents/       # GitHub Copilot custom-agent profiles
 cmd/server/            # Application entrypoint and HTTP server bootstrap
+functions/             # Independent Functions Framework Go module
 internal/http/         # HTTP transport layer
   health/              # Health check handler (unversioned)
   v1/                  # Versioned API (v1)
@@ -185,6 +199,39 @@ internal/service/      # Business logic and data access
   profile/             # Profile service with Firestore backend
 internal/testutil/     # Test utilities (emulator helpers)
 ```
+
+Repository-wide instructions live in this file. Task-specific, portable skills live at
+`.agents/skills/<skill-name>/SKILL.md`. GitHub Copilot custom-agent profiles remain in `.github/agents/` because that is
+the product's supported discovery location.
+
+The repository follows these upstream conventions:
+
+- [AGENTS.md](https://github.com/agentsmd/agents.md) is the canonical open format for repository agent instructions,
+  stewarded by the Agentic AI Foundation under the Linux Foundation.
+- [Agent Skills](https://github.com/agentskills/agentskills) is the canonical specification and documentation source for
+  the required `SKILL.md` filename and `name` and `description` frontmatter. The rendered
+  [format specification](https://agentskills.io/specification) provides detailed schema and validation rules, while
+  [GitHub's Agent Skills documentation](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) lists
+  `.agents/skills/` as a supported project discovery location.
+
+Use `readme-maintenance` for README audits and `openapi-contract` for public API contract work. Do not duplicate these
+workflows in custom-agent profiles. Each skill also keeps Codex UI metadata in `agents/openai.yaml`; regenerate it with
+the `skill-creator` tooling whenever a skill name, description, or default prompt changes.
+
+Current task-specific guidance:
+
+| Name | Location | Purpose |
+|---|---|---|
+| `huma-endpoint` | `.agents/skills/huma-endpoint/` | Implement or change Huma v2 endpoints |
+| `go-testing` | `.agents/skills/go-testing/` | Write and review tests in either Go module |
+| `pagination-endpoint` | `.agents/skills/pagination-endpoint/` | Implement cursor-paginated list endpoints |
+| `readme-maintenance` | `.agents/skills/readme-maintenance/` | Reconcile README claims with the repository |
+| `openapi-contract` | `.agents/skills/openapi-contract/` | Maintain runtime-generated OpenAPI and Stoplight contracts |
+| `security-review` | `.github/agents/security-review.agent.md` | Run an evidence-based GitHub Copilot security audit with a prompt-level read-only boundary |
+
+Repository automation under `.github/` independently checks both Go modules, required Firebase emulators,
+vulnerabilities, the final container, and root and function lint. Labeler configuration treats `.agents/**/*.md` and
+`.github/**/*.md` as documentation.
 
 ---
 
@@ -290,6 +337,8 @@ obs.Logger(ctx).Error("message", zap.Error(err), zap.String("key", "value"))
 
 `obs.Logger(ctx)` preserves request metadata installed by router-wide `obs.HTTPRequestContext` and Huma `obs.RequestContext`. It intentionally returns a no-op logger when no request logger is installed. That means audit helpers and service warning logs are valid only for request-driven paths; direct service calls, background jobs, scripts, and tests using `context.Background()` must use an explicit process logger instead. `obs.AccessLogger` emits Huma operation-aware access logs. Use `internal/platform/middleware.AccessLogger` only for Chi-only route groups and Chi error handlers to avoid duplicate `/v1` access logs. Use the startup logger returned by `obs.NewLogger` for process-level logs outside a request context.
 
+At HTTP dependency boundaries, log unavailable/time-out failures at warning level and unexpected failures at error level exactly once, including a stable operation name and the underlying error. Keep expected domain outcomes such as not found or already exists out of duplicate error logs. Never return dependency internals to clients or log tokens, request bodies, profile data, or other PII.
+
 ### Adding New Routes
 
 1. Create a new file under `internal/http/v1` (e.g., `users/handler.go`)
@@ -297,7 +346,7 @@ obs.Logger(ctx).Error("message", zap.Error(err), zap.String("key", "value"))
 3. Add a registration function and call it from `routes.Register`
 4. Log within handlers using `obs.Logger(ctx)`
 5. Return errors using Huma's error helpers
-6. Use `respond.WriteRedirect()` for redirects
+6. Use Huma operations for API responses and `http.Redirect` only for deliberate Chi-level redirects
 
 ### Handler Pattern
 
@@ -410,6 +459,20 @@ type firestoreProfile struct {
 - Validate all input; never sanitize (reject invalid input, don't transform it)
 - Use Huma's built-in validation tags (`minimum`, `maximum`, `pattern`, `required`)
 - Return 400 for malformed syntax; 422 for validation failures on valid syntax
+- Reject path values that URL resolution can reinterpret, including repository names made only of dot segments
+
+### OpenAPI Error Metadata
+
+- List only status codes that the operation can reach through its handler and applicable middleware
+- Do not advertise request-body failures such as 413 or 415 on bodyless GET operations
+- Add exact contract assertions when a shared error list could accidentally broaden operation metadata
+
+### Firestore Mutations
+
+- Use `DocumentRef.Create` for create-if-absent behavior
+- Use transactions only when an update must read current state before writing narrow fields
+- Use `DocumentRef.Delete` with `firestore.Exists` for delete-if-present behavior; do not add a read-before-delete transaction
+- Map Firestore precondition/not-found results to the service's not-found sentinel and preserve dependency error classification
 
 ### HTTP Methods
 
@@ -491,7 +554,7 @@ Use Huma error helpers:
 
 ### Pagination
 
-Use cursor-based pagination via `internal/pagination`. Invalid cursors must return 400 Bad Request per JSON:API cursor pagination best practices.
+Use cursor-based pagination via `internal/platform/pagination`. Invalid cursors must return 400 Bad Request per JSON:API cursor pagination best practices.
 
 ```go
 // Input struct with pagination params
@@ -515,7 +578,7 @@ if err != nil {
     return nil, huma.Error400BadRequest("invalid cursor format")
 }
 
-if cursor.Type != "" && cursor.Type != listCursorType {
+if input.Cursor != "" && cursor.Type != listCursorType {
     return nil, huma.Error400BadRequest("cursor type mismatch")
 }
 
@@ -545,31 +608,13 @@ Links provided via HTTP `Link` header per RFC 8288.
 
 ```go
 import (
-    "github.com/janisto/huma-observability"
-    "go.uber.org/zap"
-
-    appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
+    "github.com/danielgtaylor/huma/v2/humatest"
 )
 
 func TestMyFeature(t *testing.T) {
-    logger := zap.NewNop()
-    router := chi.NewRouter()
-    httpAccessLogger := appmiddleware.AccessLogger()
-    router.NotFound(httpAccessLogger(respond.NotFoundHandler()).ServeHTTP)
-    router.Use(
-        obs.HTTPRequestContext(obs.HTTPRequestContextConfig{Logger: logger}),
-        respond.Recoverer(logger),
-        chimiddleware.ClientIPFromRemoteAddr,
-    )
-    api := humachi.New(router, huma.DefaultConfig("Test", "test"))
-    api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{Logger: logger}))
-    api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{Logger: logger}))
-    routes.Register(api)
-
-    req := httptest.NewRequest(http.MethodGet, "/hello", nil)
-    req.Header.Set(chimiddleware.RequestIDHeader, "test-trace-id")
-    resp := httptest.NewRecorder()
-    router.ServeHTTP(resp, req)
+    _, api := humatest.New(t)
+    hello.Register(api)
+    resp := api.Get("/hello")
 
     if resp.Code != http.StatusOK {
         t.Fatalf("expected 200 OK, got %d", resp.Code)
@@ -584,6 +629,8 @@ func TestMyFeature(t *testing.T) {
     }
 }
 ```
+
+Use the real Chi/Huma composition in `cmd/server` tests when middleware order, request IDs, mounts, 404/405 handling, documentation, or schema links are part of the behavior under test.
 
 ### Error Response Testing
 
@@ -618,39 +665,44 @@ Emulator configuration (from `firebase.json`):
 | Service | Port |
 |---------|------|
 | Auth | 7110 |
-| Functions | 7120 |
 | Firestore | 7130 |
-| Storage | 7140 |
 | Emulator UI | 4000 |
 
 Integration test pattern with emulator detection:
 
 ```go
-import "github.com/janisto/huma-playground/internal/testutil"
+import (
+    "cloud.google.com/go/firestore"
+
+    "github.com/janisto/huma-playground/internal/testutil"
+)
 
 func TestFirestoreOperation(t *testing.T) {
-    ctx := context.Background()
-    client := testutil.SetupEmulator(t, ctx)
-    t.Cleanup(func() { testutil.ClearFirestore(t, ctx, client) })
+    testutil.SkipIfEmulatorUnavailable(t)
+    testutil.SetupEmulator(t)
+    testutil.ClearFirestore(t)
+
+    client, err := firestore.NewClient(t.Context(), testutil.ProjectID)
+    if err != nil {
+        t.Fatalf("create Firestore client: %v", err)
+    }
+    defer func() {
+        testutil.ClearFirestore(t)
+        if err := client.Close(); err != nil {
+            t.Errorf("close Firestore client: %v", err)
+        }
+    }()
 
     // Test operations using client
 }
 ```
 
-Tests auto-skip when emulators are unavailable. The `demo-test-project` project ID triggers emulator-only mode (SDK will only communicate with local emulators).
-
-### Mock Service Testing
-
-For unit tests that don't require Firestore, use mock implementations:
-
-```go
-import "github.com/janisto/huma-playground/internal/service/profile"
-
-func TestHandler(t *testing.T) {
-    svc := profile.NewMockProfileService()
-    // Inject svc into handler for testing
-}
-```
+Tests auto-skip when emulators are unavailable locally. `just test-integration-ci`
+sets `REQUIRE_FIREBASE_EMULATORS=1`, so the required lane fails instead of
+skipping. Use narrow fakes declared in the consuming `*_test.go` file; production
+packages must not export mocks or test fixtures. Keep emulator helper status and
+bounded-diagnostic behavior covered by ordinary unit tests; use the real emulators
+for Firebase SDK, authentication, cleanup, CRUD, and concurrency behavior.
 
 ---
 
@@ -668,7 +720,10 @@ func TestHandler(t *testing.T) {
 - Access config through environment variables; don't hardcode secrets in business logic.
 - Don't log secrets or PII; ensure logs redact sensitive fields.
 - Typical env vars:
-  - `FIREBASE_PROJECT_ID` (use `demo-*` prefix for emulator-only mode in development)
+  - `FIREBASE_MODE` (`offline`, `emulator`, or `live`)
+  - `FIREBASE_PROJECT_ID`
+  - `FIREBASE_AUTH_EMULATOR_HOST` and `FIRESTORE_EMULATOR_HOST` (configure together as valid `host:port` authorities)
+  - `CORS_ALLOWED_ORIGINS` (required outside development)
   - `GITHUB_TOKEN` (optional GitHub personal access token for higher rate limits)
   - `GOOGLE_APPLICATION_CREDENTIALS` (path to service account JSON; uses ADC if not set)
   - `GOOGLE_CLOUD_PROJECT`, `GCP_PROJECT`, `GCLOUD_PROJECT`, or `PROJECT_ID` (for Cloud Trace correlation)
@@ -684,9 +739,7 @@ Use Huma's security mechanism with Firebase Auth middleware for protected routes
 ```go
 import "github.com/janisto/huma-playground/internal/platform/auth"
 
-func Register(api huma.API, authClient auth.Client) {
-    auth.RegisterSecurityScheme(api)
-
+func registerProfile(api huma.API) {
     huma.Register(api, huma.Operation{
         OperationID: "get-profile",
         Method:      http.MethodGet,
@@ -695,6 +748,10 @@ func Register(api huma.API, authClient auth.Client) {
     }, handleGetProfile)
 }
 ```
+
+`cmd/server/application.go` registers the bearer scheme, and
+`internal/http/v1/routes/routes.go` installs `auth.NewAuthMiddleware` once for
+the Huma router. Handler packages declare only the security requirement.
 
 ### Accessing User in Handlers
 
@@ -716,7 +773,7 @@ func handleGetProfile(ctx context.Context, _ *struct{}) (*ProfileOutput, error) 
 - Never commit secrets or sensitive data
 - Do not modify `go.mod` or `go.sum` without explicit request
 - Use Huma's built-in error helpers for error responses
-- Use `internal/respond` handlers for Chi-level error handling (404, 405, panic recovery)
+- Use `internal/platform/respond` for Chi-level 404, 405, and panic recovery; it delegates serialization and schema links to the configured Huma API
 - Do not add new dependencies without justification
 
 ---

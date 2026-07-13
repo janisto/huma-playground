@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -158,7 +157,7 @@ func TestNewFirebaseVerifier(t *testing.T) {
 	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	config := &firebase.Config{ProjectID: testutil.ProjectID}
 	fbApp, err := firebase.NewApp(ctx, config)
 	if err != nil {
@@ -180,11 +179,19 @@ func TestNewFirebaseVerifier(t *testing.T) {
 	}
 }
 
+func TestFirebaseVerifierRejectsMissingClient(t *testing.T) {
+	for _, verifier := range []*FirebaseVerifier{nil, NewFirebaseVerifier(nil)} {
+		if _, err := verifier.Verify(t.Context(), "token"); !errors.Is(err, ErrAuthUnavailable) {
+			t.Fatalf("expected ErrAuthUnavailable, got %v", err)
+		}
+	}
+}
+
 func TestFirebaseVerifierVerifyValidToken(t *testing.T) {
 	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	testutil.ClearAccounts(t)
 
 	config := &firebase.Config{ProjectID: testutil.ProjectID}
@@ -217,7 +224,7 @@ func TestFirebaseVerifierVerifyInvalidToken(t *testing.T) {
 	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	config := &firebase.Config{ProjectID: testutil.ProjectID}
 	fbApp, err := firebase.NewApp(ctx, config)
@@ -243,9 +250,9 @@ func TestFirebaseVerifierVerifyInvalidToken(t *testing.T) {
 func TestFirebaseVerifierVerifyRevokedToken(t *testing.T) {
 	testutil.SkipIfEmulatorUnavailable(t)
 	testutil.SetupEmulator(t)
-	testutil.ClearEmulators(t)
+	testutil.ClearAccounts(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	config := &firebase.Config{ProjectID: testutil.ProjectID}
 	fbApp, err := firebase.NewApp(ctx, config)
@@ -279,7 +286,7 @@ func TestFirebaseVerifierVerifyDisabledUser(t *testing.T) {
 	testutil.SetupEmulator(t)
 	testutil.ClearAccounts(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	config := &firebase.Config{ProjectID: testutil.ProjectID}
 	fbApp, err := firebase.NewApp(ctx, config)

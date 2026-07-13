@@ -172,3 +172,15 @@ func TestDecodeCursorPaddingVariations(t *testing.T) {
 		})
 	}
 }
+
+func FuzzDecodeCursor(f *testing.F) {
+	f.Add("")
+	f.Add("not-base64")
+	f.Add(Cursor{Type: "item", Value: "item-001"}.Encode())
+	f.Fuzz(func(t *testing.T, input string) {
+		cursor, err := DecodeCursor(input)
+		if err == nil && input != "" && cursor.Encode() == "" {
+			t.Fatal("valid non-empty cursor encoded to empty string")
+		}
+	})
+}

@@ -1,152 +1,80 @@
 package timeutil
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
-// RFC3339Millis is RFC 3339 UTC with fixed millisecond precision.
-// Use this format for consistent timestamp output across the API.
 const RFC3339Millis = "2006-01-02T15:04:05.000Z"
 
-// RFC3339Micros is RFC 3339 UTC with fixed microsecond precision.
-// Use this format for log timestamps where higher precision is needed.
-const RFC3339Micros = "2006-01-02T15:04:05.000000Z"
-
-// Time wraps time.Time to ensure consistent RFC 3339 millisecond precision
-// in JSON and CBOR marshaling. Output format is always "2024-01-15T10:30:00.000Z".
-//
-// Null handling: When unmarshaling JSON null, the existing value is preserved
-// (not zeroed). This matches the behavior of the standard library's time.Time.
+// Time serializes time.Time in UTC with fixed millisecond precision.
 type Time struct {
 	time.Time
 }
 
-// MarshalJSON implements json.Marshaler with fixed millisecond precision.
 func (t Time) MarshalJSON() ([]byte, error) {
-	return []byte(`"` + t.UTC().Format(RFC3339Millis) + `"`), nil
+	return json.Marshal(t.UTC().Format(RFC3339Millis))
 }
 
-// UnmarshalJSON implements json.Unmarshaler, accepting RFC 3339 variants.
-// JSON null preserves the existing value, matching time.Time stdlib behavior.
 func (t *Time) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
 		return nil
 	}
-	s := string(data)
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		s = s[1 : len(s)-1]
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
 	}
-	parsed, err := time.Parse(time.RFC3339Nano, s)
-	if err != nil {
-		parsed, err = time.Parse(time.RFC3339, s)
-		if err != nil {
-			return err
-		}
-	}
-	t.Time = parsed
-	return nil
+	return t.parse(value)
 }
 
-// MarshalCBOR implements cbor.Marshaler with fixed millisecond precision.
-// Encodes as CBOR tag 0 (standard date/time string per RFC 8949 section 3.4.1).
 func (t Time) MarshalCBOR() ([]byte, error) {
-	s := t.UTC().Format(RFC3339Millis)
-	data := make([]byte, 0, 2+len(s))
-	data = append(data, 0xc0) // tag 0
-	data = appendCBORTextString(data, s)
-	return data, nil
+	return cbor.Marshal(cbor.Tag{
+		Number:  0,
+		Content: t.UTC().Format(RFC3339Millis),
+	})
 }
 
-// UnmarshalCBOR implements cbor.Unmarshaler, accepting CBOR tag 0 date/time
-// strings and bare text strings.
 func (t *Time) UnmarshalCBOR(data []byte) error {
 	if len(data) == 0 {
 		return errors.New("timeutil: empty CBOR data")
 	}
-	// Strip optional tag 0 (0xc0).
-	if data[0] == 0xc0 {
-		data = data[1:]
+	var value any
+	if err := cbor.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("timeutil: decode CBOR: %w", err)
 	}
-	s, err := decodeCBORTextString(data)
+	switch typed := value.(type) {
+	case time.Time:
+		t.Time = typed
+		return nil
+	case cbor.Tag:
+		if typed.Number != 0 {
+			return fmt.Errorf("timeutil: expected date/time tag 0, got %d", typed.Number)
+		}
+		text, ok := typed.Content.(string)
+		if !ok {
+			return errors.New("timeutil: expected tagged text string")
+		}
+		return t.parse(text)
+	case string:
+		return t.parse(typed)
+	default:
+		return errors.New("timeutil: expected CBOR text string")
+	}
+}
+
+func (t *Time) parse(value string) error {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
 		return err
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, s)
-	if err != nil {
-		parsed, err = time.Parse(time.RFC3339, s)
-		if err != nil {
-			return err
-		}
 	}
 	t.Time = parsed
 	return nil
 }
 
-// appendCBORTextString appends a CBOR text string (major type 3) to dst.
-func appendCBORTextString(dst []byte, s string) []byte {
-	n := uint(len(s))
-	switch {
-	case n <= 23:
-		dst = append(dst, 0x60+byte(n))
-	case n <= 0xff:
-		dst = append(dst, 0x78, byte(n))
-	case n <= 0xffff:
-		dst = append(dst, 0x79, byte(n>>8&0xff), byte(n&0xff))
-	default:
-		dst = append(dst, 0x7a, byte(n>>24&0xff), byte(n>>16&0xff), byte(n>>8&0xff), byte(n&0xff))
-	}
-	return append(dst, s...)
-}
-
-// decodeCBORTextString decodes a CBOR text string (major type 3).
-func decodeCBORTextString(data []byte) (string, error) {
-	if len(data) == 0 {
-		return "", errors.New("timeutil: empty CBOR text string")
-	}
-	major := data[0] & 0xe0
-	if major != 0x60 {
-		return "", errors.New("timeutil: expected CBOR text string")
-	}
-	info := data[0] & 0x1f
-	var offset, length int
-	switch {
-	case info <= 23:
-		length = int(info)
-		offset = 1
-	case info == 24:
-		if len(data) < 2 {
-			return "", errors.New("timeutil: truncated CBOR length")
-		}
-		length = int(data[1])
-		offset = 2
-	case info == 25:
-		if len(data) < 3 {
-			return "", errors.New("timeutil: truncated CBOR length")
-		}
-		length = int(data[1])<<8 | int(data[2])
-		offset = 3
-	case info == 26:
-		if len(data) < 5 {
-			return "", errors.New("timeutil: truncated CBOR length")
-		}
-		length = int(data[1])<<24 | int(data[2])<<16 | int(data[3])<<8 | int(data[4])
-		offset = 5
-	default:
-		return "", errors.New("timeutil: unsupported CBOR text string length encoding")
-	}
-	if len(data) < offset+length {
-		return "", errors.New("timeutil: truncated CBOR text string")
-	}
-	return string(data[offset : offset+length]), nil //nolint:gosec // G602 false positive: bounds checked above
-}
-
-// NewTime creates a Time from a standard time.Time.
 func NewTime(t time.Time) Time {
 	return Time{Time: t}
-}
-
-// Now returns the current time as a Time.
-func Now() Time {
-	return Time{Time: time.Now()}
 }

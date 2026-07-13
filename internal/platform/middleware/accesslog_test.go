@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +23,7 @@ func TestAccessLoggerLogsHTTPRequest(t *testing.T) {
 		})),
 	)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ready", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "access-req")
 	req.Header.Set("User-Agent", "test-agent")
 	req.RemoteAddr = "203.0.113.10:12345"
@@ -60,7 +59,7 @@ func TestAccessLoggerLogsPanicStatusAndRepanics(t *testing.T) {
 			panic("boom")
 		})),
 	)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/panic", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/panic", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "panic-req")
 	resp := httptest.NewRecorder()
 
@@ -86,7 +85,7 @@ func TestAccessLoggerLogsImplicitOK(t *testing.T) {
 	handler := obs.HTTPRequestContext(obs.HTTPRequestContextConfig{Logger: logger})(
 		AccessLogger()(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})),
 	)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ok", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ok", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "ok-req")
 	req.RemoteAddr = ""
 	resp := httptest.NewRecorder()
@@ -114,7 +113,7 @@ func TestAccessLoggerRepanicsAbortHandlerWithoutLogging(t *testing.T) {
 			panic(http.ErrAbortHandler)
 		})),
 	)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/abort", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/abort", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "abort-req")
 	resp := httptest.NewRecorder()
 

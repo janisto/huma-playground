@@ -1,7 +1,6 @@
 package audit
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -24,7 +23,7 @@ func TestLogEventUsesRequestLogger(t *testing.T) {
 		}),
 	)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/audit", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/audit", nil)
 	req.Header.Set(chimiddleware.RequestIDHeader, "audit-req")
 	resp := httptest.NewRecorder()
 

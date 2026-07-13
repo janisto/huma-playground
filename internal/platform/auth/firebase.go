@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	fbauth "firebase.google.com/go/v4/auth"
+	"firebase.google.com/go/v4/errorutils"
 )
 
 // FirebaseUser represents an authenticated user.
@@ -35,6 +36,9 @@ var (
 	// ErrCertificateFetch indicates a network error fetching public keys.
 	// This should result in HTTP 503 (service unavailable).
 	ErrCertificateFetch = errors.New("failed to fetch certificates")
+
+	// ErrAuthUnavailable indicates an authentication dependency failure.
+	ErrAuthUnavailable = errors.New("authentication service unavailable")
 )
 
 // Verifier validates tokens and returns user information.
@@ -54,21 +58,30 @@ func NewFirebaseVerifier(client *fbauth.Client) *FirebaseVerifier {
 
 // Verify validates a Firebase ID token and checks for revocation.
 func (v *FirebaseVerifier) Verify(ctx context.Context, idToken string) (*FirebaseUser, error) {
+	if v == nil || v.client == nil {
+		return nil, ErrAuthUnavailable
+	}
 	token, err := v.client.VerifyIDTokenAndCheckRevoked(ctx, idToken)
 	if err != nil {
 		switch {
 		case fbauth.IsCertificateFetchFailed(err):
-			return nil, ErrCertificateFetch
+			return nil, errors.Join(ErrCertificateFetch, ErrAuthUnavailable, err)
 		case fbauth.IsIDTokenExpired(err):
-			return nil, ErrTokenExpired
+			return nil, errors.Join(ErrTokenExpired, err)
 		case fbauth.IsIDTokenRevoked(err):
-			return nil, ErrTokenRevoked
+			return nil, errors.Join(ErrTokenRevoked, err)
 		case fbauth.IsUserDisabled(err):
-			return nil, ErrUserDisabled
+			return nil, errors.Join(ErrUserDisabled, err)
 		case fbauth.IsIDTokenInvalid(err):
-			return nil, ErrInvalidToken
+			return nil, errors.Join(ErrInvalidToken, err)
+		case errors.Is(err, context.Canceled), errorutils.IsCancelled(err):
+			return nil, errors.Join(context.Canceled, err)
+		case errors.Is(err, context.DeadlineExceeded), errorutils.IsDeadlineExceeded(err):
+			return nil, errors.Join(ErrAuthUnavailable, context.DeadlineExceeded, err)
+		case errorutils.IsUnavailable(err), errorutils.IsInternal(err), errorutils.IsUnknown(err):
+			return nil, errors.Join(ErrAuthUnavailable, err)
 		default:
-			return nil, ErrInvalidToken
+			return nil, errors.Join(ErrAuthUnavailable, err)
 		}
 	}
 

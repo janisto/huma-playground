@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -16,46 +17,63 @@ import (
 )
 
 const (
-	defaultBaseURL = "https://api.github.com"
-	userAgent      = "huma-playground"
-	apiVersion     = "2022-11-28"
-	acceptHeader   = "application/vnd.github+json"
+	defaultBaseURL  = "https://api.github.com"
+	userAgent       = "huma-playground"
+	apiVersion      = "2022-11-28"
+	acceptHeader    = "application/vnd.github+json"
+	maxResponseSize = 4 << 20
+	maxDrainSize    = 32 << 10
 )
 
 // Client implements Service using the GitHub REST API.
 type Client struct {
 	httpClient *http.Client
-	baseURL    string
+	baseURL    *url.URL
 	token      string
 }
 
+type clientConfig struct {
+	baseURL string
+	token   string
+}
+
 // Option configures a Client.
-type Option func(*Client)
+type Option func(*clientConfig)
 
 // WithBaseURL sets a custom base URL (useful for testing).
 func WithBaseURL(url string) Option {
-	return func(c *Client) {
+	return func(c *clientConfig) {
 		c.baseURL = url
 	}
 }
 
 // WithToken sets the Bearer token for authenticated requests.
 func WithToken(token string) Option {
-	return func(c *Client) {
+	return func(c *clientConfig) {
 		c.token = token
 	}
 }
 
 // NewClient creates a new GitHub API client.
-func NewClient(httpClient *http.Client, opts ...Option) *Client {
-	c := &Client{
-		httpClient: httpClient,
-		baseURL:    defaultBaseURL,
+func NewClient(httpClient *http.Client, opts ...Option) (*Client, error) {
+	if httpClient == nil {
+		return nil, errors.New("github HTTP client is required")
 	}
+	config := clientConfig{baseURL: defaultBaseURL}
 	for _, opt := range opts {
-		opt(c)
+		opt(&config)
 	}
-	return c
+	baseURL, err := url.Parse(config.baseURL)
+	if err != nil || !baseURL.IsAbs() ||
+		(baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.Host == "" ||
+		baseURL.User != nil || (baseURL.Path != "" && baseURL.Path != "/") ||
+		baseURL.RawPath != "" || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+		return nil, errors.New(
+			"github base URL must be an HTTP(S) origin without credentials, path, query, or fragment",
+		)
+	}
+	baseURL.Path = ""
+	return &Client{httpClient: httpClient, baseURL: baseURL, token: config.token}, nil
 }
 
 // GitHub API response types (snake_case JSON tags matching GitHub's API).
@@ -116,18 +134,20 @@ type githubTag struct {
 }
 
 func (c *Client) doRequest(ctx context.Context, path string, query url.Values) (*http.Response, error) {
-	u := c.baseURL + path
-	if len(query) > 0 {
-		u += "?" + query.Encode()
+	reference, err := url.Parse(path)
+	if err != nil {
+		return nil, fmt.Errorf("parse request path: %w", err)
 	}
+	u := c.baseURL.ResolveReference(reference)
+	u.RawQuery = query.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
 	req.Header.Set("Accept", acceptHeader)
-	req.Header.Set("X-GitHub-Api-Version", apiVersion)
+	req.Header.Set("X-Github-Api-Version", apiVersion)
 	req.Header.Set("User-Agent", userAgent)
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -138,7 +158,14 @@ func (c *Client) doRequest(ctx context.Context, path string, query url.Values) (
 
 func (c *Client) decodeResponse(ctx context.Context, resp *http.Response, target any) error {
 	if resp.StatusCode == http.StatusOK {
-		if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
+		if err != nil {
+			return fmt.Errorf("reading github response: %w", err)
+		}
+		if len(data) > maxResponseSize {
+			return errors.New("github response exceeds size limit")
+		}
+		if err := json.Unmarshal(data, target); err != nil {
 			return fmt.Errorf("decoding github response: %w", err)
 		}
 		return nil
@@ -156,8 +183,8 @@ func (c *Client) decodeResponse(ctx context.Context, resp *http.Response, target
 			logRateLimited(ctx, resp)
 			return upstreamErrorFromResponse(resp, UpstreamErrorKindRateLimited, ErrRateLimited)
 		}
-		remaining := strings.TrimSpace(resp.Header.Get("X-RateLimit-Remaining"))
-		reset := strings.TrimSpace(resp.Header.Get("X-RateLimit-Reset"))
+		remaining := strings.TrimSpace(resp.Header.Get("X-Ratelimit-Remaining"))
+		reset := strings.TrimSpace(resp.Header.Get("X-Ratelimit-Reset"))
 		obs.Logger(ctx).Warn("github api access denied",
 			zap.Int("status", resp.StatusCode),
 			zap.String("X-RateLimit-Remaining", remaining),
@@ -169,12 +196,17 @@ func (c *Client) decodeResponse(ctx context.Context, resp *http.Response, target
 	return upstreamErrorFromResponse(resp, UpstreamErrorKindUpstream, ErrUpstream)
 }
 
+func closeResponse(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainSize))
+	_ = resp.Body.Close()
+}
+
 func (c *Client) GetOwner(ctx context.Context, owner string) (*Owner, error) {
 	resp, err := c.doRequest(ctx, "/users/"+url.PathEscape(owner), nil)
 	if err != nil {
 		return nil, fmt.Errorf("fetching owner: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponse(resp)
 
 	var gh githubOwner
 	if err := c.decodeResponse(ctx, resp, &gh); err != nil {
@@ -210,7 +242,7 @@ func (c *Client) ListRepos(ctx context.Context, owner string) ([]RepoSummary, er
 	if err != nil {
 		return nil, fmt.Errorf("fetching repos: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponse(resp)
 
 	var gh []githubRepoSummary
 	if err := c.decodeResponse(ctx, resp, &gh); err != nil {
@@ -233,7 +265,7 @@ func (c *Client) GetRepo(ctx context.Context, owner, repo string) (*Repo, error)
 	if err != nil {
 		return nil, fmt.Errorf("fetching repo: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponse(resp)
 
 	var gh githubRepo
 	if decodeErr := c.decodeResponse(ctx, resp, &gh); decodeErr != nil {
@@ -277,7 +309,7 @@ func (c *Client) ListActivity(
 	if err != nil {
 		return nil, fmt.Errorf("fetching activity: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponse(resp)
 
 	linkHeader := resp.Header.Get("Link")
 
@@ -321,7 +353,7 @@ func (c *Client) ListLanguages(ctx context.Context, owner, repo string) (map[str
 	if err != nil {
 		return nil, fmt.Errorf("fetching languages: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponse(resp)
 
 	var languages map[string]int64
 	if err := c.decodeResponse(ctx, resp, &languages); err != nil {
@@ -336,7 +368,7 @@ func (c *Client) ListTags(ctx context.Context, owner, repo string) ([]Tag, error
 	if err != nil {
 		return nil, fmt.Errorf("fetching tags: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponse(resp)
 
 	var gh []githubTag
 	if err := c.decodeResponse(ctx, resp, &gh); err != nil {
@@ -424,7 +456,7 @@ func upstreamErrorFromResponse(resp *http.Response, kind UpstreamErrorKind, caus
 		Kind:           kind,
 		Status:         resp.StatusCode,
 		RetryAfter:     strings.TrimSpace(resp.Header.Get("Retry-After")),
-		RateLimitReset: strings.TrimSpace(resp.Header.Get("X-RateLimit-Reset")),
+		RateLimitReset: strings.TrimSpace(resp.Header.Get("X-Ratelimit-Reset")),
 		cause:          cause,
 	}
 }
@@ -436,7 +468,7 @@ func isGitHubRateLimitResponse(resp *http.Response) bool {
 	if resp.StatusCode != http.StatusForbidden {
 		return false
 	}
-	if strings.TrimSpace(resp.Header.Get("X-RateLimit-Remaining")) == "0" {
+	if strings.TrimSpace(resp.Header.Get("X-Ratelimit-Remaining")) == "0" {
 		return true
 	}
 	return strings.TrimSpace(resp.Header.Get("Retry-After")) != ""
@@ -445,8 +477,8 @@ func isGitHubRateLimitResponse(resp *http.Response) bool {
 func logRateLimited(ctx context.Context, resp *http.Response) {
 	fields := []zap.Field{
 		zap.Int("status", resp.StatusCode),
-		zap.String("X-RateLimit-Remaining", resp.Header.Get("X-RateLimit-Remaining")),
-		zap.String("X-RateLimit-Reset", resp.Header.Get("X-RateLimit-Reset")),
+		zap.String("X-RateLimit-Remaining", resp.Header.Get("X-Ratelimit-Remaining")),
+		zap.String("X-RateLimit-Reset", resp.Header.Get("X-Ratelimit-Reset")),
 	}
 	if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
 		fields = append(fields, zap.String("Retry-After", retryAfter))
