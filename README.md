@@ -1,5 +1,10 @@
 # Huma Playground
 
+[![Build and test](https://img.shields.io/github/actions/workflow/status/janisto/huma-playground/app-ci.yml?branch=main&label=build%20%26%20test)](https://github.com/janisto/huma-playground/actions/workflows/app-ci.yml)
+[![Code quality](https://img.shields.io/github/actions/workflow/status/janisto/huma-playground/app-lint.yml?branch=main&label=code%20quality)](https://github.com/janisto/huma-playground/actions/workflows/app-lint.yml)
+[![Go version](https://img.shields.io/github/go-mod/go-version/janisto/huma-playground?filename=go.mod)](https://github.com/janisto/huma-playground/blob/main/go.mod)
+[![License](https://img.shields.io/github/license/janisto/huma-playground)](LICENSE)
+
 A compact, production-conscious REST API example using [Huma v2](https://huma.rocks/) on [Chi](https://github.com/go-chi/chi). It demonstrates API contracts, JSON and CBOR negotiation, RFC 9457 errors, structured observability, Firebase Authentication, Firestore persistence, and a separate Go Cloud Run function without turning a playground into a framework.
 
 <img src="assets/gopher.svg" alt="Go Gopher mascot illustration" width="400">
