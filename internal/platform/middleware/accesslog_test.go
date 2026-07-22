@@ -6,8 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/janisto/huma-observability"
+	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -16,11 +17,14 @@ import (
 func TestAccessLoggerLogsHTTPRequest(t *testing.T) {
 	core, recorded := observer.New(zapcore.InfoLevel)
 	logger := zap.New(core)
+	router := chi.NewRouter()
+	router.Use(AccessLogger())
+	router.Get("/ready", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = w.Write([]byte("tea"))
+	})
 	handler := obs.HTTPRequestContext(obs.HTTPRequestContextConfig{Logger: logger})(
-		AccessLogger()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusTeapot)
-			_, _ = w.Write([]byte("tea"))
-		})),
+		router,
 	)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ready", nil)
@@ -41,17 +45,19 @@ func TestAccessLoggerLogsHTTPRequest(t *testing.T) {
 	fields := entries[0].ContextMap()
 	assertLogField(t, fields, "request_id", "access-req")
 	assertLogField(t, fields, "method", http.MethodGet)
-	assertLogField(t, fields, "path", "/ready")
+	assertLogField(t, fields, "path_template", "/ready")
 	assertLogField(t, fields, "status", int64(http.StatusTeapot))
 	assertLogField(t, fields, "bytes_written", int64(3))
-	assertLogField(t, fields, "remote_ip", "203.0.113.10")
-	assertLogField(t, fields, "user_agent", "test-agent")
+	assertNoLogFields(t, fields, "path", "peer_ip", "remote_ip", "user_agent")
 	if _, ok := fields["duration_ms"]; !ok {
 		t.Fatalf("expected duration_ms field, got %#v", fields)
 	}
+	if entries[0].Level != zapcore.WarnLevel {
+		t.Fatalf("expected warning access log, got %s", entries[0].Level)
+	}
 }
 
-func TestAccessLoggerLogsPanicStatusAndRepanics(t *testing.T) {
+func TestAccessLoggerLogsPanicTerminalReasonAndRepanics(t *testing.T) {
 	core, recorded := observer.New(zapcore.InfoLevel)
 	logger := zap.New(core)
 	handler := obs.HTTPRequestContext(obs.HTTPRequestContextConfig{Logger: logger})(
@@ -64,8 +70,8 @@ func TestAccessLoggerLogsPanicStatusAndRepanics(t *testing.T) {
 	resp := httptest.NewRecorder()
 
 	defer func() {
-		if rec := recover(); rec == nil {
-			t.Fatal("expected panic")
+		if rec := recover(); rec != "boom" {
+			t.Fatalf("panic = %#v, want %q", rec, "boom")
 		}
 		entries := recorded.FilterMessage("http request completed").All()
 		if len(entries) != 1 {
@@ -73,7 +79,43 @@ func TestAccessLoggerLogsPanicStatusAndRepanics(t *testing.T) {
 		}
 		fields := entries[0].ContextMap()
 		assertLogField(t, fields, "request_id", "panic-req")
-		assertLogField(t, fields, "status", int64(http.StatusInternalServerError))
+		assertLogField(t, fields, "terminal_reason", "panic")
+		assertNoLogFields(t, fields, "status")
+		if entries[0].Level != zapcore.ErrorLevel {
+			t.Fatalf("expected error access log, got %s", entries[0].Level)
+		}
+	}()
+
+	handler.ServeHTTP(resp, req)
+}
+
+func TestAccessLoggerPanicRetainsCommittedStatus(t *testing.T) {
+	core, recorded := observer.New(zapcore.InfoLevel)
+	logger := zap.New(core)
+	handler := obs.HTTPRequestContext(obs.HTTPRequestContextConfig{Logger: logger})(
+		AccessLogger()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+			panic("boom")
+		})),
+	)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/panic", nil)
+	req.Header.Set(chimiddleware.RequestIDHeader, "partial-panic-req")
+	resp := httptest.NewRecorder()
+
+	defer func() {
+		if rec := recover(); rec != "boom" {
+			t.Fatalf("panic = %#v, want %q", rec, "boom")
+		}
+		entries := recorded.FilterMessage("http request completed").All()
+		if len(entries) != 1 {
+			t.Fatalf("expected 1 access log, got %d", len(entries))
+		}
+		fields := entries[0].ContextMap()
+		assertLogField(t, fields, "status", int64(http.StatusAccepted))
+		assertLogField(t, fields, "terminal_reason", "panic")
+		if entries[0].Level != zapcore.ErrorLevel {
+			t.Fatalf("expected error access log, got %s", entries[0].Level)
+		}
 	}()
 
 	handler.ServeHTTP(resp, req)
@@ -100,8 +142,9 @@ func TestAccessLoggerLogsImplicitOK(t *testing.T) {
 	assertLogField(t, fields, "request_id", "ok-req")
 	assertLogField(t, fields, "status", int64(http.StatusOK))
 	assertLogField(t, fields, "bytes_written", int64(0))
-	if _, ok := fields["remote_ip"]; ok {
-		t.Fatalf("did not expect remote_ip field in %#v", fields)
+	assertNoLogFields(t, fields, "path", "peer_ip", "remote_ip", "user_agent", "terminal_reason")
+	if entries[0].Level != zapcore.InfoLevel {
+		t.Fatalf("expected info access log, got %s", entries[0].Level)
 	}
 }
 
@@ -135,30 +178,18 @@ func TestAccessLoggerRepanicsAbortHandlerWithoutLogging(t *testing.T) {
 	handler.ServeHTTP(resp, req)
 }
 
-func TestRequestRemoteIP(t *testing.T) {
-	tests := map[string]struct {
-		remoteAddr string
-		want       string
-	}{
-		"empty":          {"", ""},
-		"host port":      {"203.0.113.10:12345", "203.0.113.10"},
-		"host only":      {"203.0.113.10", "203.0.113.10"},
-		"ipv6 host port": {"[2001:db8::1]:443", "2001:db8::1"},
-		"ipv6 host only": {"2001:db8::1", "2001:db8::1"},
-	}
-
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			if got := requestRemoteIP(tt.remoteAddr); got != tt.want {
-				t.Fatalf("expected %q, got %q", tt.want, got)
-			}
-		})
-	}
-}
-
 func assertLogField(t *testing.T, fields map[string]any, key string, want any) {
 	t.Helper()
 	if got := fields[key]; got != want {
 		t.Fatalf("expected log field %s=%v, got %v in %#v", key, want, got, fields)
+	}
+}
+
+func assertNoLogFields(t *testing.T, fields map[string]any, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		if _, ok := fields[key]; ok {
+			t.Fatalf("did not expect log field %q in %#v", key, fields)
+		}
 	}
 }

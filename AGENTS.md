@@ -38,8 +38,8 @@ Huma Playground is a minimal REST API skeleton built with [Huma](https://github.
 
 ### Key Features
 
-- Chi middleware stack with untrusted forwarding-header removal, security headers, environment-aware CORS, direct-peer IP recording, request size limits, and panic recovery
-- Huma observability middleware via `github.com/janisto/huma-observability` for router-wide request IDs, Huma access logs, request-scoped Zap loggers, and trace metadata enrichment
+- Chi middleware stack with untrusted forwarding-header removal, security headers, environment-aware CORS, privacy-minimized access logging, request size limits, and panic recovery
+- Huma observability middleware via `github.com/janisto/huma-observability/v2` for router-wide request IDs, Huma access logs, request-scoped Zap loggers, and trace metadata enrichment
 - Plain response bodies with RFC 9457 Problem Details for errors
 - Content negotiation supporting JSON and CBOR formats
 - Cursor-based pagination with RFC 8288 Link headers
@@ -325,17 +325,17 @@ Panic recovery and Chi-level handlers use Problem Details via `internal/platform
 
 ### Logging
 
-Use request-scoped loggers from `github.com/janisto/huma-observability`:
+Use request-scoped loggers from `github.com/janisto/huma-observability/v2`:
 
 ```go
-import "github.com/janisto/huma-observability"
+import "github.com/janisto/huma-observability/v2"
 
 obs.Logger(ctx).Info("message", zap.String("key", "value"))
 obs.Logger(ctx).Warn("message", zap.String("key", "value"))
 obs.Logger(ctx).Error("message", zap.Error(err), zap.String("key", "value"))
 ```
 
-`obs.Logger(ctx)` preserves request metadata installed by router-wide `obs.HTTPRequestContext` and Huma `obs.RequestContext`. It intentionally returns a no-op logger when no request logger is installed. That means audit helpers and service warning logs are valid only for request-driven paths; direct service calls, background jobs, scripts, and tests using `context.Background()` must use an explicit process logger instead. `obs.AccessLogger` emits Huma operation-aware access logs. Use `internal/platform/middleware.AccessLogger` only for Chi-only route groups and Chi error handlers to avoid duplicate `/v1` access logs. Use the startup logger returned by `obs.NewLogger` for process-level logs outside a request context.
+`obs.Logger(ctx)` preserves request metadata installed by router-wide `obs.HTTPRequestContext` and Huma `obs.RequestContext`. It intentionally returns a no-op logger when no request logger is installed. That means audit helpers and service warning logs are valid only for request-driven paths; direct service calls, background jobs, scripts, and tests using `context.Background()` must use an explicit process logger instead. The app pins Trace Context Level 1 across both context middleware layers and `obs.AccessLogger`. Huma and Chi access logs omit raw paths, peer IPs, and user agents; use route templates for aggregation. Use `internal/platform/middleware.AccessLogger` only for Chi-only route groups and Chi error handlers to avoid duplicate `/v1` access logs. Use the startup logger returned by `obs.NewLogger` for process-level logs outside a request context.
 
 At HTTP dependency boundaries, log unavailable/time-out failures at warning level and unexpected failures at error level exactly once, including a stable operation name and the underlying error. Keep expected domain outcomes such as not found or already exists out of duplicate error logs. Never return dependency internals to clients or log tokens, request bodies, profile data, or other PII.
 

@@ -9,7 +9,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/go-chi/cors v1.2.2
-	github.com/janisto/huma-observability v0.3.0
+	github.com/janisto/huma-observability/v2 v2.0.0
 	github.com/joho/godotenv v1.5.1
 	go.uber.org/zap v1.28.0
 	google.golang.org/grpc v1.82.0

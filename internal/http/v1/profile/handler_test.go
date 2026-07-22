@@ -15,7 +15,7 @@ import (
 	humachi "github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/janisto/huma-observability"
+	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 

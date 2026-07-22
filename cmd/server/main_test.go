@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
 
 	"github.com/janisto/huma-playground/internal/http/health"
@@ -46,6 +48,11 @@ func testConfig(t *testing.T) config {
 
 func testRouter(t *testing.T, cfg config) http.Handler {
 	t.Helper()
+	return testRouterWithLogger(t, cfg, zap.NewNop())
+}
+
+func testRouterWithLogger(t *testing.T, cfg config, logger *zap.Logger) http.Handler {
+	t.Helper()
 	githubClient, err := githubsvc.NewClient(http.DefaultClient)
 	if err != nil {
 		t.Fatalf("create GitHub client: %v", err)
@@ -54,7 +61,7 @@ func testRouter(t *testing.T, cfg config) http.Handler {
 		verifier: &stubVerifier{User: testUser()},
 		profiles: unavailableProfileStore{},
 		github:   githubClient,
-	}, zap.NewNop())
+	}, logger)
 }
 
 func TestLoadConfigDefaults(t *testing.T) {
@@ -272,6 +279,113 @@ func TestRouterHealthAndRequestID(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode health: %v", err)
 	}
+}
+
+func TestRouterHumaAccessLogUsesV2PrivacyContract(t *testing.T) {
+	logger, output := testObservabilityLogger(t)
+	router := testRouterWithLogger(t, testConfig(t), logger)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/hello", nil)
+	request.Header.Set(middleware.RequestIDHeader, "observability-request")
+	request.Header.Set("Traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-03")
+	request.Header.Set("User-Agent", "private-test-agent")
+	request.RemoteAddr = "203.0.113.10:12345"
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get(middleware.RequestIDHeader); got != "observability-request" {
+		t.Fatalf("response request ID = %q, want observability-request", got)
+	}
+	records := decodeLogRecords(t, output.Bytes())
+	application := singleLogRecord(t, records, "hello get")
+	access := singleLogRecord(t, records, "request completed")
+	if got := countLogRecords(records, "http request completed"); got != 0 {
+		t.Fatalf("Huma request emitted %d Chi access logs", got)
+	}
+	for name, record := range map[string]map[string]any{"application": application, "access": access} {
+		assertJSONLogField(t, record, "request_id", "observability-request")
+		assertJSONLogField(t, record, "correlation_id", "4bf92f3577b34da6a3ce929d0e0e4736")
+		assertJSONLogField(t, record, "trace_sampled", true)
+		if _, ok := record["trace_id_random"]; ok {
+			t.Fatalf("%s record unexpectedly used Trace Context Level 2: %#v", name, record)
+		}
+	}
+	assertJSONLogField(t, access, "severity", "INFO")
+	assertJSONLogField(t, access, "method", http.MethodGet)
+	assertJSONLogField(t, access, "path_template", "/hello")
+	assertJSONLogField(t, access, "operation_id", "get-hello")
+	assertJSONLogField(t, access, "status", float64(http.StatusOK))
+	assertNoJSONLogFields(t, access, "path", "peer_ip", "remote_ip", "user_agent")
+	httpRequest, ok := access["httpRequest"].(map[string]any)
+	if !ok {
+		t.Fatalf("httpRequest = %#v, want object", access["httpRequest"])
+	}
+	assertJSONLogField(t, httpRequest, "requestMethod", http.MethodGet)
+	assertJSONLogField(t, httpRequest, "status", float64(http.StatusOK))
+	assertNoJSONLogFields(t, httpRequest, "requestUrl", "remoteIp", "userAgent")
+}
+
+func TestRouterHumaAccessLogPreservesErrorStatus(t *testing.T) {
+	logger, output := testObservabilityLogger(t)
+	router := testRouterWithLogger(t, testConfig(t), logger)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/profile", nil)
+	request.Header.Set(middleware.RequestIDHeader, "auth-observability-request")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized, got %d: %s", response.Code, response.Body.String())
+	}
+	records := decodeLogRecords(t, output.Bytes())
+	access := singleLogRecord(t, records, "request completed")
+	if got := countLogRecords(records, "http request completed"); got != 0 {
+		t.Fatalf("Huma request emitted %d Chi access logs", got)
+	}
+	assertJSONLogField(t, access, "severity", "WARNING")
+	assertJSONLogField(t, access, "request_id", "auth-observability-request")
+	assertJSONLogField(t, access, "method", http.MethodGet)
+	assertJSONLogField(t, access, "path_template", "/profile")
+	assertJSONLogField(t, access, "operation_id", "get-profile")
+	assertJSONLogField(t, access, "status", float64(http.StatusUnauthorized))
+	assertNoJSONLogFields(t, access, "terminal_reason")
+	httpRequest, ok := access["httpRequest"].(map[string]any)
+	if !ok {
+		t.Fatalf("httpRequest = %#v, want object", access["httpRequest"])
+	}
+	assertJSONLogField(t, httpRequest, "requestMethod", http.MethodGet)
+	assertJSONLogField(t, httpRequest, "status", float64(http.StatusUnauthorized))
+}
+
+func TestRouterChiAccessLogUsesV2PrivacyContract(t *testing.T) {
+	logger, output := testObservabilityLogger(t)
+	router := testRouterWithLogger(t, testConfig(t), logger)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
+	request.Header.Set(middleware.RequestIDHeader, "health-observability-request")
+	request.Header.Set("User-Agent", "private-test-agent")
+	request.RemoteAddr = "203.0.113.10:12345"
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", response.Code, response.Body.String())
+	}
+	records := decodeLogRecords(t, output.Bytes())
+	access := singleLogRecord(t, records, "http request completed")
+	if got := countLogRecords(records, "request completed"); got != 0 {
+		t.Fatalf("Chi request emitted %d Huma access logs", got)
+	}
+	assertJSONLogField(t, access, "request_id", "health-observability-request")
+	assertJSONLogField(t, access, "correlation_id", "health-observability-request")
+	assertJSONLogField(t, access, "severity", "INFO")
+	assertJSONLogField(t, access, "method", http.MethodGet)
+	assertJSONLogField(t, access, "path_template", "/health")
+	assertJSONLogField(t, access, "status", float64(http.StatusOK))
+	assertNoJSONLogFields(t, access, "path", "peer_ip", "remote_ip", "user_agent", "httpRequest")
 }
 
 func TestRouterDoesNotTrustForwardedHostForSchemaLinks(t *testing.T) {
@@ -571,5 +685,80 @@ func TestOpenAPIResponseStatusesAndSecurityMatchRuntime(t *testing.T) {
 func TestVersionDefault(t *testing.T) {
 	if Version != "dev" {
 		t.Fatalf("unexpected default version %q", Version)
+	}
+}
+
+func testObservabilityLogger(t *testing.T) (*zap.Logger, *bytes.Buffer) {
+	t.Helper()
+	output := &bytes.Buffer{}
+	logger, err := obs.NewLogger(obs.LoggerConfig{
+		Preset:      obs.PresetGCP,
+		Writer:      output,
+		ErrorWriter: output,
+	})
+	if err != nil {
+		t.Fatalf("create observability logger: %v", err)
+	}
+	return logger, output
+}
+
+func decodeLogRecords(t *testing.T, output []byte) []map[string]any {
+	t.Helper()
+	lines := bytes.Split(bytes.TrimSpace(output), []byte{'\n'})
+	records := make([]map[string]any, 0, len(lines))
+	for index, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		var record map[string]any
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatalf("decode log record %d: %v; line=%q", index, err, line)
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+func singleLogRecord(t *testing.T, records []map[string]any, message string) map[string]any {
+	t.Helper()
+	var match map[string]any
+	for _, record := range records {
+		if record["message"] != message {
+			continue
+		}
+		if match != nil {
+			t.Fatalf("multiple log records with message %q: %#v", message, records)
+		}
+		match = record
+	}
+	if match == nil {
+		t.Fatalf("no log record with message %q: %#v", message, records)
+	}
+	return match
+}
+
+func countLogRecords(records []map[string]any, message string) int {
+	count := 0
+	for _, record := range records {
+		if record["message"] == message {
+			count++
+		}
+	}
+	return count
+}
+
+func assertJSONLogField(t *testing.T, record map[string]any, key string, want any) {
+	t.Helper()
+	if got := record[key]; got != want {
+		t.Fatalf("log field %q = %#v, want %#v; record=%#v", key, got, want, record)
+	}
+}
+
+func assertNoJSONLogFields(t *testing.T, record map[string]any, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		if _, ok := record[key]; ok {
+			t.Fatalf("log record unexpectedly contains %q: %#v", key, record)
+		}
 	}
 }

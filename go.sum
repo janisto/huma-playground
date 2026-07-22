@@ -94,8 +94,8 @@ github.com/googleapis/enterprise-certificate-proxy v0.3.18 h1:hvVi34VucdrV1IIsiW
 github.com/googleapis/enterprise-certificate-proxy v0.3.18/go.mod h1:rSEsBUemEBZEexP2y6jPp16LUmUbjmSbcPMQizR0o4k=
 github.com/googleapis/gax-go/v2 v2.23.0 h1:Tchl7qkvE7Ip3y+ztvNufYFvkfqTe7NfLTYGIdJRLuE=
 github.com/googleapis/gax-go/v2 v2.23.0/go.mod h1:rBQKOVJCdb8IFEzg+FCwlt1LP/xMDGuqUXhUG+XMXEg=
-github.com/janisto/huma-observability v0.3.0 h1:pN5bJVXYt+sjoy4fOijpjQRq8YGRmUWGqW1PJQB5xqo=
-github.com/janisto/huma-observability v0.3.0/go.mod h1:+QFk6SIjeI84WzggvqRnIh2MK84jXLCQIYka2o0hGPc=
+github.com/janisto/huma-observability/v2 v2.0.0 h1:9+Do26x+eIVfGCaEjArqcz9w6UnJ6RZqZXJ7Z3c7ze8=
+github.com/janisto/huma-observability/v2 v2.0.0/go.mod h1:JHDreE48ti8IeQrLIGiOdMclVIzXy162R3tiYLoNRho=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
 github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
 github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHPsaIE=

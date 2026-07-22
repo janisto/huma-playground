@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/janisto/huma-observability"
+	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
 )
 

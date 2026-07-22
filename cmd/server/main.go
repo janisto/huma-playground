@@ -9,7 +9,7 @@ import (
 	"syscall"
 
 	_ "github.com/danielgtaylor/huma/v2/formats/cbor"
-	"github.com/janisto/huma-observability"
+	"github.com/janisto/huma-observability/v2"
 	_ "github.com/joho/godotenv/autoload"
 	"go.uber.org/zap"
 )

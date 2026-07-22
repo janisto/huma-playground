@@ -10,7 +10,7 @@ import (
 	"strconv"
 
 	"github.com/danielgtaylor/huma/v2"
-	obs "github.com/janisto/huma-observability"
+	obs "github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
 
 	"github.com/janisto/huma-playground/internal/platform/pagination"

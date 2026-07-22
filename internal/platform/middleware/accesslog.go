@@ -2,13 +2,14 @@ package middleware
 
 import (
 	"errors"
-	"net"
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/janisto/huma-observability"
+	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // AccessLogger writes structured access logs for non-Huma HTTP handlers.
@@ -29,7 +30,7 @@ func logHTTPAccess(r *http.Request, ww chimiddleware.WrapResponseWriter, start t
 		if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 			panic(rec)
 		}
-		logHTTPRequest(r, ww, start, http.StatusInternalServerError)
+		logHTTPRequest(r, ww, start, ww.Status(), "panic")
 		panic(rec)
 	}
 
@@ -37,33 +38,36 @@ func logHTTPAccess(r *http.Request, ww chimiddleware.WrapResponseWriter, start t
 	if status == 0 {
 		status = http.StatusOK
 	}
-	logHTTPRequest(r, ww, start, status)
+	logHTTPRequest(r, ww, start, status, "")
 }
 
-func logHTTPRequest(r *http.Request, ww chimiddleware.WrapResponseWriter, start time.Time, status int) {
+func logHTTPRequest(
+	r *http.Request,
+	ww chimiddleware.WrapResponseWriter,
+	start time.Time,
+	status int,
+	terminalReason string,
+) {
 	fields := []zap.Field{
 		zap.String("method", r.Method),
-		zap.String("path", r.URL.EscapedPath()),
-		zap.Int("status", status),
 		zap.Int("bytes_written", ww.BytesWritten()),
 		zap.Float64("duration_ms", float64(time.Since(start))/float64(time.Millisecond)),
 	}
-	if remoteIP := requestRemoteIP(r.RemoteAddr); remoteIP != "" {
-		fields = append(fields, zap.String("remote_ip", remoteIP))
+	if routeContext := chi.RouteContext(r.Context()); routeContext != nil {
+		if pathTemplate := routeContext.RoutePattern(); pathTemplate != "" {
+			fields = append(fields, zap.String("path_template", pathTemplate))
+		}
 	}
-	if userAgent := r.UserAgent(); userAgent != "" {
-		fields = append(fields, zap.String("user_agent", userAgent))
+	if status != 0 {
+		fields = append(fields, zap.Int("status", status))
+	}
+	level := zapcore.InfoLevel
+	if terminalReason != "" {
+		fields = append(fields, zap.String("terminal_reason", terminalReason))
+		level = zapcore.ErrorLevel
+	} else if status != 0 {
+		level = obs.DefaultStatusLevel(status)
 	}
 
-	obs.Logger(r.Context()).Info("http request completed", fields...)
-}
-
-func requestRemoteIP(remoteAddr string) string {
-	if remoteAddr == "" {
-		return ""
-	}
-	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
-		return host
-	}
-	return remoteAddr
+	obs.Logger(r.Context()).Log(level, "http request completed", fields...)
 }
