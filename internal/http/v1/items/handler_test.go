@@ -13,7 +13,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/janisto/huma-observability"
+	"github.com/janisto/huma-observability/v2"
 
 	"github.com/janisto/huma-playground/internal/platform/pagination"
 )

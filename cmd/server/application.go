@@ -12,7 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/janisto/huma-observability"
+	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
 
 	"github.com/janisto/huma-playground/internal/http/health"
@@ -30,6 +30,8 @@ type dependencies struct {
 	profiles profilesvc.Store
 	github   githubsvc.Service
 }
+
+const observabilityTraceContextLevel = obs.TraceContextLevel1
 
 type applicationClients struct {
 	*firebase.Clients
@@ -120,8 +122,16 @@ func newRouter(cfg config, deps dependencies, logger *zap.Logger) http.Handler {
 
 	apiRouter := chi.NewRouter()
 	api := humachi.New(apiRouter, apiConfig)
-	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{Logger: logger, Preset: obs.PresetGCP}))
-	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{Logger: logger, Preset: obs.PresetGCP}))
+	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{
+		Logger:            logger,
+		Preset:            obs.PresetGCP,
+		TraceContextLevel: observabilityTraceContextLevel,
+	}))
+	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{
+		Logger:            logger,
+		Preset:            obs.PresetGCP,
+		TraceContextLevel: observabilityTraceContextLevel,
+	}))
 	addCBOROpenAPIContent(api)
 	auth.RegisterSecurityScheme(api)
 	routes.Register(api, cfg.APIPrefix, deps.verifier, deps.profiles, deps.github)
@@ -134,7 +144,11 @@ func newRouter(cfg config, deps dependencies, logger *zap.Logger) http.Handler {
 	router.MethodNotAllowed(httpAccessLogger(respond.MethodNotAllowedHandler(api)).ServeHTTP)
 	router.Use(
 		appmiddleware.IgnoreForwardedHeaders(),
-		obs.HTTPRequestContext(obs.HTTPRequestContextConfig{Logger: logger, Preset: obs.PresetGCP}),
+		obs.HTTPRequestContext(obs.HTTPRequestContextConfig{
+			Logger:            logger,
+			Preset:            obs.PresetGCP,
+			TraceContextLevel: observabilityTraceContextLevel,
+		}),
 		respond.Recoverer(api, logger),
 		requestContextTimeout(cfg.RequestTimeout),
 		appmiddleware.Security(cfg.APIPrefix),

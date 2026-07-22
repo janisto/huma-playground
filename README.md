@@ -251,11 +251,11 @@ detailed [format specification](https://agentskills.io/specification), under `.a
 
 ## Observability
 
-`obs.HTTPRequestContext` is installed at the Chi boundary so liveness, recovery, 404, 405, and Huma routes share request IDs and trace metadata. Huma routes additionally use `obs.RequestContext` and `obs.AccessLogger` for operation-aware logs.
+The app uses `github.com/janisto/huma-observability/v2`. `obs.HTTPRequestContext` is installed at the Chi boundary so liveness, recovery, 404, 405, and Huma routes share request IDs, request-scoped loggers, and W3C trace metadata. The HTTP and Huma middleware explicitly use Trace Context Level 1. Huma routes additionally use `obs.RequestContext` and `obs.AccessLogger` for operation-aware logs.
 
-The local Chi access logger wraps only Chi-only routes and error handlers, preventing duplicate `/v1` access logs. `obs.Logger(ctx)` is intentionally request-bound; process and background work must receive an explicit logger.
+Access logs are privacy-minimized: Huma records route templates and operation IDs without raw paths, peer IPs, or user agents; the local Chi logger follows the same boundary and wraps only Chi-only routes and error handlers. Escaping non-abort panic records use `terminal_reason: "panic"` and error severity without inventing an unobserved status. This split also prevents duplicate `/v1` access logs. `obs.Logger(ctx)` is intentionally request-bound; process and background work must receive an explicit logger.
 
-The recorded client address is the direct network peer. Forwarding headers are removed at the outer HTTP boundary because this example does not define a trusted-proxy boundary; this also prevents forwarded-host values from influencing Huma schema links.
+Forwarding headers are removed at the outer HTTP boundary because this example does not define a trusted-proxy boundary; this also prevents forwarded-host values from influencing Huma schema links.
 
 ## Security notes
 

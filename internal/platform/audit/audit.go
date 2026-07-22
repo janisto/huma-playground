@@ -3,7 +3,7 @@ package audit
 import (
 	"context"
 
-	"github.com/janisto/huma-observability"
+	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
 )
 
