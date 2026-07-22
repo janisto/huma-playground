@@ -6,6 +6,8 @@ description: Write or review tests for huma-playground using Go testing, Huma v2
 # Go testing
 
 Read `AGENTS.md`, the implementation under test, and nearby tests before choosing the test boundary in either Go module.
+Apply `$adversarial-testing` first to rank failure modes and select mutation-resistant cases; this skill supplies Go,
+Huma, fixture, emulator, and command conventions.
 
 ## Test at the narrowest useful boundary
 

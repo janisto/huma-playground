@@ -77,7 +77,7 @@ generated specification. Bodyless GET operations must not inherit request-body-o
 ## Verification
 
 Add colocated tests for success, validation, authentication or authorization, service failures, negotiated JSON and
-CBOR, and relevant headers. Use the `go-testing` skill for repository test conventions.
+CBOR, and relevant headers. Apply `$adversarial-testing`, then use `$go-testing` for repository test conventions.
 
 Run the focused package tests, then `just build`, `just test`, and `just lint`. Run `just check` when shared routing or
 both modules are affected.
