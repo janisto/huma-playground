@@ -14,7 +14,7 @@ type Item struct {
 	PriceMinor  int64         `json:"priceMinor"  doc:"Price in the currency minor unit" example:"2999"`
 	Currency    string        `json:"currency"    doc:"ISO 4217 currency code"           example:"USD"`
 	InStock     bool          `json:"inStock"     doc:"Availability status"              example:"true"`
-	CreatedAt   timeutil.Time `json:"createdAt"   doc:"Creation timestamp"               example:"2024-01-15T10:30:00.000Z"`
+	CreatedAt   timeutil.Time `json:"createdAt"   doc:"Creation timestamp"               example:"2024-01-15T10:30:00.000Z" format:"date-time"`
 	Description string        `json:"description" doc:"Detailed description of the item"`
 }
 

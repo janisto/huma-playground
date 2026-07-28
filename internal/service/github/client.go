@@ -19,7 +19,7 @@ import (
 const (
 	defaultBaseURL  = "https://api.github.com"
 	userAgent       = "huma-playground"
-	apiVersion      = "2022-11-28"
+	apiVersion      = "2026-03-10"
 	acceptHeader    = "application/vnd.github+json"
 	maxResponseSize = 4 << 20
 	maxDrainSize    = 32 << 10
@@ -29,12 +29,10 @@ const (
 type Client struct {
 	httpClient *http.Client
 	baseURL    *url.URL
-	token      string
 }
 
 type clientConfig struct {
 	baseURL string
-	token   string
 }
 
 // Option configures a Client.
@@ -44,13 +42,6 @@ type Option func(*clientConfig)
 func WithBaseURL(url string) Option {
 	return func(c *clientConfig) {
 		c.baseURL = url
-	}
-}
-
-// WithToken sets the Bearer token for authenticated requests.
-func WithToken(token string) Option {
-	return func(c *clientConfig) {
-		c.token = token
 	}
 }
 
@@ -73,7 +64,7 @@ func NewClient(httpClient *http.Client, opts ...Option) (*Client, error) {
 		)
 	}
 	baseURL.Path = ""
-	return &Client{httpClient: httpClient, baseURL: baseURL, token: config.token}, nil
+	return &Client{httpClient: httpClient, baseURL: baseURL}, nil
 }
 
 // GitHub API response types (snake_case JSON tags matching GitHub's API).
@@ -149,10 +140,9 @@ func (c *Client) doRequest(ctx context.Context, path string, query url.Values) (
 	req.Header.Set("Accept", acceptHeader)
 	req.Header.Set("X-Github-Api-Version", apiVersion)
 	req.Header.Set("User-Agent", userAgent)
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if requestID := obs.RequestID(ctx); requestID != "" {
+		req.Header.Set("X-Request-ID", requestID)
 	}
-
 	return c.httpClient.Do(req)
 }
 
@@ -176,12 +166,21 @@ func (c *Client) decodeResponse(ctx context.Context, resp *http.Response, target
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		logRateLimited(ctx, resp)
-		return upstreamErrorFromResponse(resp, UpstreamErrorKindRateLimited, ErrRateLimited)
+		upstreamErr := upstreamErrorFromResponse(resp, UpstreamErrorKindRateLimited, ErrRateLimited)
+		if upstreamErr.RetryAfter == "" && upstreamErr.RateLimitReset == "" {
+			upstreamErr.RetryAfter = "60"
+		}
+		return upstreamErr
 	}
 	if resp.StatusCode == http.StatusForbidden {
-		if isGitHubRateLimitResponse(resp) {
+		message := readGitHubErrorMessage(resp)
+		if isGitHubRateLimitResponse(resp) || isGitHubRateLimitMessage(message) {
 			logRateLimited(ctx, resp)
-			return upstreamErrorFromResponse(resp, UpstreamErrorKindRateLimited, ErrRateLimited)
+			upstreamErr := upstreamErrorFromResponse(resp, UpstreamErrorKindRateLimited, ErrRateLimited)
+			if upstreamErr.RetryAfter == "" && upstreamErr.RateLimitReset == "" {
+				upstreamErr.RetryAfter = "60"
+			}
+			return upstreamErr
 		}
 		remaining := strings.TrimSpace(resp.Header.Get("X-Ratelimit-Remaining"))
 		reset := strings.TrimSpace(resp.Header.Get("X-Ratelimit-Reset"))
@@ -194,6 +193,16 @@ func (c *Client) decodeResponse(ctx context.Context, resp *http.Response, target
 	}
 
 	return upstreamErrorFromResponse(resp, UpstreamErrorKindUpstream, ErrUpstream)
+}
+
+func readGitHubErrorMessage(resp *http.Response) string {
+	var body struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDrainSize)).Decode(&body); err != nil {
+		return ""
+	}
+	return body.Message
 }
 
 func closeResponse(resp *http.Response) {
@@ -472,6 +481,12 @@ func isGitHubRateLimitResponse(resp *http.Response) bool {
 		return true
 	}
 	return strings.TrimSpace(resp.Header.Get("Retry-After")) != ""
+}
+
+func isGitHubRateLimitMessage(message string) bool {
+	message = strings.ToLower(message)
+	return strings.Contains(message, "secondary rate limit") ||
+		strings.Contains(message, "abuse detection")
 }
 
 func logRateLimited(ctx context.Context, resp *http.Response) {

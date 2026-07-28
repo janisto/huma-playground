@@ -313,7 +313,10 @@ func toHTTPLanguages(languages map[string]int64) []Language {
 		result = append(result, Language{Name: name, Bytes: bytes})
 	}
 	slices.SortFunc(result, func(a, b Language) int {
-		return cmp.Compare(b.Bytes, a.Bytes)
+		if byBytes := cmp.Compare(b.Bytes, a.Bytes); byBytes != 0 {
+			return byBytes
+		}
+		return cmp.Compare(a.Name, b.Name)
 	})
 	return result
 }

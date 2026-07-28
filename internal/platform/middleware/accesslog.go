@@ -30,7 +30,11 @@ func logHTTPAccess(r *http.Request, ww chimiddleware.WrapResponseWriter, start t
 		if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 			panic(rec)
 		}
-		logHTTPRequest(r, ww, start, ww.Status(), "panic")
+		status := ww.Status()
+		if status == 0 {
+			status = http.StatusInternalServerError
+		}
+		logHTTPRequest(r, ww, start, status, "panic")
 		panic(rec)
 	}
 

@@ -275,6 +275,9 @@ func TestGitHubTimeoutIsLoggedOnce(t *testing.T) {
 	if resp.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d: %s", resp.Code, resp.Body.String())
 	}
+	if retryAfter := resp.Header().Get("Retry-After"); retryAfter != "" {
+		t.Fatalf("unexpected Retry-After header %q", retryAfter)
+	}
 	entries := logs.FilterMessage("github upstream request timed out").All()
 	if len(entries) != 1 {
 		t.Fatalf("expected one GitHub timeout log, got %d", len(entries))
@@ -632,7 +635,11 @@ func TestListActivityUpstreamError(t *testing.T) {
 // --- GetLanguages ---
 
 func TestGetLanguagesSuccess(t *testing.T) {
-	svc := &mockGitHubService{languages: map[string]int64{"Ruby": 6789, "Go": 12345}}
+	svc := &mockGitHubService{languages: map[string]int64{
+		"Ruby": 6789,
+		"Go":   12345,
+		"C":    6789,
+	}}
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(
@@ -653,14 +660,17 @@ func TestGetLanguagesSuccess(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
-	if len(data.Languages) != 2 {
-		t.Fatalf("expected 2 languages, got %d", len(data.Languages))
+	if len(data.Languages) != 3 {
+		t.Fatalf("expected 3 languages, got %d", len(data.Languages))
 	}
 	if data.Languages[0].Name != "Go" {
 		t.Errorf("expected first language Go (most bytes), got %s", data.Languages[0].Name)
 	}
 	if data.Languages[0].Bytes != 12345 {
 		t.Errorf("expected 12345 bytes, got %d", data.Languages[0].Bytes)
+	}
+	if data.Languages[1].Name != "C" || data.Languages[2].Name != "Ruby" {
+		t.Fatalf("equal byte counts not sorted by name: %#v", data.Languages)
 	}
 }
 

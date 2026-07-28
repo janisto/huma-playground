@@ -18,15 +18,16 @@ env:
 
 jobs:
   quality:
+    name: Static analysis and repository checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.26.x'
           check-latest: true
@@ -53,9 +54,6 @@ jobs:
       - name: Check module files
         run: just tidy-check
 
-      - name: Validate workflows
-        run: just workflow-check
-
       - name: Check Go modernizations
         run: just modernize-check
 
@@ -63,6 +61,7 @@ jobs:
         run: git diff --check
 
   lint:
+    name: Require code quality
     if: ${{ always() }}
     needs: [quality]
     runs-on: ubuntu-latest

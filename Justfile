@@ -36,7 +36,7 @@ run-port port=PORT:
 
 [group('run')]
 functions-run port="8080":
-    cd functions && GOWORK=off FUNCTION_TARGET=Hello PORT={{ port }} go run ./cmd/server
+    cd functions && GOWORK=off FUNCTION_TARGET=Hello LOCAL_ONLY=true PORT={{ port }} go run ./cmd/server
 
 [group('test')]
 emulators:
@@ -72,6 +72,12 @@ test-race-functions:
     cd functions && GOWORK=off go test -race ./...
 
 [group('test')]
+fuzz fuzz_time="5s":
+    go test -run='^$' -fuzz='^FuzzDecodeCursor$' -fuzztime={{ fuzz_time }} ./internal/platform/pagination
+    go test -run='^$' -fuzz='^FuzzParseLinkHeader$' -fuzztime={{ fuzz_time }} ./internal/service/github
+    go test -run='^$' -fuzz='^FuzzParseLinkHeaderRoundTrip$' -fuzztime={{ fuzz_time }} ./internal/service/github
+
+[group('test')]
 test-integration-ci *args:
     REQUIRE_FIREBASE_EMULATORS=1 firebase emulators:exec --only auth,firestore --project demo-test-project \
         "just test-app -count=1 -covermode=atomic -coverpkg=./... -coverprofile=integration-coverage.out {{ args }}"
@@ -94,7 +100,7 @@ functions-smoke port="18081":
     }
     trap cleanup EXIT
     (cd functions && GOWORK=off go build -o "$tmp/server" ./cmd/server)
-    FUNCTION_TARGET=Hello PORT={{ port }} "$tmp/server" >"$tmp/log" 2>&1 &
+    FUNCTION_TARGET=Hello LOCAL_ONLY=true PORT={{ port }} "$tmp/server" >"$tmp/log" 2>&1 &
     pid=$!
     for _ in {1..30}; do
       if curl --fail --silent "http://127.0.0.1:{{ port }}/?name=Smoke" >"$tmp/response"; then
@@ -176,7 +182,7 @@ vuln-functions:
 
 [group('qa')]
 workflow-check:
-    go tool actionlint
+    actionlint
 
 [group('qa')]
 modernize-check:

@@ -14,8 +14,8 @@ type Owner struct {
 	Location  string        `json:"location"  doc:"Geographic location" example:"San Francisco"`
 	Blog      string        `json:"blog"      doc:"Blog URL"            example:"https://github.blog"`
 	Company   string        `json:"company"   doc:"Company name"        example:"@github"`
-	CreatedAt timeutil.Time `json:"createdAt" doc:"Account creation"    example:"2011-01-25T18:44:36.000Z"`
-	UpdatedAt timeutil.Time `json:"updatedAt" doc:"Last profile update" example:"2024-06-01T00:00:00.000Z"`
+	CreatedAt timeutil.Time `json:"createdAt" doc:"Account creation"    example:"2011-01-25T18:44:36.000Z"                       format:"date-time"`
+	UpdatedAt timeutil.Time `json:"updatedAt" doc:"Last profile update" example:"2024-06-01T00:00:00.000Z"                       format:"date-time"`
 }
 
 // RepoSummary contains basic repository information.
@@ -28,8 +28,8 @@ type RepoSummary struct {
 	Stars       int           `json:"stars"       doc:"Stargazer count"                   example:"16"`
 	Forks       int           `json:"forks"       doc:"Fork count"                        example:"10"`
 	OpenIssues  int           `json:"openIssues"  doc:"Open issue count"                  example:"0"`
-	CreatedAt   timeutil.Time `json:"createdAt"   doc:"Creation timestamp"                example:"2011-01-25T18:44:36.000Z"`
-	UpdatedAt   timeutil.Time `json:"updatedAt"   doc:"Last update timestamp"             example:"2024-06-01T00:00:00.000Z"`
+	CreatedAt   timeutil.Time `json:"createdAt"   doc:"Creation timestamp"                example:"2011-01-25T18:44:36.000Z"                  format:"date-time"`
+	UpdatedAt   timeutil.Time `json:"updatedAt"   doc:"Last update timestamp"             example:"2024-06-01T00:00:00.000Z"                  format:"date-time"`
 }
 
 // Repo contains detailed repository information.
@@ -37,7 +37,7 @@ type Repo struct {
 	RepoSummary
 	DefaultBranch string   `json:"defaultBranch" doc:"Default branch name"      example:"master"`
 	License       string   `json:"license"       doc:"License name"             example:"MIT License"`
-	Topics        []string `json:"topics"        doc:"Repository topics"`
+	Topics        []string `json:"topics"        doc:"Repository topics"                              nullable:"false"`
 	Archived      bool     `json:"archived"      doc:"Whether repo is archived" example:"false"`
 	Disabled      bool     `json:"disabled"      doc:"Whether repo is disabled" example:"false"`
 }
@@ -47,7 +47,7 @@ type Activity struct {
 	ID             int64         `json:"id"             doc:"Activity ID"      example:"1"`
 	Actor          string        `json:"actor"          doc:"Actor username"   example:"octocat"`
 	Ref            string        `json:"ref"            doc:"Git reference"    example:"refs/heads/master"`
-	Timestamp      timeutil.Time `json:"timestamp"      doc:"Event timestamp"  example:"2024-01-15T10:30:00.000Z"`
+	Timestamp      timeutil.Time `json:"timestamp"      doc:"Event timestamp"  example:"2024-01-15T10:30:00.000Z"                       format:"date-time"`
 	ActivityType   string        `json:"activityType"   doc:"Type of activity" example:"push"`
 	ActorAvatarURL string        `json:"actorAvatarUrl" doc:"Actor avatar URL" example:"https://avatars.githubusercontent.com/u/583231"`
 }

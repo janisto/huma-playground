@@ -28,7 +28,6 @@ type config struct {
 	APIPrefix         string
 	FirebaseMode      string
 	FirebaseProjectID string
-	GitHubToken       string
 	CORSOrigins       []string
 	LogLevel          zapcore.Level
 	RequestTimeout    time.Duration
@@ -101,7 +100,6 @@ func loadConfig(getenv func(string) string) (config, error) {
 		APIPrefix:         "/v1",
 		FirebaseMode:      mode,
 		FirebaseProjectID: projectID,
-		GitHubToken:       getenv("GITHUB_TOKEN"),
 		CORSOrigins:       origins,
 		LogLevel:          level,
 		RequestTimeout:    8 * time.Second,
@@ -187,7 +185,7 @@ func parseCORSOrigins(environment, value string) ([]string, error) {
 		if origins[i] == "" {
 			return nil, errors.New("CORS_ALLOWED_ORIGINS contains an empty origin")
 		}
-		if origins[i] == "*" && environment != environmentDevelopment {
+		if strings.Contains(origins[i], "*") && environment != environmentDevelopment {
 			return nil, errors.New("wildcard CORS is allowed only in development")
 		}
 		if origins[i] != "*" {

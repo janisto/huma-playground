@@ -6,8 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/janisto/huma-observability/v2"
 )
 
 func newTestServer(handler http.HandlerFunc) *httptest.Server {
@@ -444,6 +447,51 @@ func TestRateLimited403WithRetryAfter(t *testing.T) {
 	}
 }
 
+func TestSecondaryRateLimit403WithoutHeaders(t *testing.T) {
+	srv := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+		})
+	})
+	defer srv.Close()
+
+	client := newTestClient(srv.URL)
+	_, err := client.GetOwner(t.Context(), "octocat")
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("error = %v, want ErrRateLimited", err)
+	}
+	upstreamErr, ok := errors.AsType[*UpstreamError](err)
+	if !ok {
+		t.Fatalf("error type = %T, want *UpstreamError", err)
+	}
+	if upstreamErr.Kind != UpstreamErrorKindRateLimited {
+		t.Fatalf("kind = %q, want %q", upstreamErr.Kind, UpstreamErrorKindRateLimited)
+	}
+	if upstreamErr.RetryAfter != "60" {
+		t.Fatalf("RetryAfter = %q, want conservative fallback 60", upstreamErr.RetryAfter)
+	}
+}
+
+func TestOrdinaryForbiddenBodyIsNotRateLimited(t *testing.T) {
+	srv := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "Resource not accessible by integration"})
+	})
+	defer srv.Close()
+
+	client := newTestClient(srv.URL)
+	_, err := client.GetOwner(t.Context(), "octocat")
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("error = %v, want ErrForbidden", err)
+	}
+	if errors.Is(err, ErrRateLimited) {
+		t.Fatalf("ordinary forbidden error was misclassified: %v", err)
+	}
+}
+
 func TestRateLimitedHTTP429(t *testing.T) {
 	srv := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "60")
@@ -472,6 +520,26 @@ func TestRateLimitedHTTP429(t *testing.T) {
 	}
 	if upstreamErr.RetryAfter != "60" {
 		t.Fatalf("expected Retry-After 60, got %q", upstreamErr.RetryAfter)
+	}
+}
+
+func TestRateLimitedHTTP429WithoutHeadersUsesMinimumDelay(t *testing.T) {
+	srv := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	defer srv.Close()
+
+	client := newTestClient(srv.URL)
+	_, err := client.GetOwner(t.Context(), "octocat")
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("error = %v, want ErrRateLimited", err)
+	}
+	upstreamErr, ok := errors.AsType[*UpstreamError](err)
+	if !ok {
+		t.Fatalf("error type = %T, want *UpstreamError", err)
+	}
+	if upstreamErr.RetryAfter != "60" {
+		t.Fatalf("RetryAfter = %q, want minimum delay 60", upstreamErr.RetryAfter)
 	}
 }
 
@@ -629,31 +697,6 @@ func TestListLanguagesContextCancellation(t *testing.T) {
 	}
 }
 
-func TestTokenSentAsBearer(t *testing.T) {
-	srv := newTestServer(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if auth != "Bearer test-token-123" {
-			t.Errorf("expected Bearer test-token-123, got %s", auth)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"login":      "octocat",
-			"created_at": "2024-01-01T00:00:00Z",
-			"updated_at": "2024-01-01T00:00:00Z",
-		})
-	})
-	defer srv.Close()
-
-	client, err := NewClient(http.DefaultClient, WithBaseURL(srv.URL), WithToken("test-token-123"))
-	if err != nil {
-		t.Fatalf("create client: %v", err)
-	}
-	_, err = client.GetOwner(t.Context(), "octocat")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestNoTokenNoAuthHeader(t *testing.T) {
 	srv := newTestServer(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
@@ -684,8 +727,8 @@ func TestRequiredHeaders(t *testing.T) {
 		if r.Header.Get("Accept") != "application/vnd.github+json" {
 			t.Errorf("expected Accept application/vnd.github+json, got %s", r.Header.Get("Accept"))
 		}
-		if r.Header.Get("X-Github-Api-Version") != "2022-11-28" {
-			t.Errorf("expected X-GitHub-Api-Version 2022-11-28, got %s", r.Header.Get("X-Github-Api-Version"))
+		if r.Header.Get("X-Github-Api-Version") != "2026-03-10" {
+			t.Errorf("expected X-GitHub-Api-Version 2026-03-10, got %s", r.Header.Get("X-Github-Api-Version"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -700,6 +743,40 @@ func TestRequiredHeaders(t *testing.T) {
 	_, err := client.GetOwner(t.Context(), "octocat")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRequestIDPropagatedToGitHub(t *testing.T) {
+	srv := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Request-ID"); got != "upstream-request-id" {
+			t.Errorf("X-Request-ID = %q, want upstream-request-id", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"login":      "octocat",
+			"created_at": "2024-01-01T00:00:00Z",
+			"updated_at": "2024-01-01T00:00:00Z",
+		})
+	})
+	defer srv.Close()
+
+	client := newTestClient(srv.URL)
+	handler := obs.HTTPRequestContext(
+		obs.HTTPRequestContextConfig{},
+	)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, err := client.GetOwner(r.Context(), "octocat"); err != nil {
+				t.Errorf("GetOwner: %v", err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+	request.Header.Set("X-Request-ID", "upstream-request-id")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", response.Code)
 	}
 }
 
@@ -901,7 +978,23 @@ func FuzzParseLinkHeader(f *testing.F) {
 	f.Add("")
 	f.Add(`<https://api.github.com/repos/o/r/activity?after=abc>; rel="next"`)
 	f.Add("malformed")
-	f.Fuzz(func(_ *testing.T, header string) {
-		_ = parseLinkHeader(header)
+	f.Fuzz(func(t *testing.T, header string) {
+		first := parseLinkHeader(header)
+		if second := parseLinkHeader(header); second != first {
+			t.Fatalf("parseLinkHeader(%q) returned %q then %q", header, first, second)
+		}
+	})
+}
+
+func FuzzParseLinkHeaderRoundTrip(f *testing.F) {
+	f.Add("abc123")
+	f.Add("cursor with spaces")
+	f.Add("a/b?c=d&e=f")
+	f.Fuzz(func(t *testing.T, cursor string) {
+		header := "<https://api.github.com/repos/o/r/activity?after=" +
+			url.QueryEscape(cursor) + `>; rel="next"`
+		if got := parseLinkHeader(header); got != cursor {
+			t.Fatalf("parseLinkHeader(%q) = %q, want %q", header, got, cursor)
+		}
 	})
 }

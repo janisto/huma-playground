@@ -29,6 +29,12 @@ Instructions for coding agents working in this repository.
 - Mark breaking changes with `!` and explain them in a `BREAKING CHANGE:` footer.
 - Before committing, run `just qa` and `git diff --check`.
 
+## GitHub automation
+
+- Reference GitHub Actions by explicit full release tags such as
+  `owner/action@v1.2.3`, not full commit SHAs or floating major-version tags.
+  Dependabot updates those release tags.
+
 ## Mandatory skills
 
 - Use `.agents/skills/adversarial-testing/SKILL.md` for every task that plans, creates, modifies, reviews, debugs, or evaluates tests. Apply it alongside any more specific framework or infrastructure testing skill.
@@ -69,13 +75,14 @@ Key recipes:
 - `just run` - Run the server
 - `just test` - Test both Go modules
 - `just test-race` - Run both modules with the race detector
+- `just fuzz` - Fuzz the cursor and GitHub Link-header parsers
 - `just test-integration-ci` - Require emulator-backed tests and generate separate integration coverage
 - `just functions-smoke` - Probe the registered function target
 - `just coverage` - Run tests and generate coverage report
 - `just lint` - Lint both Go modules
 - `just fmt-check` - Reject formatting drift
 - `just tidy-check` - Reject module-file drift
-- `just workflow-check` - Validate GitHub Actions
+- `just workflow-check` - Validate GitHub Actions locally with the installed `actionlint`
 - `just fmt` - Apply formatters
 - `just fix` - Run linter and apply formatters
 - `just check` - Full check (build + test + lint)
@@ -120,6 +127,9 @@ The server starts on port 8080 with endpoints:
 - `http://localhost:8080/health` - health probe
 - `http://localhost:8080/v1/api-docs` - interactive API explorer
 - `http://localhost:8080/v1/openapi.json` - OpenAPI schema
+- `http://localhost:8080/v1/hello` - greeting examples
+- `http://localhost:8080/v1/items` - cursor-paginated items
+- `http://localhost:8080/v1/profile` - authenticated profile CRUD
 - `http://localhost:8080/v1/github/owners/{owner}` - GitHub owner info
 - `http://localhost:8080/v1/github/owners/{owner}/repos` - GitHub owner repos
 - `http://localhost:8080/v1/github/repos/{owner}/{repo}` - GitHub repo details
@@ -727,7 +737,6 @@ for Firebase SDK, authentication, cleanup, CRUD, and concurrency behavior.
   - `FIREBASE_PROJECT_ID`
   - `FIREBASE_AUTH_EMULATOR_HOST` and `FIRESTORE_EMULATOR_HOST` (configure together as valid `host:port` authorities)
   - `CORS_ALLOWED_ORIGINS` (required outside development)
-  - `GITHUB_TOKEN` (optional GitHub personal access token for higher rate limits)
   - `GOOGLE_APPLICATION_CREDENTIALS` (path to service account JSON; uses ADC if not set)
   - `GOOGLE_CLOUD_PROJECT`, `GCP_PROJECT`, `GCLOUD_PROJECT`, or `PROJECT_ID` (for Cloud Trace correlation)
 

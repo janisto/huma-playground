@@ -12,6 +12,6 @@ type Profile struct {
 	ContactEmail string        `json:"contactEmail" doc:"Unverified contact email address" example:"john@example.com"`
 	PhoneNumber  string        `json:"phoneNumber"  doc:"Phone number in E.164 format"     example:"+358401234567"`
 	Marketing    bool          `json:"marketing"    doc:"Marketing opt-in"                 example:"true"`
-	CreatedAt    timeutil.Time `json:"createdAt"    doc:"Creation timestamp"               example:"2024-01-15T10:30:00.000Z"`
-	UpdatedAt    timeutil.Time `json:"updatedAt"    doc:"Last update timestamp"            example:"2024-01-15T10:30:00.000Z"`
+	CreatedAt    timeutil.Time `json:"createdAt"    doc:"Creation timestamp"               example:"2024-01-15T10:30:00.000Z" format:"date-time"`
+	UpdatedAt    timeutil.Time `json:"updatedAt"    doc:"Last update timestamp"            example:"2024-01-15T10:30:00.000Z" format:"date-time"`
 }

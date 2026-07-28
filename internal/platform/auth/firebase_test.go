@@ -320,3 +320,31 @@ func TestFirebaseVerifierVerifyDisabledUser(t *testing.T) {
 		}
 	}
 }
+
+func TestFirebaseVerifierRejectsDeletedUser(t *testing.T) {
+	testutil.SkipIfEmulatorUnavailable(t)
+	testutil.SetupEmulator(t)
+	testutil.ClearAccounts(t)
+
+	ctx := t.Context()
+	fbApp, err := firebase.NewApp(ctx, &firebase.Config{ProjectID: testutil.ProjectID})
+	if err != nil {
+		t.Fatalf("create Firebase app: %v", err)
+	}
+	ac, err := fbApp.Auth(ctx)
+	if err != nil {
+		t.Fatalf("create Auth client: %v", err)
+	}
+	result := testutil.CreateTestUser(t, "deleted@example.com", "password123")
+	if deleteErr := ac.DeleteUser(ctx, result.LocalID); deleteErr != nil {
+		t.Fatalf("delete user: %v", deleteErr)
+	}
+
+	_, err = NewFirebaseVerifier(ac).Verify(ctx, result.IDToken)
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("deleted user verification error = %v, want ErrInvalidToken", err)
+	}
+	if errors.Is(err, ErrAuthUnavailable) {
+		t.Fatalf("deleted user verification error = %v, must not be dependency unavailable", err)
+	}
+}
