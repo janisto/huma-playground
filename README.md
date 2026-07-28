@@ -33,6 +33,7 @@ A compact, production-conscious REST API example using [Huma v2](https://huma.ro
 - Go 1.26.5+ (the repository currently pins 1.26.5)
 - [Just](https://github.com/casey/just)
 - [golangci-lint v2](https://golangci-lint.run/)
+- [actionlint](https://github.com/rhysd/actionlint) (`brew install actionlint`)
 - Firebase CLI and Java 21 when running emulator integration tests
 - Docker or Podman for container checks
 
@@ -93,7 +94,7 @@ curl --fail --silent \
 
 These checks prevent accidental use of the Auth emulator outside development, where unsigned test tokens would be unsafe.
 
-`firestore.rules` denies direct client reads and writes. The Admin SDK bypasses those rules, so the API enforces ownership by deriving a collision-safe profile document ID from the verified Firebase UID rather than accepting a user ID from the request.
+`firestore.rules` denies direct client reads and writes. The Admin SDK bypasses those rules, so the API enforces ownership by deriving a collision-safe profile document path from the verified Firebase UID rather than accepting a user ID from the request.
 
 ## API
 
@@ -150,7 +151,7 @@ All repository workflows go through Just so `.env` and `GOTOOLCHAIN` are applied
 | `just fmt-check` | Reject formatting drift |
 | `just tidy-check` | Reject module-file drift |
 | `just vuln` | Run `govulncheck` against both modules |
-| `just workflow-check` | Validate GitHub Actions with `actionlint` |
+| `just workflow-check` | Validate GitHub Actions locally with the installed `actionlint` |
 | `just coverage` | Generate root application coverage reports |
 | `just functions-run` | Run the local Functions Framework target |
 | `just functions-smoke` | Build and probe the registered function target |

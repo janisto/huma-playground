@@ -82,7 +82,7 @@ Key recipes:
 - `just lint` - Lint both Go modules
 - `just fmt-check` - Reject formatting drift
 - `just tidy-check` - Reject module-file drift
-- `just workflow-check` - Validate GitHub Actions
+- `just workflow-check` - Validate GitHub Actions locally with the installed `actionlint`
 - `just fmt` - Apply formatters
 - `just fix` - Run linter and apply formatters
 - `just check` - Full check (build + test + lint)

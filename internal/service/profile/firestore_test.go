@@ -3,7 +3,6 @@ package profile
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 
@@ -119,34 +118,67 @@ func TestFirestoreCreate(t *testing.T) {
 	}
 }
 
-func TestProfileDocumentID(t *testing.T) {
+func TestProfileDocumentPathSeparatesEncodedAndLegacyIDs(t *testing.T) {
 	tests := []struct {
-		userID      string
-		want        string
-		wantEncoded bool
+		userID string
+		want   string
 	}{
-		{userID: "user-123", want: "user-123"},
-		{userID: "user/name", wantEncoded: true},
-		{userID: "/", wantEncoded: true},
-		{userID: ".", wantEncoded: true},
-		{userID: "..", wantEncoded: true},
-		{userID: "__reserved__", wantEncoded: true},
-		{userID: "uid~Lw", wantEncoded: true},
-		{userID: "uid~already-prefixed", wantEncoded: true},
+		{userID: "user-123", want: "profiles/user-123"},
+		{userID: "uid~Lw", want: "profiles/uid~Lw"},
+		{userID: "user/name", want: "profiles/_encoded/by-uid/dXNlci9uYW1l"},
+		{userID: "/", want: "profiles/_encoded/by-uid/Lw"},
+		{userID: ".", want: "profiles/_encoded/by-uid/Lg"},
+		{userID: "..", want: "profiles/_encoded/by-uid/Li4"},
+		{userID: "__reserved__", want: "profiles/_encoded/by-uid/X19yZXNlcnZlZF9f"},
 	}
 	seen := make(map[string]string)
 	for _, test := range tests {
-		got := profileDocumentID(test.userID)
-		if test.want != "" && got != test.want {
-			t.Fatalf("profileDocumentID(%q) = %q, want %q", test.userID, got, test.want)
-		}
-		if test.wantEncoded && !strings.HasPrefix(got, encodedUserIDPrefix) {
-			t.Fatalf("profileDocumentID(%q) = %q, want encoded prefix", test.userID, got)
+		got := profileDocumentPath(test.userID)
+		if got != test.want {
+			t.Fatalf("profileDocumentPath(%q) = %q, want %q", test.userID, got, test.want)
 		}
 		if previous, exists := seen[got]; exists {
-			t.Fatalf("document ID collision for %q and %q: %q", previous, test.userID, got)
+			t.Fatalf("document path collision for %q and %q: %q", previous, test.userID, got)
 		}
 		seen[got] = test.userID
+	}
+}
+
+func TestFirestoreEncodedUIDCannotAccessLegacyProfile(t *testing.T) {
+	store, cleanup := setupFirestoreTest(t)
+	defer cleanup()
+
+	ctx := t.Context()
+	const legacyUserID = "uid~Lw"
+	_, err := store.client.Collection(profilesCollection).Doc(legacyUserID).Create(ctx, firestoreProfile{
+		FirstName:    "Legacy",
+		LastName:     "Owner",
+		ContactEmail: "legacy@example.com",
+	})
+	if err != nil {
+		t.Fatalf("create legacy profile: %v", err)
+	}
+
+	_, err = store.Get(ctx, "/")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("encoded UID read legacy profile: %v", err)
+	}
+
+	created := createTestProfile(t, store, ctx, "/", CreateParams{
+		FirstName:    "Encoded",
+		LastName:     "Owner",
+		ContactEmail: "encoded@example.com",
+	})
+	if created.ContactEmail != "encoded@example.com" {
+		t.Fatalf("encoded profile email = %q, want encoded@example.com", created.ContactEmail)
+	}
+
+	legacy, err := store.Get(ctx, legacyUserID)
+	if err != nil {
+		t.Fatalf("get legacy profile: %v", err)
+	}
+	if legacy.ContactEmail != "legacy@example.com" {
+		t.Fatalf("legacy profile email = %q, want legacy@example.com", legacy.ContactEmail)
 	}
 }
 
@@ -167,9 +199,7 @@ func TestFirestoreSupportsFirebaseUIDOutsideDocumentIDGrammar(t *testing.T) {
 	if got.ID != userID {
 		t.Fatalf("profile ID = %q, want %q", got.ID, userID)
 	}
-	if _, err := store.client.Collection(profilesCollection).
-		Doc(profileDocumentID(userID)).
-		Get(t.Context()); err != nil {
+	if _, err := store.client.Doc(profileDocumentPath(userID)).Get(t.Context()); err != nil {
 		t.Fatalf("read encoded profile document: %v", err)
 	}
 }

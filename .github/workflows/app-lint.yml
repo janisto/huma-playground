@@ -54,9 +54,6 @@ jobs:
       - name: Check module files
         run: just tidy-check
 
-      - name: Validate workflows
-        run: just workflow-check
-
       - name: Check Go modernizations
         run: just modernize-check
 

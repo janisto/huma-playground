@@ -182,7 +182,7 @@ vuln-functions:
 
 [group('qa')]
 workflow-check:
-    go tool actionlint
+    actionlint
 
 [group('qa')]
 modernize-check:

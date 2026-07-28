@@ -15,15 +15,18 @@ import (
 	"github.com/janisto/huma-playground/internal/platform/audit"
 )
 
-const profilesCollection = "profiles"
+const (
+	profilesCollection        = "profiles"
+	encodedProfilesDocument   = "_encoded"
+	encodedProfilesCollection = "by-uid"
+)
 
-const encodedUserIDPrefix = "uid~"
-
-func profileDocumentID(userID string) string {
-	if isFirestoreDocumentID(userID) && !strings.HasPrefix(userID, encodedUserIDPrefix) {
-		return userID
+func profileDocumentPath(userID string) string {
+	if isFirestoreDocumentID(userID) {
+		return profilesCollection + "/" + userID
 	}
-	return encodedUserIDPrefix + base64.RawURLEncoding.EncodeToString([]byte(userID))
+	return profilesCollection + "/" + encodedProfilesDocument + "/" +
+		encodedProfilesCollection + "/" + base64.RawURLEncoding.EncodeToString([]byte(userID))
 }
 
 func isFirestoreDocumentID(value string) bool {
@@ -99,7 +102,7 @@ func NewFirestoreStore(client *firestore.Client) *FirestoreStore {
 
 // Create atomically creates a profile if it does not already exist.
 func (s *FirestoreStore) Create(ctx context.Context, userID string, params CreateParams) (*Profile, error) {
-	docRef := s.client.Collection(profilesCollection).Doc(profileDocumentID(userID))
+	docRef := s.client.Doc(profileDocumentPath(userID))
 	now := time.Now().UTC()
 	fp := firestoreProfile{
 		FirstName:    params.FirstName,
@@ -132,7 +135,7 @@ func (s *FirestoreStore) Create(ctx context.Context, userID string, params Creat
 
 // Get retrieves a profile by user ID.
 func (s *FirestoreStore) Get(ctx context.Context, userID string) (*Profile, error) {
-	docRef := s.client.Collection(profilesCollection).Doc(profileDocumentID(userID))
+	docRef := s.client.Doc(profileDocumentPath(userID))
 	doc, err := docRef.Get(ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
@@ -152,7 +155,7 @@ func (s *FirestoreStore) Get(ctx context.Context, userID string) (*Profile, erro
 
 // Update updates a profile using a transaction for atomicity.
 func (s *FirestoreStore) Update(ctx context.Context, userID string, params UpdateParams) (*Profile, error) {
-	docRef := s.client.Collection(profilesCollection).Doc(profileDocumentID(userID))
+	docRef := s.client.Doc(profileDocumentPath(userID))
 
 	var result *Profile
 
@@ -218,7 +221,7 @@ func (s *FirestoreStore) Update(ctx context.Context, userID string, params Updat
 
 // Delete atomically removes an existing profile.
 func (s *FirestoreStore) Delete(ctx context.Context, userID string) error {
-	docRef := s.client.Collection(profilesCollection).Doc(profileDocumentID(userID))
+	docRef := s.client.Doc(profileDocumentPath(userID))
 	_, err := docRef.Delete(ctx, firestore.Exists)
 	if err != nil {
 		switch status.Code(err) {
