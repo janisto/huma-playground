@@ -243,8 +243,8 @@ Current task-specific guidance:
 | `security-review` | `.github/agents/security-review.agent.md` | Run an evidence-based GitHub Copilot security audit with a prompt-level read-only boundary |
 
 Repository automation under `.github/` independently checks both Go modules, required Firebase emulators,
-vulnerabilities, the final container, root and function lint, and GitHub Actions security with zizmor. Labeler
-configuration treats `.agents/**/*.md` and `.github/**/*.md` as documentation.
+vulnerabilities, the final container, and root and function lint. Labeler configuration treats `.agents/**/*.md` and
+`.github/**/*.md` as documentation.
 
 ---
 
