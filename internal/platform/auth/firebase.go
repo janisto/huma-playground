@@ -72,6 +72,8 @@ func (v *FirebaseVerifier) Verify(ctx context.Context, idToken string) (*Firebas
 			return nil, errors.Join(ErrTokenRevoked, err)
 		case fbauth.IsUserDisabled(err):
 			return nil, errors.Join(ErrUserDisabled, err)
+		case fbauth.IsUserNotFound(err):
+			return nil, errors.Join(ErrInvalidToken, err)
 		case fbauth.IsIDTokenInvalid(err):
 			return nil, errors.Join(ErrInvalidToken, err)
 		case errors.Is(err, context.Canceled), errorutils.IsCancelled(err):

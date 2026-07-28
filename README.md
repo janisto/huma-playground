@@ -23,6 +23,7 @@ A compact, production-conscious REST API example using [Huma v2](https://huma.ro
 - Firestore atomic create, transaction-safe partial update, existence-checked delete, and audit events
 - Explicit development-offline, emulator, and live Firebase modes
 - Bounded request, upstream response, server, and shutdown work
+- Anonymous, public-only GitHub proxy requests without credential forwarding
 - Non-root distroless container execution
 - A deliberately small, separately deployable Go Functions Framework example
 - Required CI execution for both Go modules plus separate emulator-backed coverage
@@ -80,7 +81,6 @@ curl --fail --silent \
 | `FIREBASE_AUTH_EMULATOR_HOST` | unset | Auth emulator address |
 | `FIRESTORE_EMULATOR_HOST` | unset | Firestore emulator address |
 | `CORS_ALLOWED_ORIGINS` | `*` in development | Comma-separated browser origins; required outside development |
-| `GITHUB_TOKEN` | unset | Optional GitHub API bearer token |
 | `GOTOOLCHAIN` | set by `.env` | Repository Go toolchain pin |
 
 ### Firebase modes
@@ -93,7 +93,7 @@ curl --fail --silent \
 
 These checks prevent accidental use of the Auth emulator outside development, where unsigned test tokens would be unsafe.
 
-`firestore.rules` denies direct client reads and writes. The Admin SDK bypasses those rules, so the API enforces ownership by deriving the only profile document ID from the verified Firebase UID rather than accepting a user ID from the request.
+`firestore.rules` denies direct client reads and writes. The Admin SDK bypasses those rules, so the API enforces ownership by deriving a collision-safe profile document ID from the verified Firebase UID rather than accepting a user ID from the request.
 
 ## API
 
@@ -144,6 +144,7 @@ All repository workflows go through Just so `.env` and `GOTOOLCHAIN` are applied
 | `just build` | Build both Go modules |
 | `just test` | Test both Go modules |
 | `just test-race` | Run both modules with the race detector |
+| `just fuzz` | Fuzz the cursor and GitHub Link-header parsers |
 | `just lint` | Lint both modules |
 | `just fmt` | Format both modules |
 | `just fmt-check` | Reject formatting drift |
@@ -188,6 +189,8 @@ Run it:
 just functions-run
 curl --fail --silent 'http://localhost:8080/?name=Ada'
 ```
+
+The local recipe sets `LOCAL_ONLY=true`, so the runner binds to `127.0.0.1`. Direct runner invocations can omit that variable to use the Functions Framework's all-interface default.
 
 Deploy it as a Cloud Run function, not through Firebase CLI:
 
@@ -253,7 +256,7 @@ detailed [format specification](https://agentskills.io/specification), under `.a
 
 The app uses `github.com/janisto/huma-observability/v2`. `obs.HTTPRequestContext` is installed at the Chi boundary so liveness, recovery, 404, 405, and Huma routes share request IDs, request-scoped loggers, and W3C trace metadata. The HTTP and Huma middleware explicitly use Trace Context Level 1. Huma routes additionally use `obs.RequestContext` and `obs.AccessLogger` for operation-aware logs.
 
-Access logs are privacy-minimized: Huma records route templates and operation IDs without raw paths, peer IPs, or user agents; the local Chi logger follows the same boundary and wraps only Chi-only routes and error handlers. Escaping non-abort panic records use `terminal_reason: "panic"` and error severity without inventing an unobserved status. This split also prevents duplicate `/v1` access logs. `obs.Logger(ctx)` is intentionally request-bound; process and background work must receive an explicit logger.
+Access logs are privacy-minimized: Huma records route templates and operation IDs without raw paths, peer IPs, or user agents; the local Chi logger follows the same boundary and wraps only Chi-only routes and error handlers. Escaping non-abort panics before a response write are recorded as status 500 with `terminal_reason: "panic"` and error severity. This split also prevents duplicate `/v1` access logs. `obs.Logger(ctx)` is intentionally request-bound; process and background work must receive an explicit logger.
 
 Forwarding headers are removed at the outer HTTP boundary because this example does not define a trusted-proxy boundary; this also prevents forwarded-host values from influencing Huma schema links.
 

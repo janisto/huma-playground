@@ -3,6 +3,7 @@ package profile
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -115,6 +116,61 @@ func TestFirestoreCreate(t *testing.T) {
 		if _, exists := data[legacy]; exists {
 			t.Errorf("unexpected legacy Firestore field %q", legacy)
 		}
+	}
+}
+
+func TestProfileDocumentID(t *testing.T) {
+	tests := []struct {
+		userID      string
+		want        string
+		wantEncoded bool
+	}{
+		{userID: "user-123", want: "user-123"},
+		{userID: "user/name", wantEncoded: true},
+		{userID: "/", wantEncoded: true},
+		{userID: ".", wantEncoded: true},
+		{userID: "..", wantEncoded: true},
+		{userID: "__reserved__", wantEncoded: true},
+		{userID: "uid~Lw", wantEncoded: true},
+		{userID: "uid~already-prefixed", wantEncoded: true},
+	}
+	seen := make(map[string]string)
+	for _, test := range tests {
+		got := profileDocumentID(test.userID)
+		if test.want != "" && got != test.want {
+			t.Fatalf("profileDocumentID(%q) = %q, want %q", test.userID, got, test.want)
+		}
+		if test.wantEncoded && !strings.HasPrefix(got, encodedUserIDPrefix) {
+			t.Fatalf("profileDocumentID(%q) = %q, want encoded prefix", test.userID, got)
+		}
+		if previous, exists := seen[got]; exists {
+			t.Fatalf("document ID collision for %q and %q: %q", previous, test.userID, got)
+		}
+		seen[got] = test.userID
+	}
+}
+
+func TestFirestoreSupportsFirebaseUIDOutsideDocumentIDGrammar(t *testing.T) {
+	store, cleanup := setupFirestoreTest(t)
+	defer cleanup()
+
+	const userID = "firebase/user"
+	params := CreateParams{FirstName: "Path", LastName: "Safe", ContactEmail: "path@example.com"}
+	created := createTestProfile(t, store, t.Context(), userID, params)
+	if created.ID != userID {
+		t.Fatalf("created profile ID = %q, want %q", created.ID, userID)
+	}
+	got, err := store.Get(t.Context(), userID)
+	if err != nil {
+		t.Fatalf("get profile: %v", err)
+	}
+	if got.ID != userID {
+		t.Fatalf("profile ID = %q, want %q", got.ID, userID)
+	}
+	if _, err := store.client.Collection(profilesCollection).
+		Doc(profileDocumentID(userID)).
+		Get(t.Context()); err != nil {
+		t.Fatalf("read encoded profile document: %v", err)
 	}
 }
 

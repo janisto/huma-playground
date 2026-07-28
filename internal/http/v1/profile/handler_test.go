@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -482,16 +483,50 @@ func TestProfileValidationInvalidPhone(t *testing.T) {
 	}
 }
 
-func TestProfileValidationRejectsSurroundingWhitespace(t *testing.T) {
+func TestProfileValidationRejectsInvalidNameBoundaries(t *testing.T) {
+	tests := map[string]string{
+		"ASCII whitespace":       " John ",
+		"non-breaking space":     "\u00a0John",
+		"Unicode em space":       "John\u2003",
+		"zero-width format char": "Jo\u200bhn",
+		"line separator":         "John\u2028",
+	}
+
+	for name, firstName := range tests {
+		t.Run(name, func(t *testing.T) {
+			router := newTestRouter(&mockService{}, &stubVerifier{User: testUser()})
+			body := fmt.Sprintf(
+				`{"firstName":%q,"lastName":"Doe","contactEmail":"john@example.com","phoneNumber":"+358401234567"}`,
+				firstName,
+			)
+			request := httptest.NewRequestWithContext(
+				t.Context(), http.MethodPost, "/profile", strings.NewReader(body),
+			)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer valid-token")
+			response := httptest.NewRecorder()
+
+			router.ServeHTTP(response, request)
+
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("expected 422, got %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestProfileValidationAcceptsUnicodeNameWithInternalSpace(t *testing.T) {
 	router := newTestRouter(&mockService{}, &stubVerifier{User: testUser()})
-	body := `{"firstName":" John ","lastName":"Doe","contactEmail":"john@example.com","phoneNumber":"+358401234567"}`
+	body := `{"firstName":"María\u202fJosé","lastName":"Núñez","contactEmail":"maria@example.com","phoneNumber":"+358401234567","marketing":false}`
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profile", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer valid-token")
 	response := httptest.NewRecorder()
+
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422, got %d: %s", response.Code, response.Body.String())
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", response.Code, response.Body.String())
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -40,11 +41,7 @@ type applicationClients struct {
 
 func newApplicationClients(ctx context.Context, cfg config, logger *zap.Logger) (*applicationClients, error) {
 	githubHTTPClient := &http.Client{Timeout: 10 * time.Second}
-	var githubOptions []githubsvc.Option
-	if cfg.GitHubToken != "" {
-		githubOptions = append(githubOptions, githubsvc.WithToken(cfg.GitHubToken))
-	}
-	githubClient, err := githubsvc.NewClient(githubHTTPClient, githubOptions...)
+	githubClient, err := githubsvc.NewClient(githubHTTPClient)
 	if err != nil {
 		return nil, fmt.Errorf("create GitHub client: %w", err)
 	}
@@ -143,6 +140,7 @@ func newRouter(cfg config, deps dependencies, logger *zap.Logger) http.Handler {
 	router.NotFound(httpAccessLogger(respond.NotFoundHandler(api)).ServeHTTP)
 	router.MethodNotAllowed(httpAccessLogger(respond.MethodNotAllowedHandler(api)).ServeHTTP)
 	router.Use(
+		chimiddleware.GetHead,
 		appmiddleware.IgnoreForwardedHeaders(),
 		obs.HTTPRequestContext(obs.HTTPRequestContextConfig{
 			Logger:            logger,
@@ -184,7 +182,29 @@ func addCBOROpenAPIContent(api huma.API) {
 				response.Content["application/problem+cbor"] = content
 			}
 		}
+		addErrorResponseHeaders(op)
 	})
+}
+
+func addErrorResponseHeaders(op *huma.Operation) {
+	addResponseHeader(op, http.StatusUnauthorized, "WWW-Authenticate", "Bearer authentication challenge")
+	addResponseHeader(op, http.StatusTooManyRequests, "Retry-After", "Delay before retrying")
+	addResponseHeader(op, http.StatusTooManyRequests, "X-RateLimit-Reset", "Upstream rate-limit reset time")
+	addResponseHeader(op, http.StatusServiceUnavailable, "Retry-After", "Delay before retrying")
+}
+
+func addResponseHeader(op *huma.Operation, status int, name, description string) {
+	response := op.Responses[strconv.Itoa(status)]
+	if response == nil {
+		return
+	}
+	if response.Headers == nil {
+		response.Headers = make(map[string]*huma.Param)
+	}
+	response.Headers[name] = &huma.Param{
+		Description: description,
+		Schema:      &huma.Schema{Type: huma.TypeString},
+	}
 }
 
 func requestContextTimeout(timeout time.Duration) func(http.Handler) http.Handler {
@@ -210,14 +230,26 @@ func newServer(cfg config, handler http.Handler) *http.Server {
 }
 
 func serve(ctx context.Context, server *http.Server, shutdownTimeout time.Duration, logger *zap.Logger) error {
-	if ctx.Err() != nil {
+	select {
+	case <-ctx.Done():
 		return nil
+	default:
 	}
 	var listenConfig net.ListenConfig
 	listener, err := listenConfig.Listen(ctx, "tcp", server.Addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", server.Addr, err)
 	}
+	return serveListener(ctx, server, listener, shutdownTimeout, logger)
+}
+
+func serveListener(
+	ctx context.Context,
+	server *http.Server,
+	listener net.Listener,
+	shutdownTimeout time.Duration,
+	logger *zap.Logger,
+) error {
 	logger.Info("server listening", zap.String("addr", listener.Addr().String()), zap.String("version", Version))
 
 	listenErr := make(chan error, 1)

@@ -20,15 +20,16 @@ env:
 
 jobs:
   unit:
+    name: Unit, race, and fuzz tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.26.x'
           check-latest: true
@@ -61,6 +62,9 @@ jobs:
       - name: Race detector
         run: just test-race
 
+      - name: Fuzz high-risk parsers
+        run: just fuzz
+
       - name: Generate coverage artifacts
         run: |
           go tool cover -func=coverage.out > coverage-summary.txt
@@ -87,28 +91,29 @@ jobs:
             coverage-summary.txt
 
   firebase-emulators:
+    name: Firebase emulator integration tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.26.x'
           check-latest: true
           cache: true
 
       - name: Set up Java
-        uses: actions/setup-java@v5.5.0
+        uses: actions/setup-java@v5.6.0
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6.4.0
+        uses: actions/setup-node@v7.0.0
         with:
           node-version: '24'
 
@@ -116,7 +121,7 @@ jobs:
         uses: extractions/setup-just@v4.0.0
 
       - name: Install Firebase CLI
-        run: npm install --global firebase-tools@15.22.1
+        run: npm install --global firebase-tools@15.24.0 # zizmor: ignore[adhoc-packages] Pinned standalone CI tool.
 
       - name: Run required emulator tests
         run: just test-integration-ci
@@ -142,15 +147,16 @@ jobs:
             integration-coverage-summary.txt
 
   vulnerability:
+    name: Reachable vulnerability scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.26.x'
           check-latest: true
@@ -166,10 +172,11 @@ jobs:
         run: just vuln
 
   dependency-review:
+    name: Dependency review
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
@@ -178,10 +185,11 @@ jobs:
         uses: actions/dependency-review-action@v5.0.0
 
   container:
+    name: Container smoke test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
@@ -192,6 +200,7 @@ jobs:
         run: just container-smoke
 
   ci:
+    name: Require CI
     if: ${{ always() }}
     needs:
       - unit

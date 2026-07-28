@@ -1,0 +1,6 @@
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # Repository policy requires explicit full release tags maintained by Dependabot.
+        "*": ref-pin

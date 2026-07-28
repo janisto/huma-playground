@@ -16,13 +16,14 @@ concurrency:
   group: label-prs
   cancel-in-progress: false
 
-permissions:
-  contents: read
-  pull-requests: write
+permissions: {}
 
 jobs:
   collect-prs:
+    name: Collect pull requests
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read # Enumerate pull requests for the selected scope.
 
     outputs:
       pr_numbers: ${{ steps.get_prs.outputs.pr_numbers }}
@@ -60,10 +61,14 @@ jobs:
           INPUT_SCOPE: ${{ github.event.inputs.scope }}
 
   label-prs-matrix:
+    name: Label pull request
     if: needs.collect-prs.outputs.pr_count != '0'
     needs: collect-prs
 
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # Apply labels to the selected pull request.
 
     strategy:
       max-parallel: 10
@@ -71,7 +76,8 @@ jobs:
         pr: ${{ fromJson(needs.collect-prs.outputs.pr_numbers) }}
 
     steps:
-      - uses: actions/labeler@v6.2.0
+      - name: Apply labels
+        uses: actions/labeler@v7.0.0
         with:
           pr-number: ${{ matrix.pr }}
           configuration-path: .github/labeler.yml

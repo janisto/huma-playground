@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"maps"
 	"net"
 	"net/http"
@@ -149,6 +150,24 @@ func TestLoadConfigRejectsUnsafeCombinations(t *testing.T) {
 				"CORS_ALLOWED_ORIGINS": "*",
 			},
 		},
+		{
+			name: "production prefix wildcard CORS",
+			env: map[string]string{
+				"APP_ENVIRONMENT":      "production",
+				"FIREBASE_MODE":        "live",
+				"FIREBASE_PROJECT_ID":  "real-project",
+				"CORS_ALLOWED_ORIGINS": "https://*",
+			},
+		},
+		{
+			name: "production subdomain wildcard CORS",
+			env: map[string]string{
+				"APP_ENVIRONMENT":      "production",
+				"FIREBASE_MODE":        "live",
+				"FIREBASE_PROJECT_ID":  "real-project",
+				"CORS_ALLOWED_ORIGINS": "https://*.example.com",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -210,6 +229,66 @@ func TestRouterServesHealthDocsAndOpenAPI(t *testing.T) {
 	}
 }
 
+func TestRouterServesHeadForGetRoutes(t *testing.T) {
+	server := httptest.NewServer(testRouter(t, testConfig(t)))
+	defer server.Close()
+	for _, path := range []string{"/health", "/v1/hello", "/v1/openapi.json"} {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodHead, server.URL+path, nil)
+		if err != nil {
+			t.Fatalf("%s: create request: %v", path, err)
+		}
+		response, err := server.Client().Do(request)
+		if err != nil {
+			t.Fatalf("%s: request: %v", path, err)
+		}
+		if response.StatusCode != http.StatusOK {
+			_ = response.Body.Close()
+			t.Fatalf("%s: expected 200, got %d", path, response.StatusCode)
+		}
+		body, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil {
+			t.Fatalf("%s: read body: %v", path, err)
+		}
+		if len(body) != 0 {
+			t.Fatalf("%s: HEAD response included %d body bytes", path, len(body))
+		}
+	}
+}
+
+func TestRouterRequestSizeBoundary(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	const limit = 1 << 20
+	const prefix = `{"name":"`
+	const suffix = `"}`
+
+	for _, test := range []struct {
+		name       string
+		bodyLength int
+		want       int
+	}{
+		{name: "one byte below limit reaches validation", bodyLength: limit - 1, want: http.StatusUnprocessableEntity},
+		{name: "exact limit is rejected", bodyLength: limit, want: http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := prefix + strings.Repeat("a", test.bodyLength-len(prefix)-len(suffix)) + suffix
+			request := httptest.NewRequestWithContext(
+				t.Context(),
+				http.MethodPost,
+				"/v1/hello",
+				strings.NewReader(body),
+			)
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("body length %d: status = %d, want %d: %s",
+					len(body), response.Code, test.want, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestRouterDocsUseRendererContentSecurityPolicy(t *testing.T) {
 	router := testRouter(t, testConfig(t))
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/api-docs", nil)
@@ -220,7 +299,7 @@ func TestRouterDocsUseRendererContentSecurityPolicy(t *testing.T) {
 		t.Fatalf("expected 200 OK, got %d: %s", response.Code, response.Body.String())
 	}
 	const want = "default-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'none'; " +
-		"frame-ancestors 'none'; sandbox allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox; " +
+		"frame-ancestors 'none'; sandbox allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads; " +
 		"script-src https://unpkg.com/@stoplight/elements@9.0.15/web-components.min.js; " +
 		"style-src 'unsafe-inline' https://unpkg.com/@stoplight/elements@9.0.15/styles.min.css"
 	if got := response.Header().Get("Content-Security-Policy"); got != want {
@@ -540,6 +619,53 @@ func TestServeDoesNotStartWithCancelledContext(t *testing.T) {
 	}
 }
 
+func TestServeListenerStartsAndShutsDownCleanly(t *testing.T) {
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		ReadHeaderTimeout: time.Second,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		result <- serveListener(ctx, server, listener, time.Second, zap.NewNop())
+	}()
+
+	request, err := http.NewRequestWithContext(
+		t.Context(),
+		http.MethodGet,
+		"http://"+listener.Addr().String(),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	response, err := (&http.Client{Timeout: time.Second}).Do(request)
+	if err != nil {
+		t.Fatalf("request started server: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", response.StatusCode)
+	}
+
+	cancel()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("serveListener: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not shut down")
+	}
+}
+
 func TestOpenAPIMediaTypesMatchRuntime(t *testing.T) {
 	router := testRouter(t, testConfig(t))
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/openapi.json", nil)
@@ -679,6 +805,98 @@ func TestOpenAPIResponseStatusesAndSecurityMatchRuntime(t *testing.T) {
 	}
 	if len(operationIDs) != operationCount {
 		t.Errorf("unique operation IDs = %d, operations = %d", len(operationIDs), operationCount)
+	}
+}
+
+func TestOpenAPIContractInvariantsMatchRuntime(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/openapi.json", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("openapi: expected 200, got %d", response.Code)
+	}
+
+	type schema struct {
+		Type          json.RawMessage   `json:"type"`
+		Format        string            `json:"format"`
+		MinProperties *int              `json:"minProperties"`
+		Properties    map[string]schema `json:"properties"`
+	}
+	type operation struct {
+		RequestBody *struct {
+			Content map[string]struct {
+				Schema schema `json:"schema"`
+			} `json:"content"`
+		} `json:"requestBody"`
+		Responses map[string]struct {
+			Headers map[string]json.RawMessage `json:"headers"`
+		} `json:"responses"`
+	}
+	var document struct {
+		Components struct {
+			Schemas map[string]schema `json:"schemas"`
+		} `json:"components"`
+		Paths map[string]map[string]operation `json:"paths"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
+		t.Fatalf("decode OpenAPI: %v", err)
+	}
+
+	updateSchema := document.Paths["/profile"]["patch"].RequestBody.Content["application/json"].Schema
+	if updateSchema.MinProperties == nil || *updateSchema.MinProperties != 1 {
+		t.Fatalf("PATCH /profile minProperties = %v, want 1", updateSchema.MinProperties)
+	}
+
+	for schemaName, fields := range map[string][]string{
+		"Activity":    {"timestamp"},
+		"Item":        {"createdAt"},
+		"Owner":       {"createdAt", "updatedAt"},
+		"Profile":     {"createdAt", "updatedAt"},
+		"RepoSummary": {"createdAt", "updatedAt"},
+	} {
+		for _, field := range fields {
+			if got := document.Components.Schemas[schemaName].Properties[field].Format; got != "date-time" {
+				t.Errorf("%s.%s format = %q, want date-time", schemaName, field, got)
+			}
+		}
+	}
+
+	for schemaName, field := range map[string]string{
+		"LanguagesData":        "languages",
+		"ListData":             "items",
+		"OwnerReposListData":   "repos",
+		"Repo":                 "topics",
+		"RepoActivityListData": "activities",
+		"RepoTagsListData":     "tags",
+	} {
+		got := string(document.Components.Schemas[schemaName].Properties[field].Type)
+		if got != `"array"` {
+			t.Errorf("%s.%s type = %s, want non-null array", schemaName, field, got)
+		}
+	}
+
+	for _, test := range []struct {
+		path   string
+		method string
+		status string
+		header string
+	}{
+		{path: "/profile", method: "get", status: "401", header: "WWW-Authenticate"},
+		{path: "/profile", method: "get", status: "503", header: "Retry-After"},
+		{
+			path: "/github/owners/{owner}", method: "get",
+			status: "429", header: "Retry-After",
+		},
+		{
+			path: "/github/owners/{owner}", method: "get",
+			status: "429", header: "X-RateLimit-Reset",
+		},
+	} {
+		headers := document.Paths[test.path][test.method].Responses[test.status].Headers
+		if _, ok := headers[test.header]; !ok {
+			t.Errorf("%s %s response %s missing %s header", test.method, test.path, test.status, test.header)
+		}
 	}
 }
 

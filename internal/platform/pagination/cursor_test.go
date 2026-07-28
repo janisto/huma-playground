@@ -179,7 +179,18 @@ func FuzzDecodeCursor(f *testing.F) {
 	f.Add(Cursor{Type: "item", Value: "item-001"}.Encode())
 	f.Fuzz(func(t *testing.T, input string) {
 		cursor, err := DecodeCursor(input)
-		if err == nil && input != "" && cursor.Encode() == "" {
+		if err != nil {
+			return
+		}
+		encoded := cursor.Encode()
+		decoded, err := DecodeCursor(encoded)
+		if err != nil {
+			t.Fatalf("canonical cursor %q failed to decode: %v", encoded, err)
+		}
+		if decoded != cursor {
+			t.Fatalf("cursor round trip = %#v, want %#v", decoded, cursor)
+		}
+		if input != "" && encoded == "" {
 			t.Fatal("valid non-empty cursor encoded to empty string")
 		}
 	})

@@ -79,8 +79,8 @@ func TestAccessLoggerLogsPanicTerminalReasonAndRepanics(t *testing.T) {
 		}
 		fields := entries[0].ContextMap()
 		assertLogField(t, fields, "request_id", "panic-req")
+		assertLogField(t, fields, "status", int64(http.StatusInternalServerError))
 		assertLogField(t, fields, "terminal_reason", "panic")
-		assertNoLogFields(t, fields, "status")
 		if entries[0].Level != zapcore.ErrorLevel {
 			t.Fatalf("expected error access log, got %s", entries[0].Level)
 		}
