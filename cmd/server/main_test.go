@@ -898,6 +898,12 @@ func TestOpenAPIContractInvariantsMatchRuntime(t *testing.T) {
 			t.Errorf("%s %s response %s missing %s header", test.method, test.path, test.status, test.header)
 		}
 	}
+
+	githubServiceUnavailableHeaders := document.Paths["/github/owners/{owner}"]["get"].
+		Responses["503"].Headers
+	if _, ok := githubServiceUnavailableHeaders["Retry-After"]; ok {
+		t.Error("GET /github/owners/{owner} response 503 unexpectedly documents Retry-After")
+	}
 }
 
 func TestVersionDefault(t *testing.T) {

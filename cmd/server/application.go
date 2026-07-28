@@ -190,7 +190,12 @@ func addErrorResponseHeaders(op *huma.Operation) {
 	addResponseHeader(op, http.StatusUnauthorized, "WWW-Authenticate", "Bearer authentication challenge")
 	addResponseHeader(op, http.StatusTooManyRequests, "Retry-After", "Delay before retrying")
 	addResponseHeader(op, http.StatusTooManyRequests, "X-RateLimit-Reset", "Upstream rate-limit reset time")
-	addResponseHeader(op, http.StatusServiceUnavailable, "Retry-After", "Delay before retrying")
+	for _, security := range op.Security {
+		if _, ok := security[auth.BearerAuthScheme]; ok {
+			addResponseHeader(op, http.StatusServiceUnavailable, "Retry-After", "Delay before retrying")
+			break
+		}
+	}
 }
 
 func addResponseHeader(op *huma.Operation, status int, name, description string) {

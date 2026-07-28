@@ -275,6 +275,9 @@ func TestGitHubTimeoutIsLoggedOnce(t *testing.T) {
 	if resp.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d: %s", resp.Code, resp.Body.String())
 	}
+	if retryAfter := resp.Header().Get("Retry-After"); retryAfter != "" {
+		t.Fatalf("unexpected Retry-After header %q", retryAfter)
+	}
 	entries := logs.FilterMessage("github upstream request timed out").All()
 	if len(entries) != 1 {
 		t.Fatalf("expected one GitHub timeout log, got %d", len(entries))
