@@ -824,6 +824,29 @@ func TestGitHubHandlersMapSafeDependencyErrors(t *testing.T) {
 	}
 }
 
+func TestGitHubHandlerErrorDoesNotReuseSelectedSuccessMediaType(t *testing.T) {
+	service := githubFixtures()
+	service.err = githubsvc.ErrUpstream
+	router := newGitHubTestRouter(t, service)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/github/owners/octocat", nil)
+	request.Header.Set("Accept", "application/*;charset=utf-8")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadGateway ||
+		response.Header().Get("Content-Type") != "application/problem+json; charset=utf-8" {
+		t.Fatalf("status=%d content-type=%q body=%s",
+			response.Code, response.Header().Get("Content-Type"), response.Body.String())
+	}
+	if body := decodeObject(t, response); body["code"] != "github_upstream" {
+		t.Fatalf("problem=%#v", body)
+	}
+	if len(service.calls) != 1 || service.calls[0] != "owner" {
+		t.Fatalf("provider calls=%v", service.calls)
+	}
+}
+
 func TestGitHubDependencyFailureLogsRetainUnderlyingDiagnostic(t *testing.T) {
 	tests := []struct {
 		name, message, category, diagnostic string
@@ -883,14 +906,25 @@ func TestGitHubDependencyFailureLogsRetainUnderlyingDiagnostic(t *testing.T) {
 }
 
 func TestGitHubSuccessNegotiatesJSONAndCBOR(t *testing.T) {
-	for _, mediaType := range []string{"application/json", "application/cbor"} {
-		t.Run(mediaType, func(t *testing.T) {
-			router := newGitHubTestRouter(t, githubFixtures())
+	tests := map[string]struct {
+		accept, contentType string
+	}{
+		"JSON": {accept: "application/json", contentType: "application/json"},
+		"CBOR": {accept: "application/cbor", contentType: "application/cbor"},
+		"charset after quality": {
+			accept:      "application/json;q=0, application/json;q=1;charset=utf-8",
+			contentType: "application/json; charset=utf-8",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			service := githubFixtures()
+			router := newGitHubTestRouter(t, service)
 			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/github/owners/octocat", nil)
-			request.Header.Set("Accept", mediaType)
+			request.Header.Set("Accept", test.accept)
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
-			if response.Code != http.StatusOK || response.Header().Get("Content-Type") != mediaType {
+			if response.Code != http.StatusOK || response.Header().Get("Content-Type") != test.contentType {
 				t.Fatalf(
 					"status=%d content-type=%q body=%x",
 					response.Code,
@@ -898,26 +932,48 @@ func TestGitHubSuccessNegotiatesJSONAndCBOR(t *testing.T) {
 					response.Body.Bytes(),
 				)
 			}
+			if len(service.calls) != 1 || service.calls[0] != "owner" {
+				t.Fatalf("provider calls=%v", service.calls)
+			}
 		})
 	}
 }
 
 func TestGitHubNotAcceptableUsesIndependentProblemNegotiation(t *testing.T) {
-	router := newGitHubTestRouter(t, githubFixtures())
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/github/owners/octocat", nil)
-	request.Header.Set("Accept", "text/plain")
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	if response.Code != http.StatusNotAcceptable ||
-		response.Header().Get("Content-Type") != "application/problem+json" {
-		t.Fatalf(
-			"status=%d content-type=%q body=%s",
-			response.Code,
-			response.Header().Get("Content-Type"),
-			response.Body.String(),
-		)
+	tests := map[string]struct {
+		accept, problemMediaType string
+	}{
+		"unsupported type": {accept: "text/plain", problemMediaType: "application/problem+json"},
+		"exact JSON exclusion controls charset wildcard": {
+			accept:           "application/json;q=0, application/*;charset=utf-8;q=1",
+			problemMediaType: "application/problem+json; charset=utf-8",
+		},
 	}
-	if body := decodeObject(t, response); body["code"] != "not_acceptable" {
-		t.Fatalf("problem = %#v", body)
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			service := githubFixtures()
+			router := newGitHubTestRouter(t, service)
+			request := httptest.NewRequestWithContext(
+				t.Context(), http.MethodGet, "/v1/github/owners/octocat", nil,
+			)
+			request.Header.Set("Accept", test.accept)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusNotAcceptable ||
+				response.Header().Get("Content-Type") != test.problemMediaType {
+				t.Fatalf(
+					"status=%d content-type=%q body=%s",
+					response.Code,
+					response.Header().Get("Content-Type"),
+					response.Body.String(),
+				)
+			}
+			if body := decodeObject(t, response); body["code"] != "not_acceptable" {
+				t.Fatalf("problem = %#v", body)
+			}
+			if len(service.calls) != 0 {
+				t.Fatalf("provider calls=%v want none", service.calls)
+			}
+		})
 	}
 }

@@ -420,6 +420,76 @@ func TestRouterUnmatchedGitHubPathsBypassOperationPolicy(t *testing.T) {
 	}
 }
 
+func TestRouterEmptyIntermediateGitHubParametersFollowMatchedOperationGates(t *testing.T) {
+	providerCalls := 0
+	githubClient, err := githubsvc.NewClient(&http.Client{Transport: roundTripFunc(
+		func(*http.Request) (*http.Response, error) {
+			providerCalls++
+			return nil, errors.New("provider must not be called")
+		},
+	)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newRouter(testConfig(t), dependencies{
+		verifier: &stubVerifier{User: testUser()}, profiles: fixedProfileStore{}, github: githubClient,
+	}, zap.NewNop())
+	tests := []struct {
+		name, target, accept, code string
+		status                     int
+	}{
+		{
+			name: "owner validation", target: "/v1/github/owners//repos",
+			accept: "application/json", status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "repository owner validation", target: "/v1/github/repos//repo",
+			accept: "application/json", status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "activity repository validation", target: "/v1/github/repos/octocat//activity",
+			accept: "application/json", status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "languages repository validation", target: "/v1/github/repos/octocat//languages",
+			accept: "application/json", status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "tags repository validation", target: "/v1/github/repos/octocat//tags",
+			accept: "application/json", status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "closed query gate", target: "/v1/github/owners//repos?unknown=true",
+			accept: "application/json", status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name: "success negotiation gate", target: "/v1/github/owners//repos",
+			accept: "text/plain", status: http.StatusNotAcceptable, code: "not_acceptable",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, test.target, nil)
+			request.Header.Set("Accept", test.accept)
+			response := httptest.NewRecorder()
+
+			router.ServeHTTP(response, request)
+
+			var problem struct {
+				Code string `json:"code"`
+			}
+			if decodeErr := json.Unmarshal(response.Body.Bytes(), &problem); decodeErr != nil ||
+				response.Code != test.status || problem.Code != test.code {
+				t.Fatalf("status=%d problem=%#v err=%v body=%s",
+					response.Code, problem, decodeErr, response.Body.String())
+			}
+		})
+	}
+	if providerCalls != 0 {
+		t.Fatalf("provider calls=%d want=0", providerCalls)
+	}
+}
+
 func TestRouterDoesNotInventAutomaticHeadOperations(t *testing.T) {
 	server := httptest.NewServer(testRouter(t, testConfig(t)))
 	defer server.Close()
@@ -931,6 +1001,9 @@ func TestRouterInboundContainerCardinalityBoundary(t *testing.T) {
 	jsonArrayOverLimit := boundedJSONArray(1025)
 	jsonObjectAtLimit := boundedJSONObject(1024)
 	jsonObjectOverLimit := boundedJSONObject(1025)
+	jsonObjectDuplicateAfterLimit := append(
+		bytes.Clone(bytes.TrimSuffix(jsonObjectOverLimit, []byte("}"))), []byte(`,"0":1}`)...,
+	)
 	cborArrayAtLimit, err := cbor.Marshal(make([]int, 1024))
 	if err != nil {
 		t.Fatal(err)
@@ -967,6 +1040,13 @@ func TestRouterInboundContainerCardinalityBoundary(t *testing.T) {
 		{
 			name: "JSON object over limit", contentType: "application/json", document: jsonObjectOverLimit,
 			status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name:        "JSON duplicate after limit",
+			contentType: "application/json",
+			document:    jsonObjectDuplicateAfterLimit,
+			status:      http.StatusUnprocessableEntity,
+			code:        "validation_failed",
 		},
 		{
 			name: "CBOR array at limit", contentType: "application/cbor", document: cborArrayAtLimit,

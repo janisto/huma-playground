@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"cloud.google.com/go/firestore"
+	apiiterator "google.golang.org/api/iterator"
 
 	"github.com/janisto/huma-playground/internal/platform/portable"
 )
@@ -67,47 +68,67 @@ func AuditProfileMigration(
 	client *firestore.Client,
 	manifest MigrationManifest,
 ) ([]MigrationResult, error) {
-	if err := manifest.Validate(); err != nil {
-		return nil, err
-	}
-	documents, err := profileMigrationDocuments(ctx, client)
+	audit, err := buildProfileMigrationAudit(manifest, func(visit func(migrationDocument) error) error {
+		return visitProfileMigrationDocuments(ctx, client, visit)
+	})
 	if err != nil {
 		return nil, err
 	}
-	results := make([]MigrationResult, 0, len(documents)+len(manifest.Entries))
-	seen := make(map[string]struct{}, len(documents))
-	for _, document := range documents {
+	return audit.results, nil
+}
+
+type profileMigrationAudit struct {
+	results []MigrationResult
+	targets []migrationTarget
+}
+
+func buildProfileMigrationAudit(
+	manifest MigrationManifest,
+	visitDocuments func(func(migrationDocument) error) error,
+) (profileMigrationAudit, error) {
+	if err := manifest.Validate(); err != nil {
+		return profileMigrationAudit{}, err
+	}
+	audit := profileMigrationAudit{}
+	seen := make(map[string]struct{})
+	if err := visitDocuments(func(document migrationDocument) error {
 		if document.principal == "" {
-			results = append(results, MigrationResult{
+			audit.results = append(audit.results, MigrationResult{
 				DocumentFingerprint: document.fingerprint,
 				State:               MigrationBlocked,
 				Reason:              "profile document has a noncanonical ownership key",
 			})
-			continue
+			return nil
 		}
 		if _, duplicate := seen[document.principal]; duplicate {
-			return nil, errors.New("profile migration found duplicate logical principal records")
+			return errors.New("profile migration found duplicate logical principal records")
 		}
 		seen[document.principal] = struct{}{}
 		state, reason, _ := classifyMigration(
-			document.snapshot.Data(), document.principal, manifest.Entries[document.principal],
+			document.data, document.principal, manifest.Entries[document.principal],
 		)
-		results = append(results, MigrationResult{
+		audit.results = append(audit.results, MigrationResult{
 			DocumentFingerprint: document.fingerprint,
 			State:               state,
 			Reason:              reason,
 		})
+		audit.targets = append(audit.targets, migrationTarget{
+			reference: document.reference, principal: document.principal, fingerprint: document.fingerprint,
+		})
+		return nil
+	}); err != nil {
+		return profileMigrationAudit{}, err
 	}
 	for principal := range manifest.Entries {
 		if _, exists := seen[principal]; !exists {
-			results = append(results, MigrationResult{
+			audit.results = append(audit.results, MigrationResult{
 				DocumentFingerprint: fingerprintPrincipal(principal),
 				State:               MigrationBlocked,
 				Reason:              "migration authorization has no matching profile record",
 			})
 		}
 	}
-	return results, nil
+	return audit, nil
 }
 
 // ApplyProfileMigration performs no writes unless a complete read-only audit
@@ -118,49 +139,62 @@ func ApplyProfileMigration(
 	client *firestore.Client,
 	manifest MigrationManifest,
 ) ([]MigrationResult, error) {
-	audit, err := AuditProfileMigration(ctx, client, manifest)
+	return applyProfileMigration(
+		manifest,
+		func(visit func(migrationDocument) error) error {
+			return visitProfileMigrationDocuments(ctx, client, visit)
+		},
+		func(target migrationTarget) (MigrationResult, error) {
+			result := MigrationResult{DocumentFingerprint: target.fingerprint}
+			transactionErr := client.RunTransaction(
+				ctx,
+				func(ctx context.Context, transaction *firestore.Transaction) error {
+					current, getErr := transaction.Get(target.reference)
+					if getErr != nil {
+						return getErr
+					}
+					state, reason, replacement := classifyMigration(
+						current.Data(), target.principal, manifest.Entries[target.principal],
+					)
+					result.State, result.Reason = state, reason
+					switch state {
+					case MigrationVerified:
+						return nil
+					case MigrationRequired:
+						if setErr := transaction.Set(target.reference, replacement); setErr != nil {
+							return setErr
+						}
+						result.State = MigrationApplied
+						return nil
+					default:
+						return errors.New("profile record became blocked during migration")
+					}
+				},
+			)
+			return result, transactionErr
+		},
+	)
+}
+
+func applyProfileMigration(
+	manifest MigrationManifest,
+	visitDocuments func(func(migrationDocument) error) error,
+	applyTarget func(migrationTarget) (MigrationResult, error),
+) ([]MigrationResult, error) {
+	audit, err := buildProfileMigrationAudit(manifest, visitDocuments)
 	if err != nil {
 		return nil, err
 	}
-	for _, result := range audit {
+	for _, result := range audit.results {
 		if result.State == MigrationBlocked {
-			return audit, errors.New("profile migration is blocked; no records were changed")
+			return audit.results, errors.New("profile migration is blocked; no records were changed")
 		}
 	}
-	documents, err := profileMigrationDocuments(ctx, client)
-	if err != nil {
-		return nil, err
-	}
-	results := make([]MigrationResult, 0, len(documents))
-	for _, document := range documents {
-		result := MigrationResult{DocumentFingerprint: document.fingerprint}
-		transactionErr := client.RunTransaction(
-			ctx,
-			func(ctx context.Context, transaction *firestore.Transaction) error {
-				current, getErr := transaction.Get(document.snapshot.Ref)
-				if getErr != nil {
-					return getErr
-				}
-				state, reason, replacement := classifyMigration(
-					current.Data(), document.principal, manifest.Entries[document.principal],
-				)
-				result.State, result.Reason = state, reason
-				switch state {
-				case MigrationVerified:
-					return nil
-				case MigrationRequired:
-					if setErr := transaction.Set(document.snapshot.Ref, replacement); setErr != nil {
-						return setErr
-					}
-					result.State = MigrationApplied
-					return nil
-				default:
-					return errors.New("profile record became blocked during migration")
-				}
-			},
-		)
-		if transactionErr != nil {
-			return results, fmt.Errorf("apply profile migration to %s: %w", result.DocumentFingerprint, transactionErr)
+	results := make([]MigrationResult, 0, len(audit.targets))
+	for _, target := range audit.targets {
+		result, err := applyTarget(target)
+		if err != nil {
+			return results, fmt.Errorf("apply profile migration to %s: %w", target.fingerprint, err)
 		}
 		results = append(results, result)
 	}
@@ -168,64 +202,109 @@ func ApplyProfileMigration(
 }
 
 type migrationDocument struct {
-	snapshot    *firestore.DocumentSnapshot
+	reference   *firestore.DocumentRef
+	data        map[string]any
 	principal   string
 	fingerprint string
 }
 
-func profileMigrationDocuments(ctx context.Context, client *firestore.Client) ([]migrationDocument, error) {
-	if client == nil {
-		return nil, errors.New("firestore client is required")
-	}
-	documents := make([]migrationDocument, 0)
-	direct, err := collectMigrationDocuments(ctx, client.Collection(profilesCollection), false)
-	if err != nil {
-		return nil, err
-	}
-	documents = append(documents, direct...)
-	encoded, err := collectMigrationDocuments(
-		ctx,
-		client.Collection(profilesCollection).Doc(encodedProfilesDocument).Collection(encodedProfilesCollection),
-		true,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return append(documents, encoded...), nil
+type migrationTarget struct {
+	reference   *firestore.DocumentRef
+	principal   string
+	fingerprint string
 }
 
-func collectMigrationDocuments(
-	ctx context.Context,
-	collection *firestore.CollectionRef,
-	encoded bool,
-) ([]migrationDocument, error) {
-	snapshots, err := collection.Documents(ctx).GetAll()
+type migrationDocumentIterator interface {
+	Next() (migrationDocument, error)
+	Stop()
+}
+
+type firestoreMigrationDocumentIterator struct {
+	iterator *firestore.DocumentIterator
+	encoded  bool
+}
+
+func (iterator *firestoreMigrationDocumentIterator) Next() (migrationDocument, error) {
+	snapshot, err := iterator.iterator.Next()
 	if err != nil {
-		return nil, fmt.Errorf("iterate profile documents: %w", err)
+		return migrationDocument{}, err
 	}
-	result := make([]migrationDocument, 0, len(snapshots))
-	for _, snapshot := range snapshots {
-		principal := snapshot.Ref.ID
-		if encoded {
-			decoded, decodeErr := base64.RawURLEncoding.DecodeString(snapshot.Ref.ID)
-			if decodeErr != nil || base64.RawURLEncoding.EncodeToString(decoded) != snapshot.Ref.ID {
-				principal = ""
-			} else {
-				principal = string(decoded)
-			}
+	return migrationDocumentFromSnapshot(snapshot, iterator.encoded), nil
+}
+
+func (iterator *firestoreMigrationDocumentIterator) Stop() {
+	iterator.iterator.Stop()
+}
+
+func visitProfileMigrationDocuments(
+	ctx context.Context,
+	client *firestore.Client,
+	visit func(migrationDocument) error,
+) error {
+	if client == nil {
+		return errors.New("firestore client is required")
+	}
+	collections := []struct {
+		collection *firestore.CollectionRef
+		encoded    bool
+	}{
+		{collection: client.Collection(profilesCollection)},
+		{
+			collection: client.Collection(profilesCollection).Doc(encodedProfilesDocument).
+				Collection(encodedProfilesCollection),
+			encoded: true,
+		},
+	}
+	for _, collection := range collections {
+		iterator := &firestoreMigrationDocumentIterator{
+			iterator: collection.collection.Documents(ctx), encoded: collection.encoded,
 		}
-		if !validProfileID(principal) || profileDocumentPath(principal) != snapshot.Ref.Path {
+		if err := visitMigrationDocuments(iterator, visit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func visitMigrationDocuments(iterator migrationDocumentIterator, visit func(migrationDocument) error) error {
+	defer iterator.Stop()
+	for {
+		document, err := iterator.Next()
+		if errors.Is(err, apiiterator.Done) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("iterate profile documents: %w", err)
+		}
+		if err := visit(document); err != nil {
+			return err
+		}
+	}
+}
+
+func migrationDocumentFromSnapshot(snapshot *firestore.DocumentSnapshot, encoded bool) migrationDocument {
+	principal := snapshot.Ref.ID
+	if encoded {
+		decoded, err := base64.RawURLEncoding.DecodeString(snapshot.Ref.ID)
+		if err != nil || base64.RawURLEncoding.EncodeToString(decoded) != snapshot.Ref.ID {
 			principal = ""
+		} else {
+			principal = string(decoded)
 		}
-		fingerprintValue := snapshot.Ref.Path
-		if principal != "" {
-			fingerprintValue = principal
-		}
-		result = append(result, migrationDocument{
-			snapshot: snapshot, principal: principal, fingerprint: fingerprintPrincipal(fingerprintValue),
-		})
 	}
-	return result, nil
+	if !validProfileID(principal) || profileDocumentPath(principal) != snapshot.Ref.Path {
+		principal = ""
+	}
+	fingerprintValue := snapshot.Ref.Path
+	if principal != "" {
+		fingerprintValue = principal
+	}
+	return migrationDocument{
+		reference:   snapshot.Ref,
+		data:        snapshot.Data(),
+		principal:   principal,
+		fingerprint: fingerprintPrincipal(fingerprintValue),
+	}
 }
 
 func classifyMigration(

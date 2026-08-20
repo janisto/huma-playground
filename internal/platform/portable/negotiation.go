@@ -121,6 +121,9 @@ func matchMediaRange(rawRange, target string, explicitOnly, withCharset bool) (a
 	mediaParameters := make(map[string]struct{})
 	for _, rawParameter := range parts[1:] {
 		parameter := strings.TrimSpace(rawParameter)
+		if parameter == "" {
+			continue
+		}
 		name, value, found := strings.Cut(parameter, "=")
 		name = strings.ToLower(strings.TrimSpace(name))
 		if !isHTTPToken(name) {
@@ -142,9 +145,6 @@ func matchMediaRange(rawRange, target string, explicitOnly, withCharset bool) (a
 		if !ok {
 			return acceptMatch{}, false
 		}
-		if qualitySeen {
-			continue
-		}
 		if name != "charset" || !strings.HasSuffix(target, "+json") && target != MediaTypeJSON ||
 			!strings.EqualFold(decoded, "utf-8") {
 			return acceptMatch{}, false
@@ -154,7 +154,10 @@ func matchMediaRange(rawRange, target string, explicitOnly, withCharset bool) (a
 		}
 		mediaParameters[name] = struct{}{}
 	}
-	if withCharset != (len(mediaParameters) == 1) {
+	// A parameterless media range matches either permitted JSON candidate.
+	// A charset-bearing range is narrower and only matches the candidate with
+	// that parameter.
+	if len(mediaParameters) == 1 && !withCharset {
 		return acceptMatch{}, false
 	}
 	return acceptMatch{parameters: len(mediaParameters), quality: quality, specificity: specificity}, true

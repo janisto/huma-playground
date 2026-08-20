@@ -125,7 +125,10 @@ func (p *jsonParser) parseObject(depth int, materialize bool) (map[string]any, e
 	if materialize {
 		result = make(map[string]any)
 	}
-	seen := make(map[string]struct{})
+	var seen map[string]struct{}
+	if p.maxContainerItems == 0 || materialize {
+		seen = make(map[string]struct{})
+	}
 	members := 0
 	p.skipSpace()
 	if p.consume('}') {
@@ -135,16 +138,22 @@ func (p *jsonParser) parseObject(depth int, materialize bool) (map[string]any, e
 		if p.offset >= len(p.data) || p.data[p.offset] != '"' {
 			return nil, errors.New("JSON object name must be a string")
 		}
-		name, err := p.parseString(true)
+		members++
+		withinLimit := p.maxContainerItems == 0 || members <= p.maxContainerItems
+		// Once a bounded inbound container exceeds the accepted cardinality,
+		// validate syntax without retaining any additional attacker-controlled
+		// names. The cardinality failure controls later independent defects.
+		trackName := p.maxContainerItems == 0 || materialize && withinLimit
+		name, err := p.parseString(trackName)
 		if err != nil {
 			return nil, err
 		}
-		if _, exists := seen[name]; exists {
-			return nil, errors.New("duplicate JSON object name")
+		if trackName {
+			if _, exists := seen[name]; exists {
+				return nil, errors.New("duplicate JSON object name")
+			}
+			seen[name] = struct{}{}
 		}
-		seen[name] = struct{}{}
-		members++
-		withinLimit := p.maxContainerItems == 0 || members <= p.maxContainerItems
 		if !withinLimit {
 			p.containerLimitExceeded = true
 		}

@@ -110,9 +110,8 @@ func TestStrictJSONUnmarshalBoundsContainerCardinality(t *testing.T) {
 func TestStrictJSONContainerLimitDoesNotMaskLaterMalformedInput(t *testing.T) {
 	tests := map[string][]byte{
 		"trailing content": append(jsonArray(maxJSONContainerItems+1), []byte(" false")...),
-		"duplicate after limit": append(
-			bytes.TrimSuffix(jsonObject(maxJSONContainerItems+1), []byte("}")),
-			[]byte(`,"0":1}`)...,
+		"invalid name escape": append(
+			bytes.TrimSuffix(jsonObject(maxJSONContainerItems+1), []byte("}")), []byte(`,"\x":1}`)...,
 		),
 	}
 	for name, document := range tests {
@@ -125,10 +124,25 @@ func TestStrictJSONContainerLimitDoesNotMaskLaterMalformedInput(t *testing.T) {
 	}
 }
 
-func TestStrictJSONContainerLimitBoundsLargeArrayAllocations(t *testing.T) {
+func TestStrictJSONContainerLimitControlsDuplicatePrecedence(t *testing.T) {
+	document := append(
+		bytes.TrimSuffix(jsonObject(maxJSONContainerItems+1), []byte("}")),
+		[]byte(`,"0":1}`)...,
+	)
+	if _, err := parseStrictJSON(document, maxJSONContainerItems); !errors.Is(
+		err,
+		errJSONContainerCardinality,
+	) {
+		t.Fatalf("error=%v want container cardinality error", err)
+	}
+}
+
+func TestStrictJSONContainerLimitBoundsLargeContainerAllocations(t *testing.T) {
 	tests := map[string][]byte{
-		"numbers":         jsonArray(100_000),
-		"escaped strings": repeatedJSONArray(`"\u0000"`, 50_000),
+		"array numbers":           jsonArray(100_000),
+		"array escaped strings":   repeatedJSONArray(`"\u0000"`, 50_000),
+		"object unique names":     jsonObject(50_000),
+		"discarded small objects": repeatedJSONObjectArray(50_000),
 	}
 	for name, document := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -140,11 +154,25 @@ func TestStrictJSONContainerLimitBoundsLargeArrayAllocations(t *testing.T) {
 					panic(err)
 				}
 			})
-			if allocations > 5_000 {
-				t.Fatalf("allocations=%0.f want at most 5000", allocations)
+			if allocations > 6_000 {
+				t.Fatalf("allocations=%0.f want at most 6000", allocations)
 			}
 		})
 	}
+}
+
+func repeatedJSONObjectArray(elements int) []byte {
+	var document strings.Builder
+	document.Grow(elements*8 + 1)
+	document.WriteByte('[')
+	for index := range elements {
+		if index > 0 {
+			document.WriteByte(',')
+		}
+		document.WriteString(`{"x":0}`)
+	}
+	document.WriteByte(']')
+	return []byte(document.String())
 }
 
 func repeatedJSONArray(element string, elements int) []byte {
@@ -233,6 +261,7 @@ func TestNegotiationUsesSpecificityQualityAndDeterministicTies(t *testing.T) {
 	}{
 		{name: "missing defaults JSON", want: MediaTypeJSON, ok: true},
 		{name: "wildcard defaults JSON", accept: "*/*", want: MediaTypeJSON, ok: true},
+		{name: "empty parameter slot", accept: "application/json;;", want: MediaTypeJSON, ok: true},
 		{name: "JSON CBOR tie uses JSON", accept: "application/cbor, application/json", want: MediaTypeJSON, ok: true},
 		{
 			name:   "higher CBOR quality",
@@ -242,6 +271,23 @@ func TestNegotiationUsesSpecificityQualityAndDeterministicTies(t *testing.T) {
 		},
 		{name: "charset only", accept: "application/json; charset=UTF-8", want: MediaTypeJSONUTF8, ok: true},
 		{name: "exact exclusion controls wildcard", accept: "application/json;q=0, */*;q=1", ok: false},
+		{
+			name:   "parameterless exact exclusion controls charset wildcard",
+			accept: "application/json;q=0, application/*;charset=utf-8;q=1",
+			ok:     false,
+		},
+		{
+			name:   "charset exact inclusion controls parameterless exact exclusion",
+			accept: "application/json;q=0, application/json;charset=utf-8;q=1",
+			want:   MediaTypeJSONUTF8,
+			ok:     true,
+		},
+		{
+			name:   "charset after quality remains a media parameter",
+			accept: "application/json;q=0, application/json;q=1;charset=utf-8",
+			want:   MediaTypeJSONUTF8,
+			ok:     true,
+		},
 		{
 			name:   "malformed ignored beside valid",
 			accept: "text/plain;q=2, application/json",
@@ -266,10 +312,12 @@ func TestProblemNegotiationAndTaxonomyAreExact(t *testing.T) {
 		"":                                       MediaTypeProblemJSON,
 		"application/problem+json":               MediaTypeProblemJSON,
 		"application/problem+json;charset=utf-8": MediaTypeProblemJSON + "; charset=utf-8",
-		"application/cbor":                       MediaTypeCBOR,
-		"application/json":                       MediaTypeProblemJSON,
-		"application/problem+cbor":               MediaTypeProblemJSON,
-		"text/plain":                             MediaTypeProblemJSON,
+		"application/problem+json;q=0, application/*;charset=utf-8;q=1":            MediaTypeProblemJSON,
+		"application/problem+json;q=0, application/problem+json;q=1;charset=utf-8": MediaTypeProblemJSON + "; charset=utf-8",
+		"application/cbor":         MediaTypeCBOR,
+		"application/json":         MediaTypeProblemJSON,
+		"application/problem+cbor": MediaTypeProblemJSON,
+		"text/plain":               MediaTypeProblemJSON,
 	}
 	for accept, want := range tests {
 		if got := NegotiateProblem(accept); got != want {
@@ -393,6 +441,14 @@ func TestRequestPolicyRejectsClosedQueryMediaAndNegotiationBeforeHandler(t *test
 			method: "GET",
 			target: "/v1/items",
 			accept: "text/plain",
+			want:   406,
+			code:   CodeNotAcceptable,
+		},
+		{
+			name:   "exact JSON exclusion controls charset wildcard",
+			method: "GET",
+			target: "/v1/items",
+			accept: "application/json;q=0, application/*;charset=utf-8;q=1",
 			want:   406,
 			code:   CodeNotAcceptable,
 		},

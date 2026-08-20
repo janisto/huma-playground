@@ -30,6 +30,33 @@ type routePolicy struct {
 	successMedia bool
 }
 
+type successRepresentationWriter struct {
+	http.ResponseWriter
+	mediaType   string
+	wroteHeader bool
+}
+
+func (writer *successRepresentationWriter) WriteHeader(status int) {
+	if !writer.wroteHeader {
+		writer.wroteHeader = true
+		if status >= http.StatusOK && status < http.StatusMultipleChoices && status != http.StatusNoContent {
+			writer.Header().Set("Content-Type", writer.mediaType)
+		}
+	}
+	writer.ResponseWriter.WriteHeader(status)
+}
+
+func (writer *successRepresentationWriter) Write(data []byte) (int, error) {
+	if !writer.wroteHeader {
+		writer.WriteHeader(http.StatusOK)
+	}
+	return writer.ResponseWriter.Write(data)
+}
+
+func (writer *successRepresentationWriter) Unwrap() http.ResponseWriter {
+	return writer.ResponseWriter
+}
+
 // RequestPolicy enforces the portable structural boundary before Huma auth,
 // decoding, handlers, persistence, or GitHub calls.
 func RequestPolicy(apiPrefix string) func(http.Handler) http.Handler {
@@ -85,6 +112,8 @@ func requestPolicy(
 					return
 				}
 				request.Header["Accept"] = []string{selected}
+				next.ServeHTTP(&successRepresentationWriter{ResponseWriter: w, mediaType: selected}, request)
+				return
 			}
 			next.ServeHTTP(w, request)
 		})
