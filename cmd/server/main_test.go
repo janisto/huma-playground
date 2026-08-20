@@ -548,6 +548,48 @@ func TestRouterOpenAPIUsesMachineReadableSecurityPolicy(t *testing.T) {
 	}
 }
 
+func TestRouterOpenAPIEmitsNegotiatedJSONContentType(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	tests := []struct {
+		name, accept, want string
+	}{
+		{name: "missing Accept", want: "application/json"},
+		{name: "base JSON", accept: "application/json", want: "application/json"},
+		{
+			name: "UTF-8 JSON only", accept: "application/json; charset=UTF-8",
+			want: "application/json; charset=utf-8",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil)
+			if test.accept != "" {
+				request.Header.Set("Accept", test.accept)
+			}
+			response := httptest.NewRecorder()
+
+			router.ServeHTTP(response, request)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			if got := response.Header().Values("Content-Type"); len(got) != 1 || got[0] != test.want {
+				t.Fatalf("Content-Type=%q want exactly %q", got, test.want)
+			}
+			if !slices.Contains(strings.Split(response.Header().Get("Vary"), ", "), "Accept") {
+				t.Fatalf("Vary=%q does not contain Accept", response.Header().Get("Vary"))
+			}
+			var document struct {
+				OpenAPI string `json:"openapi"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil ||
+				!strings.HasPrefix(document.OpenAPI, "3.1.") {
+				t.Fatalf("OpenAPI=%q err=%v body=%s", document.OpenAPI, err, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestAllOpenAPISchemasResolve(t *testing.T) {
 	router := testRouter(t, testConfig(t))
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil)

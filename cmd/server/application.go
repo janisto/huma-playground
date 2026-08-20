@@ -176,8 +176,8 @@ func newRouter(cfg config, deps dependencies, logger *zap.Logger) http.Handler {
 }
 
 func openAPIHandler(api huma.API) http.HandlerFunc {
-	return func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", portable.MediaTypeJSON)
+	return func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", portable.AcceptHeader(request.Header))
 		encoder := json.NewEncoder(writer)
 		encoder.SetEscapeHTML(false)
 		if err := encoder.Encode(api.OpenAPI()); err != nil {
