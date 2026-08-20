@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
@@ -34,6 +36,35 @@ type stubVerifier struct {
 
 type countingBody struct {
 	reads int
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
+func newGitHubProviderClient(t *testing.T, provider *httptest.Server) *githubsvc.Client {
+	t.Helper()
+	providerOrigin, err := url.Parse(provider.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerTransport := provider.Client().Transport
+	client, err := githubsvc.NewClient(&http.Client{Transport: roundTripFunc(
+		func(request *http.Request) (*http.Response, error) {
+			forwarded := request.Clone(request.Context())
+			target := *request.URL
+			target.Scheme = providerOrigin.Scheme
+			target.Host = providerOrigin.Host
+			forwarded.URL = &target
+			return providerTransport.RoundTrip(forwarded)
+		},
+	)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
 }
 
 func (body *countingBody) Read([]byte) (int, error) {
@@ -341,6 +372,51 @@ func TestRouterServesOnlyCanonicalHealthAndOpenAPIPaths(t *testing.T) {
 		if response.Code != test.want {
 			t.Fatalf("%s: expected %d, got %d: %s", test.path, test.want, response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestRouterUnmatchedGitHubPathsBypassOperationPolicy(t *testing.T) {
+	providerCalls := 0
+	githubClient, err := githubsvc.NewClient(&http.Client{Transport: roundTripFunc(
+		func(*http.Request) (*http.Response, error) {
+			providerCalls++
+			return nil, errors.New("provider must not be called")
+		},
+	)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newRouter(testConfig(t), dependencies{
+		verifier: &stubVerifier{User: testUser()}, profiles: fixedProfileStore{}, github: githubClient,
+	}, zap.NewNop())
+	tests := []struct {
+		name, target, accept string
+	}{
+		{name: "unknown query", target: "/v1/github/repos/octocat/repo/?unknown=true", accept: "application/json"},
+		{name: "unacceptable representation", target: "/v1/github/repos/octocat/repo/", accept: "text/plain"},
+		{name: "empty owner", target: "/v1/github/owners/?unknown=true", accept: "application/json"},
+		{name: "empty repository", target: "/v1/github/repos/octocat/?unknown=true", accept: "application/json"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, test.target, nil)
+			request.Header.Set("Accept", test.accept)
+			response := httptest.NewRecorder()
+
+			router.ServeHTTP(response, request)
+
+			var problem struct {
+				Code string `json:"code"`
+			}
+			if decodeErr := json.Unmarshal(response.Body.Bytes(), &problem); decodeErr != nil ||
+				response.Code != http.StatusNotFound || problem.Code != "not_found" {
+				t.Fatalf("status=%d problem=%#v err=%v body=%s",
+					response.Code, problem, decodeErr, response.Body.String())
+			}
+		})
+	}
+	if providerCalls != 0 {
+		t.Fatalf("provider calls=%d want=0", providerCalls)
 	}
 }
 
@@ -849,6 +925,136 @@ func TestRouterJSONNestingBoundary(t *testing.T) {
 	}
 }
 
+func TestRouterInboundContainerCardinalityBoundary(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	jsonArrayAtLimit := boundedJSONArray(1024)
+	jsonArrayOverLimit := boundedJSONArray(1025)
+	jsonObjectAtLimit := boundedJSONObject(1024)
+	jsonObjectOverLimit := boundedJSONObject(1025)
+	cborArrayAtLimit, err := cbor.Marshal(make([]int, 1024))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cborArrayOverLimit, err := cbor.Marshal(make([]int, 1025))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cborObjectAtLimit, err := cbor.Marshal(indexedMap(1024))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cborObjectOverLimit, err := cbor.Marshal(indexedMap(1025))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, contentType, code string
+		document                []byte
+		status                  int
+	}{
+		{
+			name: "JSON array at limit", contentType: "application/json", document: jsonArrayAtLimit,
+			status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "JSON array over limit", contentType: "application/json", document: jsonArrayOverLimit,
+			status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "JSON object at limit", contentType: "application/json", document: jsonObjectAtLimit,
+			status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "JSON object over limit", contentType: "application/json", document: jsonObjectOverLimit,
+			status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "CBOR array at limit", contentType: "application/cbor", document: cborArrayAtLimit,
+			status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "CBOR array over limit", contentType: "application/cbor", document: cborArrayOverLimit,
+			status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "CBOR object at limit", contentType: "application/cbor", document: cborObjectAtLimit,
+			status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "CBOR object over limit", contentType: "application/cbor", document: cborObjectOverLimit,
+			status: http.StatusUnprocessableEntity, code: "validation_failed",
+		},
+		{
+			name: "trailing JSON after limit", contentType: "application/json",
+			document: append(jsonArrayOverLimit, []byte(" false")...),
+			status:   http.StatusBadRequest, code: "invalid_request",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(
+				t.Context(), http.MethodPost, "/v1/hello", bytes.NewReader(test.document),
+			)
+			request.Header.Set("Content-Type", test.contentType)
+			request.Header.Set("Accept", "application/json")
+			response := httptest.NewRecorder()
+
+			router.ServeHTTP(response, request)
+
+			var problem struct {
+				Code string `json:"code"`
+			}
+			if decodeErr := json.Unmarshal(response.Body.Bytes(), &problem); decodeErr != nil ||
+				response.Code != test.status || problem.Code != test.code {
+				t.Fatalf(
+					"status=%d want=%d problem=%#v err=%v body=%s",
+					response.Code,
+					test.status,
+					problem,
+					decodeErr,
+					response.Body.String(),
+				)
+			}
+		})
+	}
+}
+
+func boundedJSONArray(elements int) []byte {
+	var document strings.Builder
+	document.Grow(elements*2 + 1)
+	document.WriteByte('[')
+	for index := range elements {
+		if index > 0 {
+			document.WriteByte(',')
+		}
+		document.WriteByte('0')
+	}
+	document.WriteByte(']')
+	return []byte(document.String())
+}
+
+func boundedJSONObject(members int) []byte {
+	var document strings.Builder
+	document.WriteByte('{')
+	for index := range members {
+		if index > 0 {
+			document.WriteByte(',')
+		}
+		document.WriteString(strconv.Quote(strconv.Itoa(index)))
+		document.WriteString(":0")
+	}
+	document.WriteByte('}')
+	return []byte(document.String())
+}
+
+func indexedMap(members int) map[string]int {
+	document := make(map[string]int, members)
+	for index := range members {
+		document[strconv.Itoa(index)] = 0
+	}
+	return document
+}
+
 func TestHTTP2UnknownLengthBodyRequiresContentType(t *testing.T) {
 	type requestMetadata struct {
 		contentLength    int64
@@ -957,10 +1163,7 @@ func TestBodylessOperationDoesNotReadRequestBody(t *testing.T) {
 		}
 	}))
 	t.Cleanup(provider.Close)
-	githubClient, err := githubsvc.NewClient(provider.Client(), githubsvc.WithBaseURL(provider.URL))
-	if err != nil {
-		t.Fatalf("create GitHub client: %v", err)
-	}
+	githubClient := newGitHubProviderClient(t, provider)
 	router := newRouter(testConfig(t), dependencies{
 		verifier: &stubVerifier{User: testUser()}, profiles: fixedProfileStore{}, github: githubClient,
 	}, zap.NewNop())

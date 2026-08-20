@@ -10,19 +10,41 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
-	_ "github.com/danielgtaylor/huma/v2/formats/cbor"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/janisto/huma-observability/v2"
+
+	"github.com/janisto/huma-playground/internal/platform/portable"
 )
 
 func newTestRouter() chi.Router {
+	portable.ConfigureHuma()
 	router := chi.NewRouter()
 	router.Use(
 		chimiddleware.ClientIPFromRemoteAddr,
+		func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				accept := portable.AcceptHeader(request.Header)
+				ctx := portable.WithOriginalAccept(request.Context(), accept)
+				request = request.Clone(ctx)
+				if selected, ok := portable.NegotiateSuccess(accept, false); ok {
+					request.Header.Set("Accept", selected)
+				}
+				next.ServeHTTP(response, request)
+			})
+		},
 	)
-	api := humachi.New(router, huma.DefaultConfig("HelloTest", "test"))
+	config := huma.DefaultConfig("HelloTest", "test")
+	config.DocsPath = ""
+	config.OpenAPIPath = ""
+	config.SchemasPath = ""
+	config.CreateHooks = nil
+	config.Transformers = nil
+	config.Formats = portable.Formats()
+	config.DefaultFormat = portable.MediaTypeJSON
+	config.NoFormatFallback = true
+	api := humachi.New(router, config)
 	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{}))
 	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{}))
 	Register(api)
@@ -161,8 +183,8 @@ func TestPostJSONValidationErrorDefaultsToJSON(t *testing.T) {
 	if problem.Status != http.StatusUnprocessableEntity {
 		t.Errorf("expected status 422, got %d", problem.Status)
 	}
-	if problem.Title != "Unprocessable Entity" {
-		t.Errorf("expected title 'Unprocessable Entity', got %s", problem.Title)
+	if problem.Title != "Unprocessable Content" {
+		t.Errorf("expected title 'Unprocessable Content', got %s", problem.Title)
 	}
 }
 
@@ -180,8 +202,8 @@ func TestPostJSONValidationErrorWithCBORAccept(t *testing.T) {
 	if resp.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422, got %d", resp.Code)
 	}
-	if ct := resp.Header().Get("Content-Type"); ct != "application/problem+cbor" {
-		t.Errorf("expected application/problem+cbor, got %s", ct)
+	if ct := resp.Header().Get("Content-Type"); ct != "application/cbor" {
+		t.Errorf("expected application/cbor, got %s", ct)
 	}
 
 	var problem huma.ErrorModel
@@ -239,8 +261,8 @@ func TestPostCBORValidationErrorWithCBORAccept(t *testing.T) {
 	if resp.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422, got %d", resp.Code)
 	}
-	if ct := resp.Header().Get("Content-Type"); ct != "application/problem+cbor" {
-		t.Errorf("expected application/problem+cbor, got %s", ct)
+	if ct := resp.Header().Get("Content-Type"); ct != "application/cbor" {
+		t.Errorf("expected application/cbor, got %s", ct)
 	}
 
 	var problem huma.ErrorModel
@@ -250,8 +272,8 @@ func TestPostCBORValidationErrorWithCBORAccept(t *testing.T) {
 	if problem.Status != http.StatusUnprocessableEntity {
 		t.Errorf("expected status 422, got %d", problem.Status)
 	}
-	if problem.Title != "Unprocessable Entity" {
-		t.Errorf("expected title 'Unprocessable Entity', got %s", problem.Title)
+	if problem.Title != "Unprocessable Content" {
+		t.Errorf("expected title 'Unprocessable Content', got %s", problem.Title)
 	}
 }
 

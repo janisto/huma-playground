@@ -21,12 +21,45 @@ const (
 	repositoryFixture = `{"id":2,"name":"repo","full_name":"octocat/repo","description":null,"html_url":"https://github.com/octocat/repo","fork":false,"private":false,"visibility":"public","language":null,"stargazers_count":3,"forks_count":4,"open_issues_count":5,"archived":false,"created_at":"2020-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00.000Z","pushed_at":null,"default_branch":"main","license":{"spdx_id":"MIT"},"topics":["zeta","alpha"],"disabled":false}`
 )
 
-func newTestClient(t *testing.T, handler http.Handler, options ...Option) (*Client, *httptest.Server) {
+type testClientOption func(*Client) error
+
+func withTestOrigin(value string) testClientOption {
+	return func(client *Client) error {
+		origin, err := url.Parse(value)
+		if err != nil {
+			return err
+		}
+		client.origin = origin
+		return nil
+	}
+}
+
+func withTestClock(clock func() time.Time) testClientOption {
+	return func(client *Client) error {
+		client.clock = clock
+		return nil
+	}
+}
+
+func newConfiguredTestClient(httpClient *http.Client, options ...testClientOption) (*Client, error) {
+	client, err := NewClient(httpClient)
+	if err != nil {
+		return nil, err
+	}
+	for _, option := range options {
+		if err := option(client); err != nil {
+			return nil, err
+		}
+	}
+	return client, nil
+}
+
+func newTestClient(t *testing.T, handler http.Handler, options ...testClientOption) (*Client, *httptest.Server) {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	options = append([]Option{WithBaseURL(server.URL)}, options...)
-	client, err := NewClient(server.Client(), options...)
+	options = append([]testClientOption{withTestOrigin(server.URL)}, options...)
+	client, err := newConfiguredTestClient(server.Client(), options...)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -56,6 +89,30 @@ func assertProviderRequest(t *testing.T, request *http.Request) {
 		if values := request.Header.Values(name); len(values) != 0 {
 			t.Errorf("forbidden outbound %s = %q", name, values)
 		}
+	}
+}
+
+func TestNewClientUsesFixedProviderOrigin(t *testing.T) {
+	var target string
+	client, err := NewClient(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		target = request.URL.String()
+		assertProviderRequest(t, request)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(ownerFixture)),
+			Request:    request,
+		}, nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := client.GetOwner(t.Context(), "octocat")
+	if err != nil || owner.ID != 1 {
+		t.Fatalf("owner=%#v err=%v", owner, err)
+	}
+	if target != providerOrigin+"/users/octocat" {
+		t.Fatalf("provider target=%q want=%q", target, providerOrigin+"/users/octocat")
 	}
 }
 
@@ -629,7 +686,7 @@ func TestClientResponseSizeBoundary(t *testing.T) {
 				t.Fatalf("fixture size=%d want=%d", len(document), test.size)
 			}
 			body := newTrackedResponseBody(document)
-			client, err := NewClient(
+			client, err := newConfiguredTestClient(
 				&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 					headers := http.Header{"Content-Type": {"application/json"}}
 					if test.contentLength >= 0 {
@@ -640,7 +697,7 @@ func TestClientResponseSizeBoundary(t *testing.T) {
 						ContentLength: test.contentLength, Request: request,
 					}, nil
 				})},
-				WithBaseURL("https://api.github.test"),
+				withTestOrigin("https://api.github.test"),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -685,7 +742,7 @@ func TestClientDoesNotReadRedirectOrMappedErrorBodies(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			body := newTrackedResponseBody(`{"secret":"must not be parsed"}`)
-			client, err := NewClient(
+			client, err := newConfiguredTestClient(
 				&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 					headers := http.Header{"Retry-After": {"7"}}
 					if test.encoding != "" {
@@ -696,7 +753,7 @@ func TestClientDoesNotReadRedirectOrMappedErrorBodies(t *testing.T) {
 						ContentLength: int64(body.reader.Len()), Request: request,
 					}, nil
 				})},
-				WithBaseURL("https://api.github.test"),
+				withTestOrigin("https://api.github.test"),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -721,7 +778,7 @@ func TestClientDoesNotReadRedirectOrMappedErrorBodies(t *testing.T) {
 		redirectBody := newTrackedResponseBody(`{"secret":"redirect body"}`)
 		successBody := newTrackedResponseBody(ownerFixture)
 		calls := 0
-		client, err := NewClient(
+		client, err := newConfiguredTestClient(
 			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 				calls++
 				if calls == 1 {
@@ -736,7 +793,7 @@ func TestClientDoesNotReadRedirectOrMappedErrorBodies(t *testing.T) {
 					Body: successBody, ContentLength: int64(len(ownerFixture)), Request: request,
 				}, nil
 			})},
-			WithBaseURL("https://api.github.test"),
+			withTestOrigin("https://api.github.test"),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -810,7 +867,7 @@ func TestClientStatusAndRateLimitMapping(t *testing.T) {
 					response.Header().Add("X-Ratelimit-Reset", value)
 				}
 				response.WriteHeader(test.status)
-			}), WithClock(func() time.Time { return now }))
+			}), withTestClock(func() time.Time { return now }))
 			_, err := client.GetOwner(t.Context(), "octocat")
 			var rateLimit *RateLimitError
 			if !errors.As(err, &rateLimit) || rateLimit.RetryAfter != test.wantRetry ||
@@ -895,7 +952,7 @@ func TestClientFollowsEveryExactNamedToNumericRedirect(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			redirectBody := newTrackedResponseBody(`{"ignored":"redirect"}`)
 			calls := 0
-			client, err := NewClient(
+			client, err := newConfiguredTestClient(
 				&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 					calls++
 					assertProviderRequest(t, request)
@@ -924,7 +981,7 @@ func TestClientFollowsEveryExactNamedToNumericRedirect(t *testing.T) {
 						Request: request,
 					}, nil
 				})},
-				WithBaseURL("https://api.github.test"),
+				withTestOrigin("https://api.github.test"),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -957,7 +1014,7 @@ func TestClientRejectsUnsafeRedirectSequences(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			bodies := make([]*trackedResponseBody, 0, len(test.locations))
 			calls := 0
-			client, err := NewClient(
+			client, err := newConfiguredTestClient(
 				&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 					if calls >= len(test.locations) {
 						t.Fatalf("unexpected provider request %s", request.URL)
@@ -975,7 +1032,7 @@ func TestClientRejectsUnsafeRedirectSequences(t *testing.T) {
 						ContentLength: int64(body.reader.Len()), Request: request,
 					}, nil
 				})},
-				WithBaseURL("https://api.github.test"),
+				withTestOrigin("https://api.github.test"),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -1057,7 +1114,7 @@ func TestClientCancellationAndTimeoutClassification(t *testing.T) {
 	t.Run("redirects share one ten-second budget", func(t *testing.T) {
 		var deadlines []time.Time
 		calls := 0
-		redirectClient, newErr := NewClient(
+		redirectClient, newErr := newConfiguredTestClient(
 			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 				calls++
 				deadline, ok := request.Context().Deadline()
@@ -1074,7 +1131,7 @@ func TestClientCancellationAndTimeoutClassification(t *testing.T) {
 				}
 				return nil, context.DeadlineExceeded
 			})},
-			WithBaseURL("https://api.github.test"),
+			withTestOrigin("https://api.github.test"),
 		)
 		if newErr != nil {
 			t.Fatal(newErr)

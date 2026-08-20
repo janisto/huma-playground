@@ -240,7 +240,7 @@ Current task-specific guidance:
 | `go-testing` | `.agents/skills/go-testing/` | Write and review tests in either Go module |
 | `pagination-endpoint` | `.agents/skills/pagination-endpoint/` | Implement cursor-paginated list endpoints |
 | `readme-maintenance` | `.agents/skills/readme-maintenance/` | Reconcile README claims with the repository |
-| `openapi-contract` | `.agents/skills/openapi-contract/` | Maintain runtime-generated OpenAPI and Stoplight contracts |
+| `openapi-contract` | `.agents/skills/openapi-contract/` | Maintain runtime-generated OpenAPI and canonical discovery |
 | `security-review` | `.github/agents/security-review.agent.md` | Run an evidence-based GitHub Copilot security audit with a prompt-level read-only boundary |
 
 Repository automation under `.github/` independently checks both Go modules, required Firebase emulators,
@@ -508,7 +508,7 @@ type firestoreProfile struct {
 | 403 Forbidden | Authenticated but not authorized |
 | 404 Not Found | Resource does not exist |
 | 405 Method Not Allowed | HTTP method not supported for resource |
-| 422 Unprocessable Entity | Validation failures on specific fields |
+| 422 Unprocessable Content | Validation failures on specific fields |
 | 500 Internal Server Error | Unexpected server error |
 
 ### Error Responses

@@ -30,47 +30,18 @@ type Client struct {
 	clock      func() time.Time
 }
 
-type clientConfig struct {
-	baseURL string
-	clock   func() time.Time
-}
-
-type Option func(*clientConfig)
-
-// WithBaseURL is a constructor-only test seam. Public HTTP input cannot select it.
-func WithBaseURL(value string) Option {
-	return func(config *clientConfig) { config.baseURL = value }
-}
-
-// WithClock supplies deterministic quota timing in transport tests.
-func WithClock(clock func() time.Time) Option {
-	return func(config *clientConfig) { config.clock = clock }
-}
-
-func NewClient(httpClient *http.Client, options ...Option) (*Client, error) {
+func NewClient(httpClient *http.Client) (*Client, error) {
 	if httpClient == nil {
 		return nil, errors.New("github HTTP client is required")
 	}
-	config := clientConfig{baseURL: providerOrigin, clock: time.Now}
-	for _, option := range options {
-		option(&config)
+	origin, err := url.Parse(providerOrigin)
+	if err != nil {
+		return nil, errors.New("invalid fixed GitHub provider origin")
 	}
-	if config.clock == nil {
-		return nil, errors.New("github clock is required")
-	}
-	origin, err := url.Parse(config.baseURL)
-	if err != nil || !origin.IsAbs() || origin.Scheme != "http" && origin.Scheme != "https" || origin.Host == "" ||
-		origin.User != nil || origin.Path != "" && origin.Path != "/" || origin.RawPath != "" ||
-		origin.RawQuery != "" || origin.Fragment != "" {
-		return nil, errors.New(
-			"github base URL must be an HTTP(S) origin without credentials, path, query, or fragment",
-		)
-	}
-	origin.Path = ""
 	copyClient := *httpClient
 	copyClient.Timeout = 0
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Client{origin: origin, httpClient: &copyClient, clock: config.clock}, nil
+	return &Client{origin: origin, httpClient: &copyClient, clock: time.Now}, nil
 }
 
 func (client *Client) GetOwner(ctx context.Context, owner string) (Owner, error) {

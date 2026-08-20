@@ -35,7 +35,7 @@ Keep the document concise and onboarding-oriented. Preserve or update these subj
 - independent root and function module commands;
 - the distinction that Firebase CLI runs Auth and Firestore emulators but does not deploy the Go function;
 - the Cloud Run source-deployment function path and container-image service path;
-- runtime-generated OpenAPI, Stoplight Elements, schemas, container behavior, and required CI;
+- runtime-generated OpenAPI discovery at `/openapi.json`, container behavior, and required CI;
 - concise project layout, contribution pointer, and license.
 
 Organize material for readers rather than preserving a rigid heading order. Remove stale sections instead of

@@ -135,12 +135,16 @@ func policyFor(method, path string) (routePolicy, bool) {
 
 func isGitHubPointPath(path string) bool {
 	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	if len(segments) == 4 && segments[0] == "v1" && segments[1] == "github" && segments[2] == "owners" {
+	if len(segments) == 4 && segments[0] == "v1" && segments[1] == "github" &&
+		segments[2] == "owners" && segments[3] != "" {
+		return true
+	}
+	if len(segments) == 5 && segments[0] == "v1" && segments[1] == "github" &&
+		segments[2] == "repos" && segments[4] != "" {
 		return true
 	}
 	return len(segments) == 6 && segments[0] == "v1" && segments[1] == "github" &&
-		segments[2] == "repos" && (segments[5] == "languages" || segments[5] == "") ||
-		len(segments) == 5 && segments[0] == "v1" && segments[1] == "github" && segments[2] == "repos"
+		segments[2] == "repos" && segments[5] == "languages"
 }
 
 func isGitHubCollectionPath(path string) bool {

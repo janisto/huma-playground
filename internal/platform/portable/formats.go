@@ -2,12 +2,30 @@ package portable
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"reflect"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/fxamacker/cbor/v2"
 )
+
+func strictCBORUnmarshal(data []byte, target any) error {
+	err := strictCBORDecodeMode.Unmarshal(data, target)
+	if err == nil {
+		return nil
+	}
+	var arrayLimit *cbor.MaxArrayElementsError
+	var mapLimit *cbor.MaxMapPairsError
+	if generic, ok := target.(*any); ok &&
+		(errors.As(err, &arrayLimit) || errors.As(err, &mapLimit)) {
+		// Current request schemas cannot accept these containers. Let Huma
+		// report a schema failure without materializing the oversized value.
+		*generic = nil
+		return nil
+	}
+	return err
+}
 
 var (
 	strictCBORDecodeMode = mustCBORDecodeMode()
@@ -62,7 +80,7 @@ func Formats() map[string]huma.Format {
 		Marshal: func(w io.Writer, value any) error {
 			return strictCBOREncodeMode.NewEncoder(w).Encode(value)
 		},
-		Unmarshal: strictCBORDecodeMode.Unmarshal,
+		Unmarshal: strictCBORUnmarshal,
 	}
 	return map[string]huma.Format{
 		"application/json":                        jsonFormat,

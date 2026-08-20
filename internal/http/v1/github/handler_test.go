@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -39,6 +40,35 @@ type mockGitHubService struct {
 	cursor    *pagination.Cursor
 	ownerArg  string
 	repoArg   string
+}
+
+type providerRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function providerRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
+func newProviderBackedClient(t *testing.T, provider *httptest.Server) *githubsvc.Client {
+	t.Helper()
+	providerOrigin, err := url.Parse(provider.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerTransport := provider.Client().Transport
+	client, err := githubsvc.NewClient(&http.Client{Transport: providerRoundTripFunc(
+		func(request *http.Request) (*http.Response, error) {
+			forwarded := request.Clone(request.Context())
+			target := *request.URL
+			target.Scheme = providerOrigin.Scheme
+			target.Host = providerOrigin.Host
+			forwarded.URL = &target
+			return providerTransport.RoundTrip(forwarded)
+		},
+	)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
 }
 
 func (mock *mockGitHubService) record(operation string, limit int, cursor *pagination.Cursor) error {
@@ -111,6 +141,8 @@ func newGitHubTestRouter(t *testing.T, service githubsvc.Service) http.Handler {
 	config.DocsPath = ""
 	config.OpenAPIPath = ""
 	config.SchemasPath = ""
+	config.CreateHooks = nil
+	config.Transformers = nil
 	config.Formats = portable.Formats()
 	config.DefaultFormat = portable.MediaTypeJSON
 	config.NoFormatFallback = true
@@ -440,7 +472,6 @@ func TestGitHubCollectionsTraverseThreeProviderPagesThroughFrameworkBoundary(t *
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var providerURL string
 			provider := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				if request.URL.Path != test.providerPath || !test.fixedQuery(request.URL.Query()) {
 					t.Errorf("provider request=%s", request.URL.RequestURI())
@@ -460,7 +491,7 @@ func TestGitHubCollectionsTraverseThreeProviderPagesThroughFrameworkBoundary(t *
 						query = "direction=asc&page=" + strconv.Itoa(targetPage) +
 							"&per_page=1&sort=full_name&type=owner"
 					}
-					return providerURL + test.numericPath + "?" + query
+					return "https://api.github.com" + test.numericPath + "?" + query
 				}
 				links := make([]string, 0, 2)
 				if page > 1 {
@@ -478,11 +509,7 @@ func TestGitHubCollectionsTraverseThreeProviderPagesThroughFrameworkBoundary(t *
 				}
 			}))
 			t.Cleanup(provider.Close)
-			providerURL = provider.URL
-			client, err := githubsvc.NewClient(provider.Client(), githubsvc.WithBaseURL(provider.URL))
-			if err != nil {
-				t.Fatalf("NewClient: %v", err)
-			}
+			client := newProviderBackedClient(t, provider)
 			router := newGitHubTestRouter(t, client)
 
 			target := test.publicPath

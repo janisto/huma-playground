@@ -3,10 +3,12 @@ package portable
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -79,6 +81,112 @@ func TestParseStrictJSONBoundsContainerNesting(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStrictJSONUnmarshalBoundsContainerCardinality(t *testing.T) {
+	tests := []struct {
+		name     string
+		document []byte
+		accepted bool
+	}{
+		{name: "array at limit", document: jsonArray(maxJSONContainerItems), accepted: true},
+		{name: "array over limit", document: jsonArray(maxJSONContainerItems + 1)},
+		{name: "object at limit", document: jsonObject(maxJSONContainerItems), accepted: true},
+		{name: "object over limit", document: jsonObject(maxJSONContainerItems + 1)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parseStrictJSON(test.document, maxJSONContainerItems)
+			if test.accepted && err != nil {
+				t.Fatalf("document rejected: %v", err)
+			}
+			if !test.accepted && !errors.Is(err, errJSONContainerCardinality) {
+				t.Fatalf("error=%v want container cardinality error", err)
+			}
+		})
+	}
+}
+
+func TestStrictJSONContainerLimitDoesNotMaskLaterMalformedInput(t *testing.T) {
+	tests := map[string][]byte{
+		"trailing content": append(jsonArray(maxJSONContainerItems+1), []byte(" false")...),
+		"duplicate after limit": append(
+			bytes.TrimSuffix(jsonObject(maxJSONContainerItems+1), []byte("}")),
+			[]byte(`,"0":1}`)...,
+		),
+	}
+	for name, document := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := parseStrictJSON(document, maxJSONContainerItems)
+			if err == nil || errors.Is(err, errJSONContainerCardinality) {
+				t.Fatalf("error=%v want malformed-input error", err)
+			}
+		})
+	}
+}
+
+func TestStrictJSONContainerLimitBoundsLargeArrayAllocations(t *testing.T) {
+	tests := map[string][]byte{
+		"numbers":         jsonArray(100_000),
+		"escaped strings": repeatedJSONArray(`"\u0000"`, 50_000),
+	}
+	for name, document := range tests {
+		t.Run(name, func(t *testing.T) {
+			allocations := testing.AllocsPerRun(3, func() {
+				if _, err := parseStrictJSON(document, maxJSONContainerItems); !errors.Is(
+					err,
+					errJSONContainerCardinality,
+				) {
+					panic(err)
+				}
+			})
+			if allocations > 5_000 {
+				t.Fatalf("allocations=%0.f want at most 5000", allocations)
+			}
+		})
+	}
+}
+
+func repeatedJSONArray(element string, elements int) []byte {
+	var document strings.Builder
+	document.Grow((len(element)+1)*elements + 1)
+	document.WriteByte('[')
+	for index := range elements {
+		if index > 0 {
+			document.WriteByte(',')
+		}
+		document.WriteString(element)
+	}
+	document.WriteByte(']')
+	return []byte(document.String())
+}
+
+func jsonArray(elements int) []byte {
+	var document strings.Builder
+	document.Grow(elements*2 + 1)
+	document.WriteByte('[')
+	for index := range elements {
+		if index > 0 {
+			document.WriteByte(',')
+		}
+		document.WriteByte('0')
+	}
+	document.WriteByte(']')
+	return []byte(document.String())
+}
+
+func jsonObject(members int) []byte {
+	var document strings.Builder
+	document.WriteByte('{')
+	for index := range members {
+		if index > 0 {
+			document.WriteByte(',')
+		}
+		document.WriteString(strconv.Quote(strconv.Itoa(index)))
+		document.WriteString(":0")
+	}
+	document.WriteByte('}')
+	return []byte(document.String())
 }
 
 func TestStrictJSONUnmarshalDoesNotCoerceTypes(t *testing.T) {
