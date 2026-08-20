@@ -283,18 +283,7 @@ func visitMigrationDocuments(iterator migrationDocumentIterator, visit func(migr
 }
 
 func migrationDocumentFromSnapshot(snapshot *firestore.DocumentSnapshot, encoded bool) migrationDocument {
-	principal := snapshot.Ref.ID
-	if encoded {
-		decoded, err := base64.RawURLEncoding.DecodeString(snapshot.Ref.ID)
-		if err != nil || base64.RawURLEncoding.EncodeToString(decoded) != snapshot.Ref.ID {
-			principal = ""
-		} else {
-			principal = string(decoded)
-		}
-	}
-	if !validProfileID(principal) || profileDocumentPath(principal) != snapshot.Ref.Path {
-		principal = ""
-	}
+	principal := migrationPrincipalForDocumentID(snapshot.Ref.ID, encoded)
 	fingerprintValue := snapshot.Ref.Path
 	if principal != "" {
 		fingerprintValue = principal
@@ -305,6 +294,25 @@ func migrationDocumentFromSnapshot(snapshot *firestore.DocumentSnapshot, encoded
 		principal:   principal,
 		fingerprint: fingerprintPrincipal(fingerprintValue),
 	}
+}
+
+func migrationPrincipalForDocumentID(documentID string, encoded bool) string {
+	principal := documentID
+	relativePath := profilesCollection + "/" + documentID
+	if encoded {
+		decoded, err := base64.RawURLEncoding.DecodeString(documentID)
+		if err != nil || base64.RawURLEncoding.EncodeToString(decoded) != documentID {
+			principal = ""
+		} else {
+			principal = string(decoded)
+		}
+		relativePath = profilesCollection + "/" + encodedProfilesDocument + "/" +
+			encodedProfilesCollection + "/" + documentID
+	}
+	if !validProfileID(principal) || profileDocumentPath(principal) != relativePath {
+		return ""
+	}
+	return principal
 }
 
 func classifyMigration(

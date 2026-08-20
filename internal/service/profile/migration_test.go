@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"reflect"
@@ -164,6 +165,29 @@ func TestMigrationFingerprintsDoNotExposePrincipal(t *testing.T) {
 	second := fingerprintPrincipal("principal-b")
 	if first == second || first == "principal-a" || len(first) != 16 || first != fingerprintPrincipal("principal-a") {
 		t.Fatalf("fingerprints first=%q second=%q", first, second)
+	}
+}
+
+func TestMigrationPrincipalRequiresCanonicalStorageLayout(t *testing.T) {
+	encodedUnsafeID := base64.RawURLEncoding.EncodeToString([]byte("firebase/user"))
+	encodedSafeID := base64.RawURLEncoding.EncodeToString([]byte("principal-direct"))
+	tests := []struct {
+		name, documentID, want string
+		encoded                bool
+	}{
+		{name: "direct", documentID: "principal-direct", want: "principal-direct"},
+		{name: "reserved direct ID", documentID: "__reserved__"},
+		{name: "encoded unsafe ID", documentID: encodedUnsafeID, encoded: true, want: "firebase/user"},
+		{name: "misplaced encoded safe ID", documentID: encodedSafeID, encoded: true},
+		{name: "noncanonical base64", documentID: encodedUnsafeID + "=", encoded: true},
+		{name: "invalid base64", documentID: "%", encoded: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := migrationPrincipalForDocumentID(test.documentID, test.encoded); got != test.want {
+				t.Fatalf("principal=%q want=%q", got, test.want)
+			}
+		})
 	}
 }
 
