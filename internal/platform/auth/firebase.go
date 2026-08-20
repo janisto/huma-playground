@@ -3,11 +3,13 @@ package auth
 import (
 	"context"
 	"errors"
-	"strings"
+	"regexp"
 
 	fbauth "firebase.google.com/go/v4/auth"
 	"firebase.google.com/go/v4/errorutils"
 )
+
+var token68Pattern = regexp.MustCompile(`^[A-Za-z0-9._~+/-]+={0,}$`)
 
 // FirebaseUser represents an authenticated user.
 type FirebaseUser struct {
@@ -102,11 +104,44 @@ func ExtractBearerToken(header string) (string, error) {
 	if header == "" {
 		return "", ErrNoToken
 	}
-	parts := strings.Fields(header)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") || parts[1] == "" {
+	separator := 0
+	for separator < len(header) && header[separator] != ' ' {
+		separator++
+	}
+	if separator == 0 || separator == len(header) || !equalFoldASCII(header[:separator], "Bearer") {
 		return "", ErrInvalidToken
 	}
-	return parts[1], nil
+	credentialStart := separator
+	for credentialStart < len(header) && header[credentialStart] == ' ' {
+		credentialStart++
+	}
+	if credentialStart == len(header) {
+		return "", ErrInvalidToken
+	}
+	credential := header[credentialStart:]
+	if !token68Pattern.MatchString(credential) {
+		return "", ErrInvalidToken
+	}
+	return credential, nil
+}
+
+func equalFoldASCII(left, right string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range len(left) {
+		l, r := left[index], right[index]
+		if l >= 'A' && l <= 'Z' {
+			l += 'a' - 'A'
+		}
+		if r >= 'A' && r <= 'Z' {
+			r += 'a' - 'A'
+		}
+		if l != r {
+			return false
+		}
+	}
+	return true
 }
 
 // Compile-time interface check

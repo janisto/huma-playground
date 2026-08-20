@@ -1,55 +1,47 @@
 package github
 
-// OwnerGetOutput is the response wrapper for GET /github/owners/{owner}.
 type OwnerGetOutput struct {
 	Body Owner
 }
 
-// OwnerReposListData is the response body for listing an owner's repositories.
-type OwnerReposListData struct {
-	Repos []RepoSummary `json:"repos" nullable:"false" doc:"List of repositories"`
-	Count int           `json:"count"                  doc:"Number of repositories returned" example:"1"`
+type RepositoryPage struct {
+	Repos []RepositorySummary `json:"repos" nullable:"false" maxItems:"100"`
+	Count int                 `json:"count"                                 minimum:"0" maximum:"100" example:"1"`
 }
 
-// OwnerReposListOutput is the response wrapper for GET /github/owners/{owner}/repos.
-type OwnerReposListOutput struct {
-	Body OwnerReposListData
+type OwnerRepositoriesListOutput struct {
+	Link string `header:"Link" doc:"Optional RFC 8288 next and previous navigation"`
+	Body RepositoryPage
 }
 
-// RepoGetOutput is the response wrapper for GET /github/repos/{owner}/{repo}.
-type RepoGetOutput struct {
-	Body Repo
+type RepositoryGetOutput struct {
+	Body Repository
 }
 
-// RepoActivityListData is the response body for listing repository activity.
-type RepoActivityListData struct {
-	Activities []Activity `json:"activities" nullable:"false" doc:"List of activity events"`
-	Count      int        `json:"count"                       doc:"Number of activities returned" example:"1"`
+type ActivityPage struct {
+	Activities []Activity `json:"activities" nullable:"false" maxItems:"100"`
+	Count      int        `json:"count"                                      minimum:"0" maximum:"100" example:"1"`
 }
 
-// RepoActivityListOutput is the response wrapper for GET /github/repos/{owner}/{repo}/activity.
-type RepoActivityListOutput struct {
-	Link string `header:"Link" doc:"RFC 8288 pagination links"`
-	Body RepoActivityListData
+type RepositoryActivityListOutput struct {
+	Link string `header:"Link" doc:"Optional RFC 8288 next and previous navigation"`
+	Body ActivityPage
 }
 
-// LanguagesData is the response body for repository languages.
-type LanguagesData struct {
-	Languages []Language `json:"languages" nullable:"false" doc:"List of languages used"`
+type Languages struct {
+	Languages []Language `json:"languages" nullable:"false"`
 }
 
-// RepoLanguagesGetOutput is the response wrapper for GET /github/repos/{owner}/{repo}/languages.
-type RepoLanguagesGetOutput struct {
-	Body LanguagesData
+type RepositoryLanguagesListOutput struct {
+	Body Languages
 }
 
-// RepoTagsListData is the response body for listing repository tags.
-type RepoTagsListData struct {
-	Tags  []Tag `json:"tags"  nullable:"false" doc:"List of tags"`
-	Count int   `json:"count"                  doc:"Number of tags returned" example:"1"`
+type TagPage struct {
+	Tags  []Tag `json:"tags"  nullable:"false" maxItems:"100"`
+	Count int   `json:"count"                                 minimum:"0" maximum:"100" example:"1"`
 }
 
-// RepoTagsListOutput is the response wrapper for GET /github/repos/{owner}/{repo}/tags.
-type RepoTagsListOutput struct {
-	Body RepoTagsListData
+type RepositoryTagsListOutput struct {
+	Link string `header:"Link" doc:"Optional RFC 8288 next and previous navigation"`
+	Body TagPage
 }

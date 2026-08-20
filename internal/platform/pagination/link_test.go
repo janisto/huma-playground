@@ -158,7 +158,7 @@ func TestBuildLinkHeaderMultipleQueryValues(t *testing.T) {
 
 func TestBuildLinkHeaderCursorWithSpecialChars(t *testing.T) {
 	baseURL := "https://api.example.com/items"
-	cursor := Cursor{Type: "item", Value: "abc/def+ghi=jkl"}.Encode()
+	cursor := NewCursor(Scope{Operation: "list-items", Limit: 20}, "next", "abc/def+ghi=jkl").Encode()
 
 	link := BuildLinkHeader(baseURL, nil, cursor, "")
 

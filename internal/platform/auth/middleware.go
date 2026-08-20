@@ -4,14 +4,36 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
+
+	"github.com/janisto/huma-playground/internal/platform/portable"
 )
 
-// userContextKey is the context key for the authenticated user.
-type userContextKey struct{}
+// identityContextKey is the context key for request-scoped authentication state.
+type identityContextKey struct{}
+
+type requestIdentity struct {
+	user *FirebaseUser
+}
+
+// NewIdentityContextMiddleware installs request-scoped authentication state
+// before middleware that observes the Huma context. Authentication can then
+// populate the state without replacing the context captured by terminal
+// observability middleware.
+func NewIdentityContextMiddleware() func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		if identityFromContext(ctx.Context()) != nil {
+			next(ctx)
+			return
+		}
+		next(huma.WithValue(ctx, identityContextKey{}, &requestIdentity{}))
+	}
+}
 
 // NewAuthMiddleware creates Huma middleware for Firebase authentication.
 // It checks the operation's Security requirements and validates tokens.
@@ -22,12 +44,17 @@ func NewAuthMiddleware(api huma.API, verifier Verifier) func(huma.Context, func(
 			return
 		}
 
-		token, err := ExtractBearerToken(ctx.Header("Authorization"))
+		authorizationValues := headerValues(ctx, "Authorization")
+		var authorization string
+		if len(authorizationValues) == 1 && !strings.Contains(authorizationValues[0], ",") {
+			authorization = authorizationValues[0]
+		}
+		token, err := ExtractBearerToken(authorization)
 		if err != nil {
 			obs.Logger(ctx.Context()).Warn("auth failed: missing or invalid header",
 				zap.String("reason", "no_token"))
 			ctx.SetHeader("WWW-Authenticate", "Bearer")
-			writeAuthError(api, ctx, http.StatusUnauthorized, "missing or invalid authorization header")
+			writeAuthError(api, ctx, http.StatusUnauthorized)
 			return
 		}
 
@@ -52,19 +79,24 @@ func NewAuthMiddleware(api huma.API, verifier Verifier) func(huma.Context, func(
 			}
 			if isCredentialError(err) {
 				ctx.SetHeader("WWW-Authenticate", "Bearer")
-				writeAuthError(api, ctx, http.StatusUnauthorized, "invalid or expired token")
+				writeAuthError(api, ctx, http.StatusUnauthorized)
 				return
 			}
 			writeAuthUnavailable(api, ctx)
 			return
 		}
-		if user == nil || user.UID == "" {
+		if user == nil || user.UID == "" || !utf8.ValidString(user.UID) || utf8.RuneCountInString(user.UID) > 128 {
 			obs.Logger(ctx.Context()).Error("auth failed: verifier returned no identity")
 			writeAuthUnavailable(api, ctx)
 			return
 		}
 
-		ctx = huma.WithValue(ctx, userContextKey{}, user)
+		identity := identityFromContext(ctx.Context())
+		if identity == nil {
+			identity = &requestIdentity{}
+			ctx = huma.WithValue(ctx, identityContextKey{}, identity)
+		}
+		identity.user = user
 		next(ctx)
 	}
 }
@@ -78,8 +110,7 @@ func isCredentialError(err error) bool {
 }
 
 func writeAuthUnavailable(api huma.API, ctx huma.Context) {
-	ctx.SetHeader("Retry-After", "30")
-	writeAuthError(api, ctx, http.StatusServiceUnavailable, "authentication service temporarily unavailable")
+	writeAuthError(api, ctx, http.StatusServiceUnavailable)
 }
 
 func requiresBearerAuth(requirements []map[string][]string) bool {
@@ -91,10 +122,25 @@ func requiresBearerAuth(requirements []map[string][]string) bool {
 	return false
 }
 
-func writeAuthError(api huma.API, ctx huma.Context, status int, detail string) {
-	if err := huma.WriteErr(api, ctx, status, detail); err != nil {
+func writeAuthError(api huma.API, ctx huma.Context, status int) {
+	code := portable.CodeUnauthorized
+	if status == http.StatusServiceUnavailable {
+		code = portable.CodeDependencyUnavailable
+	}
+	problem := portable.NewProblemForContext(ctx.Context(), code)
+	if err := huma.WriteErr(api, ctx, status, problem.Detail); err != nil {
 		obs.Logger(ctx.Context()).Error("write authentication error", zap.Error(err))
 	}
+}
+
+func headerValues(ctx huma.Context, name string) []string {
+	values := make([]string, 0, 1)
+	ctx.EachHeader(func(candidate, value string) {
+		if strings.EqualFold(candidate, name) {
+			values = append(values, value)
+		}
+	})
+	return values
 }
 
 // categorizeAuthError returns a safe category string for logging.
@@ -122,6 +168,14 @@ func categorizeAuthError(err error) string {
 // UserFromContext retrieves the authenticated user from context.
 // Returns nil if no user is authenticated.
 func UserFromContext(ctx context.Context) *FirebaseUser {
-	user, _ := ctx.Value(userContextKey{}).(*FirebaseUser)
-	return user
+	identity := identityFromContext(ctx)
+	if identity == nil {
+		return nil
+	}
+	return identity.user
+}
+
+func identityFromContext(ctx context.Context) *requestIdentity {
+	identity, _ := ctx.Value(identityContextKey{}).(*requestIdentity)
+	return identity
 }

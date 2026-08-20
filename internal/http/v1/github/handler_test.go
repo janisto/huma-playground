@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,884 +16,819 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	humachi "github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/janisto/huma-observability/v2"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/janisto/huma-playground/internal/platform/pagination"
+	"github.com/janisto/huma-playground/internal/platform/portable"
 	githubsvc "github.com/janisto/huma-playground/internal/service/github"
 )
 
 type mockGitHubService struct {
-	owner     *githubsvc.Owner
-	repos     []githubsvc.RepoSummary
-	repo      *githubsvc.Repo
-	activity  *githubsvc.ActivityPage
-	languages map[string]int64
-	tags      []githubsvc.Tag
 	err       error
+	calls     []string
+	owner     githubsvc.Owner
+	repos     githubsvc.Page[githubsvc.RepositorySummary]
+	repo      githubsvc.Repository
+	activity  githubsvc.Page[githubsvc.Activity]
+	languages []githubsvc.Language
+	tags      githubsvc.Page[githubsvc.Tag]
+	limit     int
+	cursor    *pagination.Cursor
+	ownerArg  string
+	repoArg   string
 }
 
-func (m *mockGitHubService) GetOwner(_ context.Context, _ string) (*githubsvc.Owner, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.owner, nil
+func (mock *mockGitHubService) record(operation string, limit int, cursor *pagination.Cursor) error {
+	mock.calls = append(mock.calls, operation)
+	mock.limit = limit
+	mock.cursor = cursor
+	return mock.err
 }
 
-func (m *mockGitHubService) ListRepos(_ context.Context, _ string) ([]githubsvc.RepoSummary, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.repos, nil
+func (mock *mockGitHubService) capturePath(owner, repo string) {
+	mock.ownerArg = owner
+	mock.repoArg = repo
 }
 
-func (m *mockGitHubService) GetRepo(_ context.Context, _, _ string) (*githubsvc.Repo, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.repo, nil
+func (mock *mockGitHubService) GetOwner(_ context.Context, owner string) (githubsvc.Owner, error) {
+	mock.capturePath(owner, "")
+	return mock.owner, mock.record("owner", 0, nil)
 }
 
-func (m *mockGitHubService) ListActivity(
+func (mock *mockGitHubService) ListOwnerRepositories(
 	_ context.Context,
-	_, _ string,
-	_ int,
-	_ string,
-) (*githubsvc.ActivityPage, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.activity, nil
+	owner string,
+	limit int,
+	cursor *pagination.Cursor,
+) (githubsvc.Page[githubsvc.RepositorySummary], error) {
+	mock.capturePath(owner, "")
+	return mock.repos, mock.record("repos", limit, cursor)
 }
 
-func (m *mockGitHubService) ListLanguages(_ context.Context, _, _ string) (map[string]int64, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.languages, nil
+func (mock *mockGitHubService) GetRepository(
+	_ context.Context,
+	owner, repo string,
+) (githubsvc.Repository, error) {
+	mock.capturePath(owner, repo)
+	return mock.repo, mock.record("repo", 0, nil)
 }
 
-func (m *mockGitHubService) ListTags(_ context.Context, _, _ string) ([]githubsvc.Tag, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.tags, nil
+func (mock *mockGitHubService) ListRepositoryActivity(
+	_ context.Context,
+	owner, repo string,
+	limit int,
+	cursor *pagination.Cursor,
+) (githubsvc.Page[githubsvc.Activity], error) {
+	mock.capturePath(owner, repo)
+	return mock.activity, mock.record("activity", limit, cursor)
 }
 
-var _ githubsvc.Service = (*mockGitHubService)(nil)
-
-func newTestRouter(svc githubsvc.Service) chi.Router {
-	return newTestRouterWithLogger(svc, zap.NewNop())
+func (mock *mockGitHubService) ListRepositoryLanguages(
+	_ context.Context,
+	owner, repo string,
+) ([]githubsvc.Language, error) {
+	mock.capturePath(owner, repo)
+	return mock.languages, mock.record("languages", 0, nil)
 }
 
-func newTestRouterWithLogger(svc githubsvc.Service, logger *zap.Logger) chi.Router {
+func (mock *mockGitHubService) ListRepositoryTags(
+	_ context.Context,
+	owner, repo string,
+	limit int,
+	cursor *pagination.Cursor,
+) (githubsvc.Page[githubsvc.Tag], error) {
+	mock.capturePath(owner, repo)
+	return mock.tags, mock.record("tags", limit, cursor)
+}
+
+func newGitHubTestRouter(t *testing.T, service githubsvc.Service) http.Handler {
+	t.Helper()
+	portable.ConfigureHuma()
+	config := huma.DefaultConfig("GitHub test", "test")
+	config.DocsPath = ""
+	config.OpenAPIPath = ""
+	config.SchemasPath = ""
+	config.Formats = portable.Formats()
+	config.DefaultFormat = portable.MediaTypeJSON
+	config.NoFormatFallback = true
 	router := chi.NewRouter()
-	router.Use(
-		chimiddleware.ClientIPFromRemoteAddr,
-	)
-	api := humachi.New(router, huma.DefaultConfig("GitHubTest", "test"))
-	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{Logger: logger}))
-	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{Logger: logger}))
-	Register(api, svc, "")
+	router.Use(portable.RequestPolicy("/v1"))
+	api := humachi.New(router, config)
+	group := huma.NewGroup(api, "/v1")
+	Register(group, service, "/v1")
 	return router
 }
 
-func testOwner() *githubsvc.Owner {
-	return &githubsvc.Owner{
-		Login:     "octocat",
-		Name:      "The Octocat",
-		AvatarURL: "https://avatars.githubusercontent.com/u/583231",
-		HTMLURL:   "https://github.com/octocat",
-		Bio:       "",
-		Location:  "San Francisco",
-		Blog:      "https://github.blog",
-		Company:   "@github",
-		CreatedAt: time.Date(2011, 1, 25, 18, 44, 36, 0, time.UTC),
-		UpdatedAt: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+func performGitHubRequest(t *testing.T, router http.Handler, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	request.Header.Set("Accept", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
+func decodeObject(t *testing.T, response *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var object map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &object); err != nil {
+		t.Fatalf("decode JSON: %v; body=%s", err, response.Body.String())
+	}
+	return object
+}
+
+func objectArray(t *testing.T, object map[string]any, field string) []any {
+	t.Helper()
+	values, ok := object[field].([]any)
+	if !ok {
+		t.Fatalf("%s has type %T, want array", field, object[field])
+	}
+	return values
+}
+
+func firstObject(t *testing.T, values []any) map[string]any {
+	t.Helper()
+	if len(values) == 0 {
+		t.Fatal("expected a non-empty object array")
+	}
+	object, ok := values[0].(map[string]any)
+	if !ok {
+		t.Fatalf("array value has type %T, want object", values[0])
+	}
+	return object
+}
+
+func stringField(t *testing.T, object map[string]any, field string) string {
+	t.Helper()
+	value, ok := object[field].(string)
+	if !ok {
+		t.Fatalf("%s has type %T, want string", field, object[field])
+	}
+	return value
+}
+
+func publicLinkTarget(header, relation string) string {
+	for value := range strings.SplitSeq(header, ",") {
+		value = strings.TrimSpace(value)
+		if !strings.HasSuffix(value, `rel="`+relation+`"`) || !strings.HasPrefix(value, "<") {
+			continue
+		}
+		end := strings.IndexByte(value, '>')
+		if end > 1 {
+			return value[1:end]
+		}
+	}
+	return ""
+}
+
+func githubFixtures() *mockGitHubService {
+	created := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	updated := created.Add(123 * time.Millisecond)
+	return &mockGitHubService{
+		owner: githubsvc.Owner{
+			ID: 1, Login: "octocat", Type: "User", Name: new("Octo"),
+			AvatarURL: "https://avatars.example/1", HTMLURL: "https://github.com/octocat",
+			PublicRepos: 2, Followers: 3, Following: 4, CreatedAt: created, UpdatedAt: updated,
+		},
+		repos: githubsvc.Page[githubsvc.RepositorySummary]{
+			Entries: []githubsvc.RepositorySummary{{
+				ID: 2, Name: "repo", FullName: "octocat/repo", HTMLURL: "https://github.com/octocat/repo",
+			}},
+			NextCursor: pagination.NewCursor(
+				pagination.Scope{Operation: "listGitHubOwnerRepositories", Owner: "octocat", Limit: 2},
+				"next", "2",
+			).Encode(),
+		},
+		repo: githubsvc.Repository{
+			RepositorySummary: githubsvc.RepositorySummary{
+				ID: 2, Name: "repo", FullName: "octocat/repo", HTMLURL: "https://github.com/octocat/repo",
+			},
+			StargazersCount: 3, ForksCount: 4, OpenIssuesCount: 5,
+			CreatedAt: created, UpdatedAt: updated, DefaultBranch: "main", Topics: []string{},
+		},
+		activity: githubsvc.Page[githubsvc.Activity]{
+			Entries: []githubsvc.Activity{{ID: 3, Ref: "refs/heads/main", Timestamp: created, ActivityType: "push"}},
+		},
+		languages: []githubsvc.Language{{Name: "Go", Bytes: 42}},
+		tags: githubsvc.Page[githubsvc.Tag]{
+			Entries: []githubsvc.Tag{{Name: "v1.0.0", SHA: "0123456789abcdef0123456789abcdef01234567"}},
+		},
 	}
 }
 
-func testRepoSummary() githubsvc.RepoSummary {
-	return githubsvc.RepoSummary{
-		Name:        "git-consortium",
-		FullName:    "octocat/git-consortium",
-		Description: "This repo is for demonstration purposes.",
-		HTMLURL:     "https://github.com/octocat/git-consortium",
-		Language:    "Ruby",
-		Stars:       16,
-		Forks:       10,
-		OpenIssues:  0,
-		CreatedAt:   time.Date(2011, 1, 25, 18, 44, 36, 0, time.UTC),
-		UpdatedAt:   time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+func TestGitHubHandlersReturnExactOperationProjections(t *testing.T) {
+	tests := []struct {
+		name, target, operation string
+		assert                  func(*testing.T, *httptest.ResponseRecorder, map[string]any)
+	}{
+		{
+			name: "owner", target: "/v1/github/owners/octocat", operation: "owner",
+			assert: func(t *testing.T, _ *httptest.ResponseRecorder, body map[string]any) {
+				t.Helper()
+				if body["id"] != float64(1) || body["login"] != "octocat" || body["name"] != "Octo" ||
+					body["company"] != nil || body["createdAt"] != "2024-01-01T00:00:00.000Z" ||
+					body["updatedAt"] != "2024-01-01T00:00:00.123Z" {
+					t.Fatalf("unexpected owner: %#v", body)
+				}
+			},
+		},
+		{
+			name: "owner repositories", target: "/v1/github/owners/octocat/repos?limit=2", operation: "repos",
+			assert: func(t *testing.T, response *httptest.ResponseRecorder, body map[string]any) {
+				t.Helper()
+				if body["count"] != float64(1) || len(objectArray(t, body, "repos")) != 1 {
+					t.Fatalf("unexpected repository page: %#v", body)
+				}
+				if link := response.Header().
+					Get("Link"); !strings.HasPrefix(link, "</v1/github/owners/octocat/repos?") ||
+					!strings.Contains(link, "limit=2") ||
+					!strings.Contains(link, `rel="next"`) {
+					t.Fatalf("Link = %q", link)
+				}
+			},
+		},
+		{
+			name: "repository", target: "/v1/github/repos/octocat/repo", operation: "repo",
+			assert: func(t *testing.T, _ *httptest.ResponseRecorder, body map[string]any) {
+				t.Helper()
+				if body["fullName"] != "octocat/repo" || body["language"] != nil || body["pushedAt"] != nil ||
+					body["license"] != nil || len(objectArray(t, body, "topics")) != 0 {
+					t.Fatalf("unexpected repository: %#v", body)
+				}
+			},
+		},
+		{
+			name: "activity", target: "/v1/github/repos/octocat/repo/activity?limit=1", operation: "activity",
+			assert: func(t *testing.T, _ *httptest.ResponseRecorder, body map[string]any) {
+				t.Helper()
+				entry := firstObject(t, objectArray(t, body, "activities"))
+				if body["count"] != float64(1) || entry["actor"] != nil || entry["actorAvatarUrl"] != nil {
+					t.Fatalf("unexpected activity page: %#v", body)
+				}
+			},
+		},
+		{
+			name: "languages", target: "/v1/github/repos/octocat/repo/languages", operation: "languages",
+			assert: func(t *testing.T, _ *httptest.ResponseRecorder, body map[string]any) {
+				t.Helper()
+				entry := firstObject(t, objectArray(t, body, "languages"))
+				if entry["name"] != "Go" || entry["bytes"] != float64(42) {
+					t.Fatalf("unexpected languages: %#v", body)
+				}
+			},
+		},
+		{
+			name: "tags", target: "/v1/github/repos/octocat/repo/tags?limit=1", operation: "tags",
+			assert: func(t *testing.T, _ *httptest.ResponseRecorder, body map[string]any) {
+				t.Helper()
+				entry := firstObject(t, objectArray(t, body, "tags"))
+				commit, ok := entry["commit"].(map[string]any)
+				if !ok || entry["name"] != "v1.0.0" || len(stringField(t, commit, "sha")) != 40 {
+					t.Fatalf("unexpected tags: %#v", body)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := githubFixtures()
+			response := performGitHubRequest(t, newGitHubTestRouter(t, service), test.target)
+			if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/json" {
+				t.Fatalf(
+					"status=%d content-type=%q body=%s",
+					response.Code,
+					response.Header().Get("Content-Type"),
+					response.Body.String(),
+				)
+			}
+			if len(service.calls) != 1 || service.calls[0] != test.operation {
+				t.Fatalf("calls = %v", service.calls)
+			}
+			test.assert(t, response, decodeObject(t, response))
+		})
 	}
 }
 
-func testRepo() *githubsvc.Repo {
-	return &githubsvc.Repo{
-		RepoSummary:   testRepoSummary(),
-		DefaultBranch: "master",
-		License:       "MIT License",
-		Topics:        []string{},
-		Archived:      false,
-		Disabled:      false,
+func TestGitHubHandlersAcceptExactPathAndLimitBoundaries(t *testing.T) {
+	maximumOwner := "a_" + strings.Repeat("b", 36) + "c"
+	maximumRepo := strings.Repeat(".", 99) + "a"
+	pathTests := []struct {
+		name, target, operation, owner, repo string
+	}{
+		{name: "one-character owner", target: "/v1/github/owners/a", operation: "owner", owner: "a"},
+		{
+			name: "39-character owner with underscore", target: "/v1/github/owners/" + maximumOwner,
+			operation: "owner", owner: maximumOwner,
+		},
+		{
+			name: "one-character repository", target: "/v1/github/repos/a/_", operation: "repo",
+			owner: "a", repo: "_",
+		},
+		{
+			name: "100-character repository", target: "/v1/github/repos/a/" + maximumRepo,
+			operation: "repo", owner: "a", repo: maximumRepo,
+		},
 	}
-}
-
-func testActivity() githubsvc.Activity {
-	return githubsvc.Activity{
-		ID:             1,
-		Actor:          "octocat",
-		Ref:            "refs/heads/master",
-		Timestamp:      time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
-		ActivityType:   "push",
-		ActorAvatarURL: "https://avatars.githubusercontent.com/u/583231",
-	}
-}
-
-// --- GetOwner ---
-
-func TestGetOwnerSuccess(t *testing.T) {
-	svc := &mockGitHubService{owner: testOwner()}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "get-owner-test")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	for _, test := range pathTests {
+		t.Run(test.name, func(t *testing.T) {
+			service := githubFixtures()
+			response := performGitHubRequest(t, newGitHubTestRouter(t, service), test.target)
+			if response.Code != http.StatusOK || len(service.calls) != 1 || service.calls[0] != test.operation ||
+				service.ownerArg != test.owner || service.repoArg != test.repo {
+				t.Fatalf("status=%d calls=%v owner=%q repo=%q body=%s",
+					response.Code, service.calls, service.ownerArg, service.repoArg, response.Body.String())
+			}
+		})
 	}
 
-	ct := resp.Header().Get("Content-Type")
-	if !strings.HasPrefix(ct, "application/json") {
-		t.Errorf("expected application/json, got %s", ct)
+	collections := []struct {
+		name, path, operation string
+	}{
+		{name: "owner repositories", path: "/v1/github/owners/octocat/repos", operation: "repos"},
+		{name: "activity", path: "/v1/github/repos/octocat/repo/activity", operation: "activity"},
+		{name: "tags", path: "/v1/github/repos/octocat/repo/tags", operation: "tags"},
 	}
-
-	var owner Owner
-	if err := json.Unmarshal(resp.Body.Bytes(), &owner); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
+	limits := []struct {
+		name, query string
+		want        int
+	}{
+		{name: "omitted", want: 20},
+		{name: "minimum", query: "?limit=1", want: 1},
+		{name: "explicit default", query: "?limit=20", want: 20},
+		{name: "maximum", query: "?limit=100", want: 100},
 	}
-	if owner.Login != "octocat" {
-		t.Errorf("expected login octocat, got %s", owner.Login)
-	}
-	if owner.Name != "The Octocat" {
-		t.Errorf("expected name The Octocat, got %s", owner.Name)
-	}
-	if owner.Location != "San Francisco" {
-		t.Errorf("expected location San Francisco, got %s", owner.Location)
-	}
-}
-
-func TestGetOwnerNotFound(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/unknown", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	var problem huma.ErrorModel
-	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if problem.Status != http.StatusNotFound {
-		t.Errorf("expected status 404, got %d", problem.Status)
-	}
-}
-
-func TestGetOwnerRejectsInvalidLogin(t *testing.T) {
-	router := newTestRouter(&mockGitHubService{})
-	for _, owner := range []string{"invalid.name", "invalid--name", "invalid-"} {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/"+owner, nil)
-		resp := httptest.NewRecorder()
-		router.ServeHTTP(resp, req)
-		if resp.Code != http.StatusUnprocessableEntity {
-			t.Fatalf("%s: expected 422, got %d: %s", owner, resp.Code, resp.Body.String())
+	for _, collection := range collections {
+		for _, limit := range limits {
+			t.Run(collection.name+"/"+limit.name, func(t *testing.T) {
+				service := githubFixtures()
+				service.repos.NextCursor = ""
+				response := performGitHubRequest(
+					t, newGitHubTestRouter(t, service), collection.path+limit.query,
+				)
+				if response.Code != http.StatusOK || len(service.calls) != 1 ||
+					service.calls[0] != collection.operation || service.limit != limit.want {
+					t.Fatalf("status=%d calls=%v limit=%d body=%s",
+						response.Code, service.calls, service.limit, response.Body.String())
+				}
+			})
 		}
 	}
 }
 
-func TestGetOwnerUpstreamError(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrUpstream}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	var problem huma.ErrorModel
-	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if problem.Status != http.StatusBadGateway {
-		t.Errorf("expected status 502, got %d", problem.Status)
-	}
-}
-
-func TestGitHubUnexpectedErrorIsLoggedOnce(t *testing.T) {
-	core, logs := observer.New(zap.ErrorLevel)
-	router := newTestRouterWithLogger(
-		&mockGitHubService{err: errors.New("unexpected transport error")},
-		zap.New(core),
+func TestGitHubHandlersDecodeAndBindScopedCursor(t *testing.T) {
+	service := githubFixtures()
+	cursor := pagination.NewCursor(
+		pagination.Scope{Operation: "listGitHubOwnerRepositories", Owner: "octocat", Limit: 7},
+		"next", "3",
+	).Encode()
+	response := performGitHubRequest(
+		t,
+		newGitHubTestRouter(t, service),
+		"/v1/github/owners/octocat/repos?limit=7&cursor="+cursor,
 	)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", resp.Code, resp.Body.String())
-	}
-	entries := logs.FilterMessage("github upstream request failed").All()
-	if len(entries) != 1 {
-		t.Fatalf("expected one GitHub failure log, got %d", len(entries))
-	}
-	if operation := entries[0].ContextMap()["operation"]; operation != "get_owner" {
-		t.Fatalf("unexpected operation field %#v", operation)
+	if response.Code != http.StatusOK || service.limit != 7 || service.cursor == nil || service.cursor.Anchor != "3" {
+		t.Fatalf(
+			"status=%d limit=%d cursor=%#v body=%s",
+			response.Code,
+			service.limit,
+			service.cursor,
+			response.Body.String(),
+		)
 	}
 }
 
-func TestGitHubTimeoutIsLoggedOnce(t *testing.T) {
-	core, logs := observer.New(zap.WarnLevel)
-	router := newTestRouterWithLogger(
-		&mockGitHubService{err: context.DeadlineExceeded},
-		zap.New(core),
-	)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d: %s", resp.Code, resp.Body.String())
+func TestGitHubCollectionsTraverseThreeProviderPagesThroughFrameworkBoundary(t *testing.T) {
+	tests := []struct {
+		name, publicPath, providerPath, numericPath, bodyMember string
+		fixedQuery                                              func(map[string][]string) bool
+		document                                                func(int) string
+	}{
+		{
+			name: "owner repositories", publicPath: "/v1/github/owners/octocat/repos?limit=1",
+			providerPath: "/users/octocat/repos", numericPath: "/user/42/repos", bodyMember: "repos",
+			fixedQuery: func(query map[string][]string) bool {
+				return (len(query) == 4 || len(query) == 5) && query["type"][0] == "owner" &&
+					query["sort"][0] == "full_name" &&
+					query["direction"][0] == "asc" && query["per_page"][0] == "1"
+			},
+			document: func(page int) string {
+				return fmt.Sprintf(
+					`[{"id":%d,"name":"repo%d","full_name":"octocat/repo%d","description":null,"html_url":"https://github.com/octocat/repo%d","fork":false,"private":false,"visibility":"public"}]`,
+					page,
+					page,
+					page,
+					page,
+				)
+			},
+		},
+		{
+			name: "repository tags", publicPath: "/v1/github/repos/octocat/repo/tags?limit=1",
+			providerPath: "/repos/octocat/repo/tags", numericPath: "/repositories/42/tags", bodyMember: "tags",
+			fixedQuery: func(query map[string][]string) bool {
+				return (len(query) == 1 || len(query) == 2) && query["per_page"][0] == "1"
+			},
+			document: func(page int) string {
+				return fmt.Sprintf(
+					`[{"name":"v%d","commit":{"sha":"0123456789abcdef0123456789abcdef01234567"}}]`,
+					page,
+				)
+			},
+		},
 	}
-	if retryAfter := resp.Header().Get("Retry-After"); retryAfter != "" {
-		t.Fatalf("unexpected Retry-After header %q", retryAfter)
-	}
-	entries := logs.FilterMessage("github upstream request timed out").All()
-	if len(entries) != 1 {
-		t.Fatalf("expected one GitHub timeout log, got %d", len(entries))
-	}
-	if operation := entries[0].ContextMap()["operation"]; operation != "get_owner" {
-		t.Fatalf("unexpected operation field %#v", operation)
-	}
-}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var providerURL string
+			provider := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != test.providerPath || !test.fixedQuery(request.URL.Query()) {
+					t.Errorf("provider request=%s", request.URL.RequestURI())
+				}
+				page := 1
+				if rawPage := request.URL.Query().Get("page"); rawPage != "" {
+					parsed, err := strconv.Atoi(rawPage)
+					if err != nil {
+						t.Errorf("provider page=%q", rawPage)
+					} else {
+						page = parsed
+					}
+				}
+				providerTarget := func(targetPage int) string {
+					query := "per_page=1&page=" + strconv.Itoa(targetPage)
+					if test.bodyMember == "repos" {
+						query = "direction=asc&page=" + strconv.Itoa(targetPage) +
+							"&per_page=1&sort=full_name&type=owner"
+					}
+					return providerURL + test.numericPath + "?" + query
+				}
+				links := make([]string, 0, 2)
+				if page > 1 {
+					links = append(links, "<"+providerTarget(page-1)+`>; rel="prev"`)
+				}
+				if page < 3 {
+					links = append(links, "<"+providerTarget(page+1)+`>; title="page,next"; rel="next"`)
+				}
+				if len(links) > 0 {
+					response.Header().Set("Link", strings.Join(links, ", "))
+				}
+				response.Header().Set("Content-Type", "application/json")
+				if _, err := io.WriteString(response, test.document(page)); err != nil {
+					t.Errorf("write provider response: %v", err)
+				}
+			}))
+			t.Cleanup(provider.Close)
+			providerURL = provider.URL
+			client, err := githubsvc.NewClient(provider.Client(), githubsvc.WithBaseURL(provider.URL))
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+			router := newGitHubTestRouter(t, client)
 
-// --- ListOwnerRepos ---
+			target := test.publicPath
+			forward := make([]string, 0, 3)
+			var backwardTarget string
+			for page := 1; page <= 3; page++ {
+				response := performGitHubRequest(t, router, target)
+				if response.Code != http.StatusOK {
+					t.Fatalf("forward page %d status=%d body=%s", page, response.Code, response.Body.String())
+				}
+				body := decodeObject(t, response)
+				entries := objectArray(t, body, test.bodyMember)
+				if len(entries) != 1 || body["count"] != float64(1) {
+					t.Fatalf("forward page %d body=%#v", page, body)
+				}
+				forward = append(forward, stringField(t, firstObject(t, entries), "name"))
+				nextTarget := publicLinkTarget(response.Header().Get("Link"), "next")
+				previousTarget := publicLinkTarget(response.Header().Get("Link"), "prev")
+				if page == 1 && previousTarget != "" || page == 3 && nextTarget != "" {
+					t.Fatalf("page %d Link=%q", page, response.Header().Get("Link"))
+				}
+				for _, publicTarget := range []string{nextTarget, previousTarget} {
+					if publicTarget != "" && (!strings.HasPrefix(publicTarget, "/v1/") ||
+						!strings.Contains(publicTarget, "limit=1") || !strings.Contains(publicTarget, "cursor=") ||
+						strings.Contains(publicTarget, provider.URL) || strings.Contains(publicTarget, "page=")) {
+						t.Fatalf("unsafe public target=%q", publicTarget)
+					}
+				}
+				if page < 3 {
+					target = nextTarget
+				} else {
+					backwardTarget = previousTarget
+				}
+			}
+			wantForward := []string{"repo1", "repo2", "repo3"}
+			if test.bodyMember == "tags" {
+				wantForward = []string{"v1", "v2", "v3"}
+			}
+			if strings.Join(forward, ",") != strings.Join(wantForward, ",") {
+				t.Fatalf("forward=%v want=%v", forward, wantForward)
+			}
 
-func TestListOwnerReposSuccess(t *testing.T) {
-	svc := &mockGitHubService{repos: []githubsvc.RepoSummary{testRepoSummary()}}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat/repos", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "list-repos-test")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	var data OwnerReposListData
-	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if data.Count != 1 {
-		t.Errorf("expected count 1, got %d", data.Count)
-	}
-	if data.Repos[0].Name != "git-consortium" {
-		t.Errorf("expected repo git-consortium, got %s", data.Repos[0].Name)
-	}
-}
-
-func TestListOwnerReposNotFound(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/unknown/repos", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", resp.Code, resp.Body.String())
-	}
-}
-
-func TestListOwnerReposUpstreamError(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrUpstream}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat/repos", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", resp.Code, resp.Body.String())
-	}
-}
-
-// --- GetRepo ---
-
-func TestGetRepoSuccess(t *testing.T) {
-	svc := &mockGitHubService{repo: testRepo()}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium",
-		nil,
-	)
-	req.Header.Set(chimiddleware.RequestIDHeader, "get-repo-test")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	var repo Repo
-	if err := json.Unmarshal(resp.Body.Bytes(), &repo); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if repo.Name != "git-consortium" {
-		t.Errorf("expected name git-consortium, got %s", repo.Name)
-	}
-	if repo.DefaultBranch != "master" {
-		t.Errorf("expected defaultBranch master, got %s", repo.DefaultBranch)
-	}
-	if repo.License != "MIT License" {
-		t.Errorf("expected license MIT License, got %s", repo.License)
-	}
-}
-
-func TestGetRepoRejectsDotSegments(t *testing.T) {
-	for _, repo := range []string{".", "..", "..."} {
-		t.Run(repo, func(t *testing.T) {
-			router := newTestRouter(&mockGitHubService{repo: testRepo()})
-			req := httptest.NewRequestWithContext(
-				t.Context(),
-				http.MethodGet,
-				"/github/repos/octocat/"+repo,
-				nil,
-			)
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
-			if resp.Code != http.StatusUnprocessableEntity {
-				t.Fatalf("expected 422, got %d: %s", resp.Code, resp.Body.String())
+			backward := make([]string, 0, 2)
+			for page := 2; page >= 1; page-- {
+				response := performGitHubRequest(t, router, backwardTarget)
+				if response.Code != http.StatusOK {
+					t.Fatalf("backward page %d status=%d body=%s", page, response.Code, response.Body.String())
+				}
+				body := decodeObject(t, response)
+				backward = append(
+					backward,
+					stringField(t, firstObject(t, objectArray(t, body, test.bodyMember)), "name"),
+				)
+				backwardTarget = publicLinkTarget(response.Header().Get("Link"), "prev")
+				if page == 1 && backwardTarget != "" {
+					t.Fatalf("first page unexpectedly has prev: %s", response.Header().Get("Link"))
+				}
+			}
+			wantBackward := []string{"repo2", "repo1"}
+			if test.bodyMember == "tags" {
+				wantBackward = []string{"v2", "v1"}
+			}
+			if strings.Join(backward, ",") != strings.Join(wantBackward, ",") {
+				t.Fatalf("backward=%v want=%v", backward, wantBackward)
 			}
 		})
 	}
 }
 
-func TestGetRepoNilTopicsReturnsEmptyArray(t *testing.T) {
-	repo := testRepo()
-	repo.Topics = nil
-	svc := &mockGitHubService{repo: repo}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium",
-		nil,
-	)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+func TestGitHubHandlersRejectInvalidInputsBeforeService(t *testing.T) {
+	tests := []struct {
+		name, target, code, source, leak string
+		status                           int
+	}{
+		{
+			name: "one-character underscore owner", target: "/v1/github/owners/_",
+			status: 422, code: "validation_failed", source: "owner",
+		},
+		{
+			name: "owner starts hyphen", target: "/v1/github/owners/-bad",
+			status: 422, code: "validation_failed", source: "owner", leak: "-bad",
+		},
+		{
+			name: "owner ends hyphen", target: "/v1/github/owners/bad-",
+			status: 422, code: "validation_failed", source: "owner", leak: "bad-",
+		},
+		{
+			name:   "owner too long",
+			target: "/v1/github/owners/" + strings.Repeat("a", 40),
+			status: 422,
+			code:   "validation_failed",
+			source: "owner",
+			leak:   strings.Repeat("a", 40),
+		},
+		{
+			name: "Unicode owner", target: "/v1/github/owners/octoc%C3%A1t",
+			status: 422, code: "validation_failed", source: "owner", leak: "octocát",
+		},
+		{
+			name: "dot repository", target: "/v1/github/repos/octocat/...",
+			status: 422, code: "validation_failed", source: "repo", leak: "...",
+		},
+		{
+			name: "repository too long", target: "/v1/github/repos/octocat/" + strings.Repeat("a", 101),
+			status: 422, code: "validation_failed", source: "repo", leak: strings.Repeat("a", 101),
+		},
+		{
+			name: "Unicode repository", target: "/v1/github/repos/octocat/r%C3%A9po",
+			status: 422, code: "validation_failed", source: "repo", leak: "répo",
+		},
+		{
+			name: "query on owner point read", target: "/v1/github/owners/octocat?limit=1",
+			status: 400, code: "invalid_request", leak: "limit",
+		},
+		{
+			name: "query on repository point read", target: "/v1/github/repos/octocat/repo?limit=1",
+			status: 400, code: "invalid_request", leak: "limit",
+		},
+		{
+			name: "query on languages point read", target: "/v1/github/repos/octocat/repo/languages?limit=1",
+			status: 400, code: "invalid_request", leak: "limit",
+		},
+		{
+			name: "unknown query", target: "/v1/github/owners/octocat/repos?page=2",
+			status: 400, code: "invalid_request", leak: "page",
+		},
+		{
+			name:   "repeated query",
+			target: "/v1/github/owners/octocat/repos?limit=2&limit=3",
+			status: 400,
+			code:   "invalid_request",
+			leak:   "limit=2",
+		},
+		{
+			name: "malformed query escape", target: "/v1/github/owners/octocat/repos?cursor=%ZZ",
+			status: 400, code: "invalid_request", leak: "%ZZ",
+		},
+		{
+			name: "invalid UTF-8 query", target: "/v1/github/owners/octocat/repos?cursor=%FF",
+			status: 400, code: "invalid_request",
+		},
+		{
+			name:   "signed limit",
+			target: "/v1/github/owners/octocat/repos?limit=%2B1",
+			status: 422,
+			code:   "validation_failed",
+			leak:   "+1",
+		},
+		{
+			name: "fractional limit", target: "/v1/github/repos/octocat/repo/activity?limit=1.5",
+			status: 422, code: "validation_failed", leak: "1.5",
+		},
+		{
+			name: "exponent limit", target: "/v1/github/repos/octocat/repo/tags?limit=1e2",
+			status: 422, code: "validation_failed", leak: "1e2",
+		},
+		{
+			name: "zero limit", target: "/v1/github/owners/octocat/repos?limit=0",
+			status: 422, code: "validation_failed", leak: "0",
+		},
+		{
+			name: "limit maximum plus one", target: "/v1/github/repos/octocat/repo/activity?limit=101",
+			status: 422, code: "validation_failed", leak: "101",
+		},
+		{
+			name:   "overflow limit",
+			target: "/v1/github/repos/octocat/repo/tags?limit=18446744073709551616",
+			status: 422, code: "validation_failed", leak: "18446744073709551616",
+		},
+		{
+			name: "empty cursor", target: "/v1/github/owners/octocat/repos?cursor=",
+			status: 400, code: "invalid_request",
+		},
+		{
+			name: "non-ASCII cursor", target: "/v1/github/repos/octocat/repo/activity?cursor=%C3%A9",
+			status: 400, code: "invalid_request", leak: "é",
+		},
+		{
+			name:   "oversized cursor",
+			target: "/v1/github/repos/octocat/repo/tags?cursor=" + strings.Repeat("a", 2049),
+			status: 400, code: "invalid_request", leak: strings.Repeat("a", 128),
+		},
+		{
+			name:   "bad cursor",
+			target: "/v1/github/owners/octocat/repos?cursor=not-a-cursor",
+			status: 400,
+			code:   "invalid_request",
+			leak:   "not-a-cursor",
+		},
+		{
+			name: "noncanonical cursor",
+			target: "/v1/github/owners/octocat/repos?cursor=" + pagination.NewCursor(
+				pagination.Scope{Operation: "listGitHubOwnerRepositories", Owner: "octocat", Limit: 20},
+				"next", "2",
+			).Encode() + "%3D",
+			status: 400, code: "invalid_request",
+		},
+		{
+			name:   "repeated cursor",
+			target: "/v1/github/owners/octocat/repos?cursor=a&cursor=b",
+			status: 400, code: "invalid_request", leak: "cursor",
+		},
+		{
+			name: "wrong scope cursor",
+			target: "/v1/github/owners/octocat/repos?limit=2&cursor=" + pagination.NewCursor(
+				pagination.Scope{Operation: "listGitHubRepositoryTags", Owner: "octocat", Repo: "repo", Limit: 2},
+				"next", "2",
+			).Encode(),
+			status: 400, code: "invalid_request",
+		},
+		{
+			name: "changed owner cursor",
+			target: "/v1/github/owners/octocat/repos?limit=2&cursor=" + pagination.NewCursor(
+				pagination.Scope{Operation: "listGitHubOwnerRepositories", Owner: "other", Limit: 2},
+				"next", "2",
+			).Encode(),
+			status: 400, code: "invalid_request",
+		},
+		{
+			name: "changed limit cursor",
+			target: "/v1/github/owners/octocat/repos?limit=3&cursor=" + pagination.NewCursor(
+				pagination.Scope{Operation: "listGitHubOwnerRepositories", Owner: "octocat", Limit: 2},
+				"next", "2",
+			).Encode(),
+			status: 400, code: "invalid_request",
+		},
+		{
+			name: "changed activity repository cursor",
+			target: "/v1/github/repos/octocat/repo/activity?limit=2&cursor=" + pagination.NewCursor(
+				pagination.Scope{
+					Operation: "listGitHubRepositoryActivity", Owner: "octocat", Repo: "other", Limit: 2,
+				},
+				"next", "opaque",
+			).Encode(),
+			status: 400, code: "invalid_request",
+		},
+		{
+			name: "changed tag repository cursor",
+			target: "/v1/github/repos/octocat/repo/tags?limit=2&cursor=" + pagination.NewCursor(
+				pagination.Scope{
+					Operation: "listGitHubRepositoryTags", Owner: "octocat", Repo: "other", Limit: 2,
+				},
+				"next", "2",
+			).Encode(),
+			status: 400, code: "invalid_request",
+		},
 	}
-
-	var body map[string]any
-	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	topics, ok := body["topics"].([]any)
-	if !ok {
-		t.Fatalf("expected topics array, got %#v", body["topics"])
-	}
-	if len(topics) != 0 {
-		t.Fatalf("expected empty topics array, got %#v", topics)
-	}
-}
-
-func TestGetRepoNotFound(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/repos/octocat/unknown", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", resp.Code, resp.Body.String())
-	}
-}
-
-func TestGetRepoUpstreamError(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrUpstream}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium",
-		nil,
-	)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", resp.Code, resp.Body.String())
-	}
-}
-
-// --- ListActivity ---
-
-func TestListActivitySuccess(t *testing.T) {
-	svc := &mockGitHubService{activity: &githubsvc.ActivityPage{
-		Activities: []githubsvc.Activity{testActivity()},
-		NextCursor: "",
-	}}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium/activity",
-		nil,
-	)
-	req.Header.Set(chimiddleware.RequestIDHeader, "list-activity-test")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	var data RepoActivityListData
-	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if data.Count != 1 {
-		t.Errorf("expected count 1, got %d", data.Count)
-	}
-	if data.Activities[0].Actor != "octocat" {
-		t.Errorf("expected actor octocat, got %s", data.Activities[0].Actor)
-	}
-	if data.Activities[0].ActivityType != "push" {
-		t.Errorf("expected activityType push, got %s", data.Activities[0].ActivityType)
-	}
-
-	linkHeader := resp.Header().Get("Link")
-	if strings.Contains(linkHeader, `rel="next"`) {
-		t.Errorf("expected no rel=next in Link header when no more pages, got %s", linkHeader)
-	}
-}
-
-func TestListActivityWithPagination(t *testing.T) {
-	svc := &mockGitHubService{activity: &githubsvc.ActivityPage{
-		Activities: []githubsvc.Activity{testActivity()},
-		NextCursor: "next-page-cursor",
-	}}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium/activity",
-		nil,
-	)
-	req.Header.Set(chimiddleware.RequestIDHeader, "list-activity-paginated")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	linkHeader := resp.Header().Get("Link")
-	if !strings.Contains(linkHeader, "rel=\"next\"") {
-		t.Error("expected Link header with rel=next when more pages exist")
-	}
-}
-
-func TestListActivityInvalidCursor(t *testing.T) {
-	svc := &mockGitHubService{}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium/activity?cursor=not-valid-base64!",
-		nil,
-	)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	var problem huma.ErrorModel
-	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if problem.Status != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", problem.Status)
-	}
-}
-
-func TestListActivityCursorTypeMismatch(t *testing.T) {
-	svc := &mockGitHubService{}
-	router := newTestRouter(svc)
-
-	cursor := pagination.Cursor{Type: "wrong-type", Value: "some-value"}.Encode()
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium/activity?cursor="+cursor,
-		nil,
-	)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	var problem huma.ErrorModel
-	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if problem.Status != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", problem.Status)
-	}
-}
-
-func TestListActivityCursorRequiresType(t *testing.T) {
-	svc := &mockGitHubService{}
-	router := newTestRouter(svc)
-	cursor := pagination.Cursor{Value: "some-value"}.Encode()
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium/activity?cursor="+cursor,
-		nil,
-	)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", resp.Code, resp.Body.String())
-	}
-}
-
-func TestListActivityNotFound(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/unknown/activity",
-		nil,
-	)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", resp.Code, resp.Body.String())
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := githubFixtures()
+			response := performGitHubRequest(t, newGitHubTestRouter(t, service), test.target)
+			if response.Code != test.status {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, test.status, response.Body.String())
+			}
+			body := decodeObject(t, response)
+			if body["code"] != test.code || test.leak != "" && strings.Contains(response.Body.String(), test.leak) {
+				t.Fatalf("problem = %s", response.Body.String())
+			}
+			if test.source != "" {
+				issues := objectArray(t, body, "errors")
+				issue := firstObject(t, issues)
+				source, ok := issue["source"].(map[string]any)
+				if !ok || source["parameter"] != test.source || len(source) != 1 {
+					t.Fatalf("unsafe issue source=%#v", issue["source"])
+				}
+			}
+			if len(service.calls) != 0 {
+				t.Fatalf("service called: %v", service.calls)
+			}
+		})
 	}
 }
 
-func TestListActivityUpstreamError(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrUpstream}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium/activity",
-		nil,
-	)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", resp.Code, resp.Body.String())
+func TestGitHubHandlersMapSafeDependencyErrors(t *testing.T) {
+	rateLimit := &githubsvc.RateLimitError{RetryAfter: "17", Reset: "2000"}
+	tests := []struct {
+		name string
+		err  error
+		want int
+		code string
+	}{
+		{name: "not found", err: githubsvc.ErrNotFound, want: 404, code: "github_not_found"},
+		{name: "invalid provider cursor", err: githubsvc.ErrInvalidCursor, want: 400, code: "invalid_request"},
+		{name: "rate limited", err: rateLimit, want: 429, code: "github_rate_limit"},
+		{name: "upstream", err: githubsvc.ErrUpstream, want: 502, code: "github_upstream"},
+		{name: "timeout", err: githubsvc.ErrTimeout, want: 504, code: "github_timeout"},
+		{name: "canceled provider", err: context.Canceled, want: 502, code: "github_upstream"},
+		{name: "unexpected", err: errors.New("secret provider diagnostic"), want: 500, code: "internal_error"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := githubFixtures()
+			service.err = test.err
+			response := performGitHubRequest(t, newGitHubTestRouter(t, service), "/v1/github/owners/octocat")
+			if response.Code != test.want {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, test.want, response.Body.String())
+			}
+			body := decodeObject(t, response)
+			if body["code"] != test.code || strings.Contains(response.Body.String(), "secret") ||
+				strings.Contains(response.Body.String(), "provider") {
+				t.Fatalf("unsafe problem = %s", response.Body.String())
+			}
+			if test.want == 429 {
+				if response.Header().Get("Retry-After") != "17" ||
+					response.Header().Get("X-Ratelimit-Reset") != "2000" {
+					t.Fatalf("rate headers = %#v", response.Header())
+				}
+			} else if response.Header().Get("Retry-After") != "" || response.Header().Get("X-Ratelimit-Reset") != "" {
+				t.Fatalf("unexpected rate headers = %#v", response.Header())
+			}
+		})
 	}
 }
 
-// --- GetLanguages ---
-
-func TestGetLanguagesSuccess(t *testing.T) {
-	svc := &mockGitHubService{languages: map[string]int64{
-		"Ruby": 6789,
-		"Go":   12345,
-		"C":    6789,
-	}}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium/languages",
-		nil,
-	)
-	req.Header.Set(chimiddleware.RequestIDHeader, "get-languages-test")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	var data LanguagesData
-	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if len(data.Languages) != 3 {
-		t.Fatalf("expected 3 languages, got %d", len(data.Languages))
-	}
-	if data.Languages[0].Name != "Go" {
-		t.Errorf("expected first language Go (most bytes), got %s", data.Languages[0].Name)
-	}
-	if data.Languages[0].Bytes != 12345 {
-		t.Errorf("expected 12345 bytes, got %d", data.Languages[0].Bytes)
-	}
-	if data.Languages[1].Name != "C" || data.Languages[2].Name != "Ruby" {
-		t.Fatalf("equal byte counts not sorted by name: %#v", data.Languages)
+func TestGitHubSuccessNegotiatesJSONAndCBOR(t *testing.T) {
+	for _, mediaType := range []string{"application/json", "application/cbor"} {
+		t.Run(mediaType, func(t *testing.T) {
+			router := newGitHubTestRouter(t, githubFixtures())
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/github/owners/octocat", nil)
+			request.Header.Set("Accept", mediaType)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusOK || response.Header().Get("Content-Type") != mediaType {
+				t.Fatalf(
+					"status=%d content-type=%q body=%x",
+					response.Code,
+					response.Header().Get("Content-Type"),
+					response.Body.Bytes(),
+				)
+			}
+		})
 	}
 }
 
-func TestGetLanguagesNotFound(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/unknown/languages",
-		nil,
-	)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", resp.Code, resp.Body.String())
+func TestGitHubNotAcceptableUsesIndependentProblemNegotiation(t *testing.T) {
+	router := newGitHubTestRouter(t, githubFixtures())
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/github/owners/octocat", nil)
+	request.Header.Set("Accept", "text/plain")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNotAcceptable ||
+		response.Header().Get("Content-Type") != "application/problem+json" {
+		t.Fatalf(
+			"status=%d content-type=%q body=%s",
+			response.Code,
+			response.Header().Get("Content-Type"),
+			response.Body.String(),
+		)
 	}
-}
-
-func TestGetLanguagesUpstreamError(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrUpstream}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium/languages",
-		nil,
-	)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", resp.Code, resp.Body.String())
-	}
-}
-
-// --- ListTags ---
-
-func TestListTagsSuccess(t *testing.T) {
-	svc := &mockGitHubService{tags: []githubsvc.Tag{
-		{Name: "v1.0", Commit: githubsvc.TagCommit{SHA: "abc123"}},
-	}}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium/tags",
-		nil,
-	)
-	req.Header.Set(chimiddleware.RequestIDHeader, "list-tags-test")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	var data RepoTagsListData
-	if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if data.Count != 1 {
-		t.Errorf("expected count 1, got %d", data.Count)
-	}
-	if data.Tags[0].Name != "v1.0" {
-		t.Errorf("expected tag v1.0, got %s", data.Tags[0].Name)
-	}
-	if data.Tags[0].Commit.SHA != "abc123" {
-		t.Errorf("expected sha abc123, got %s", data.Tags[0].Commit.SHA)
-	}
-}
-
-func TestListTagsNotFound(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/unknown/tags",
-		nil,
-	)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", resp.Code, resp.Body.String())
-	}
-}
-
-func TestListTagsUpstreamError(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrUpstream}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium/tags",
-		nil,
-	)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", resp.Code, resp.Body.String())
-	}
-}
-
-// --- Forbidden ---
-
-func TestGetOwnerForbidden(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrForbidden}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	var problem huma.ErrorModel
-	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if problem.Status != http.StatusForbidden {
-		t.Errorf("expected status 403, got %d", problem.Status)
-	}
-}
-
-func TestGetOwnerRateLimited(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrRateLimited}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected 429, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	var problem huma.ErrorModel
-	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if problem.Status != http.StatusTooManyRequests {
-		t.Errorf("expected status 429, got %d", problem.Status)
-	}
-}
-
-func TestGetOwnerRateLimitedPropagatesRetryHeaders(t *testing.T) {
-	svc := &mockGitHubService{err: &githubsvc.UpstreamError{
-		Kind:           githubsvc.UpstreamErrorKindRateLimited,
-		Status:         http.StatusForbidden,
-		RetryAfter:     "60",
-		RateLimitReset: "1700000000",
-	}}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected 429, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	if retryAfter := resp.Header().Get("Retry-After"); retryAfter != "60" {
-		t.Fatalf("expected Retry-After 60, got %q", retryAfter)
-	}
-	if reset := resp.Header().Get("X-Ratelimit-Reset"); reset != "1700000000" {
-		t.Fatalf("expected X-RateLimit-Reset 1700000000, got %q", reset)
-	}
-}
-
-// --- Content-Type ---
-
-func TestResponseContentType(t *testing.T) {
-	svc := &mockGitHubService{owner: testOwner()}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	ct := resp.Header().Get("Content-Type")
-	if !strings.HasPrefix(ct, "application/json") {
-		t.Errorf("expected application/json content type, got %s", ct)
-	}
-}
-
-// --- Problem Details ---
-
-func TestErrorProblemDetailsFormat(t *testing.T) {
-	svc := &mockGitHubService{err: githubsvc.ErrNotFound}
-	router := newTestRouter(svc)
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/unknown", nil)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	ct := resp.Header().Get("Content-Type")
-	if !strings.HasPrefix(ct, "application/problem+json") {
-		t.Errorf("expected application/problem+json, got %s", ct)
-	}
-
-	var problem huma.ErrorModel
-	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-		t.Fatalf("json unmarshal: %v", err)
-	}
-	if problem.Title != "Not Found" {
-		t.Errorf("expected title Not Found, got %s", problem.Title)
-	}
-	if problem.Status != http.StatusNotFound {
-		t.Errorf("expected status 404, got %d", problem.Status)
+	if body := decodeObject(t, response); body["code"] != "not_acceptable" {
+		t.Fatalf("problem = %#v", body)
 	}
 }

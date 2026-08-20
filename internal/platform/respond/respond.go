@@ -3,18 +3,16 @@ package respond
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"runtime/debug"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
 
-	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
+	"github.com/janisto/huma-playground/internal/platform/portable"
 )
 
 type responseWriter struct {
@@ -55,21 +53,13 @@ func Recoverer(api huma.API, loggers ...*zap.Logger) func(http.Handler) http.Han
 				}
 				recoveryLogger(ctx, fallback).Error(
 					"panic recovered",
-					zap.Error(fmt.Errorf("%v", recovered)),
+					zap.String("error_category", "panic"),
 					zap.ByteString("stack", debug.Stack()),
 				)
 				if tracked.wroteHeader {
 					panic(http.ErrAbortHandler)
 				}
-				if err := writeProblem(
-					api,
-					tracked,
-					r,
-					http.StatusInternalServerError,
-					"internal server error",
-				); err != nil {
-					recoveryLogger(ctx, fallback).Error("write panic response", zap.Error(err))
-				}
+				portable.WriteProblem(tracked, r, portable.CodeInternalError)
 			}(r.Context())
 			next.ServeHTTP(tracked, r)
 		})
@@ -87,34 +77,20 @@ func recoveryLogger(ctx context.Context, fallback *zap.Logger) *zap.Logger {
 }
 
 func NotFoundHandler(api huma.API) http.HandlerFunc {
+	_ = api
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := writeProblem(api, w, r, http.StatusNotFound, "resource not found"); err != nil {
-			obs.Logger(r.Context()).Error("write not-found response", zap.Error(err))
-		}
+		portable.WriteProblem(w, r, portable.CodeNotFound)
 	}
 }
 
 func MethodNotAllowedHandler(api huma.API) http.HandlerFunc {
+	_ = api
 	return func(w http.ResponseWriter, r *http.Request) {
 		if allow := allowedMethods(r); len(allow) > 0 {
 			w.Header().Set("Allow", strings.Join(allow, ", "))
 		}
-		if err := writeProblem(
-			api,
-			w,
-			r,
-			http.StatusMethodNotAllowed,
-			fmt.Sprintf("method %s not allowed", r.Method),
-		); err != nil {
-			obs.Logger(r.Context()).Error("write method-not-allowed response", zap.Error(err))
-		}
+		portable.WriteProblem(w, r, portable.CodeMethodNotAllowed)
 	}
-}
-
-func writeProblem(api huma.API, w http.ResponseWriter, r *http.Request, status int, detail string) error {
-	appmiddleware.AddVary(w.Header(), "Accept", "Origin")
-	ctx := humachi.NewContext(&huma.Operation{}, r, w)
-	return huma.WriteErr(api, ctx, status, detail)
 }
 
 func allowedMethods(r *http.Request) []string {

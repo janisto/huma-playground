@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "entries": {
+    "principal_REPLACE_WITH_EXACT_ID": {
+      "termsAccepted": true,
+      "evidence": "REPLACE_WITH_APPROVED_TERMS_ACCEPTANCE_EVIDENCE_REFERENCE"
+    }
+  }
+}

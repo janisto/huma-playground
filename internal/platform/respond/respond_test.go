@@ -10,10 +10,11 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
-	_ "github.com/danielgtaylor/huma/v2/formats/cbor"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
+
+	"github.com/janisto/huma-playground/internal/platform/portable"
 )
 
 func testAPI() huma.API {
@@ -42,26 +43,29 @@ func TestNotFoundUsesHumaProblemDetails(t *testing.T) {
 				t.Fatalf("expected 404, got %d", response.Code)
 			}
 			if accept == "application/cbor" {
-				if got := response.Header().Get("Content-Type"); got != "application/problem+cbor" {
+				if got := response.Header().Get("Content-Type"); got != "application/cbor" {
 					t.Fatalf("unexpected content type %q", got)
 				}
-				var problem huma.ErrorModel
+				var problem portable.ProblemError
 				if err := cbor.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 					t.Fatalf("decode CBOR: %v", err)
+				}
+				if problem.Code != portable.CodeNotFound {
+					t.Fatalf("unexpected problem: %#v", problem)
 				}
 			} else {
 				if got := response.Header().Get("Content-Type"); got != "application/problem+json" {
 					t.Fatalf("unexpected content type %q", got)
 				}
-				var problem huma.ErrorModel
+				var problem portable.ProblemError
 				if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 					t.Fatalf("decode JSON: %v", err)
 				}
-				if problem.Status != http.StatusNotFound {
+				if problem.Status != http.StatusNotFound || problem.Code != portable.CodeNotFound {
 					t.Fatalf("unexpected problem: %#v", problem)
 				}
 			}
-			if link := response.Header().Get("Link"); link != "</v1/schemas/ErrorModel.json>; rel=\"describedBy\"" {
+			if link := response.Header().Get("Link"); link != "" {
 				t.Fatalf("unexpected schema link %q", link)
 			}
 		})

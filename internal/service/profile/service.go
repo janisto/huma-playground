@@ -11,36 +11,40 @@ var (
 	ErrNotFound      = errors.New("profile not found")
 	ErrAlreadyExists = errors.New("profile already exists")
 	ErrUnavailable   = errors.New("profile store unavailable")
+	ErrInvalidStored = errors.New("stored profile does not satisfy the portable schema")
+	ErrTimeOverflow  = errors.New("profile timestamp cannot advance")
 )
 
 // Profile represents stored profile data.
 type Profile struct {
-	ID           string
-	FirstName    string
-	LastName     string
-	ContactEmail string
-	PhoneNumber  string
-	Marketing    bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID             string
+	FirstName      string
+	LastName       string
+	ContactEmail   string
+	PhoneNumber    string
+	MarketingOptIn bool
+	TermsAccepted  bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // CreateParams for creating a profile.
 type CreateParams struct {
-	FirstName    string
-	LastName     string
-	ContactEmail string
-	PhoneNumber  string
-	Marketing    bool
+	FirstName      string
+	LastName       string
+	ContactEmail   string
+	PhoneNumber    string
+	MarketingOptIn bool
+	TermsAccepted  bool
 }
 
 // UpdateParams for updating a profile.
 type UpdateParams struct {
-	FirstName    *string
-	LastName     *string
-	ContactEmail *string
-	PhoneNumber  *string
-	Marketing    *bool
+	FirstName      *string
+	LastName       *string
+	ContactEmail   *string
+	PhoneNumber    *string
+	MarketingOptIn *bool
 }
 
 // Store defines profile persistence operations.

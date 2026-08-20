@@ -45,11 +45,19 @@ func createTestProfile(
 	params CreateParams,
 ) *Profile {
 	t.Helper()
-	profile, err := store.Create(ctx, userID, params)
+	profile, err := store.Create(ctx, userID, completeCreateParams(params))
 	if err != nil {
 		t.Fatalf("create profile %q: %v", userID, err)
 	}
 	return profile
+}
+
+func completeCreateParams(params CreateParams) CreateParams {
+	if params.PhoneNumber == "" {
+		params.PhoneNumber = "+358401234567"
+	}
+	params.TermsAccepted = true
+	return params
 }
 
 func TestFirestoreCreate(t *testing.T) {
@@ -58,11 +66,12 @@ func TestFirestoreCreate(t *testing.T) {
 
 	ctx := t.Context()
 	params := CreateParams{
-		FirstName:    "John",
-		LastName:     "Doe",
-		ContactEmail: "JOHN@EXAMPLE.COM",
-		PhoneNumber:  "+358401234567",
-		Marketing:    true,
+		FirstName:      "John",
+		LastName:       "Doe",
+		ContactEmail:   "JOHN@example.com",
+		PhoneNumber:    "+358401234567",
+		MarketingOptIn: true,
+		TermsAccepted:  true,
 	}
 
 	p, err := store.Create(ctx, "user-123", params)
@@ -79,13 +88,13 @@ func TestFirestoreCreate(t *testing.T) {
 	if p.LastName != "Doe" {
 		t.Errorf("expected lastName Doe, got %s", p.LastName)
 	}
-	if p.ContactEmail != "JOHN@EXAMPLE.COM" {
+	if p.ContactEmail != "JOHN@example.com" {
 		t.Errorf("expected contactEmail to be preserved, got %s", p.ContactEmail)
 	}
 	if p.PhoneNumber != "+358401234567" {
 		t.Errorf("expected phone +358401234567, got %s", p.PhoneNumber)
 	}
-	if !p.Marketing {
+	if !p.MarketingOptIn {
 		t.Error("expected marketing true")
 	}
 	if p.CreatedAt.IsZero() {
@@ -104,6 +113,8 @@ func TestFirestoreCreate(t *testing.T) {
 		"last_name",
 		"contact_email",
 		"phone_number",
+		"marketing_opt_in",
+		"terms_accepted",
 		"created_at",
 		"updated_at",
 	} {
@@ -187,7 +198,7 @@ func TestFirestoreSupportsFirebaseUIDOutsideDocumentIDGrammar(t *testing.T) {
 	defer cleanup()
 
 	const userID = "firebase/user"
-	params := CreateParams{FirstName: "Path", LastName: "Safe", ContactEmail: "path@example.com"}
+	params := completeCreateParams(CreateParams{FirstName: "Path", LastName: "Safe", ContactEmail: "path@example.com"})
 	created := createTestProfile(t, store, t.Context(), userID, params)
 	if created.ID != userID {
 		t.Fatalf("created profile ID = %q, want %q", created.ID, userID)
@@ -210,9 +221,11 @@ func TestFirestoreCreateDuplicate(t *testing.T) {
 
 	ctx := t.Context()
 	params := CreateParams{
-		FirstName:    "John",
-		LastName:     "Doe",
-		ContactEmail: "john@example.com",
+		FirstName:     "John",
+		LastName:      "Doe",
+		ContactEmail:  "john@example.com",
+		PhoneNumber:   "+358401234567",
+		TermsAccepted: true,
 	}
 
 	_, err := store.Create(ctx, "user-dup", params)
@@ -232,11 +245,12 @@ func TestFirestoreGet(t *testing.T) {
 
 	ctx := t.Context()
 	params := CreateParams{
-		FirstName:    "Jane",
-		LastName:     "Smith",
-		ContactEmail: "jane@example.com",
-		PhoneNumber:  "+358409876543",
-		Marketing:    false,
+		FirstName:      "Jane",
+		LastName:       "Smith",
+		ContactEmail:   "jane@example.com",
+		PhoneNumber:    "+358409876543",
+		MarketingOptIn: false,
+		TermsAccepted:  true,
 	}
 	createTestProfile(t, store, ctx, "user-get", params)
 
@@ -274,11 +288,12 @@ func TestFirestoreUpdatePartial(t *testing.T) {
 
 	ctx := t.Context()
 	params := CreateParams{
-		FirstName:    "John",
-		LastName:     "Doe",
-		ContactEmail: "john@example.com",
-		PhoneNumber:  "+358401234567",
-		Marketing:    false,
+		FirstName:      "John",
+		LastName:       "Doe",
+		ContactEmail:   "john@example.com",
+		PhoneNumber:    "+358401234567",
+		MarketingOptIn: false,
+		TermsAccepted:  true,
 	}
 	created := createTestProfile(t, store, ctx, "user-update", params)
 	if _, err := store.client.Collection(profilesCollection).Doc("user-update").Set(
@@ -290,10 +305,10 @@ func TestFirestoreUpdatePartial(t *testing.T) {
 	}
 
 	newFirstName := "Johnny"
-	newMarketing := true
+	newMarketingOptIn := true
 	updated, err := store.Update(ctx, "user-update", UpdateParams{
-		FirstName: &newFirstName,
-		Marketing: &newMarketing,
+		FirstName:      &newFirstName,
+		MarketingOptIn: &newMarketingOptIn,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -308,7 +323,7 @@ func TestFirestoreUpdatePartial(t *testing.T) {
 	if updated.ContactEmail != "john@example.com" {
 		t.Errorf("expected contactEmail unchanged, got %s", updated.ContactEmail)
 	}
-	if !updated.Marketing {
+	if !updated.MarketingOptIn {
 		t.Error("expected marketing to be updated to true")
 	}
 	if !updated.UpdatedAt.After(created.CreatedAt) {
@@ -354,11 +369,11 @@ func TestFirestoreUpdateAllFields(t *testing.T) {
 
 	ctx := t.Context()
 	params := CreateParams{
-		FirstName:    "John",
-		LastName:     "Doe",
-		ContactEmail: "john@example.com",
-		PhoneNumber:  "+358401234567",
-		Marketing:    false,
+		FirstName:      "John",
+		LastName:       "Doe",
+		ContactEmail:   "john@example.com",
+		PhoneNumber:    "+358401234567",
+		MarketingOptIn: false,
 	}
 	createTestProfile(t, store, ctx, "user-all", params)
 
@@ -366,14 +381,14 @@ func TestFirestoreUpdateAllFields(t *testing.T) {
 	newLastName := "Smith"
 	newEmail := "jane@example.com"
 	newPhone := "+358409876543"
-	newMarketing := true
+	newMarketingOptIn := true
 
 	updated, err := store.Update(ctx, "user-all", UpdateParams{
-		FirstName:    &newFirstName,
-		LastName:     &newLastName,
-		ContactEmail: &newEmail,
-		PhoneNumber:  &newPhone,
-		Marketing:    &newMarketing,
+		FirstName:      &newFirstName,
+		LastName:       &newLastName,
+		ContactEmail:   &newEmail,
+		PhoneNumber:    &newPhone,
+		MarketingOptIn: &newMarketingOptIn,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -391,7 +406,7 @@ func TestFirestoreUpdateAllFields(t *testing.T) {
 	if updated.PhoneNumber != "+358409876543" {
 		t.Errorf("expected phone +358409876543, got %s", updated.PhoneNumber)
 	}
-	if !updated.Marketing {
+	if !updated.MarketingOptIn {
 		t.Error("expected marketing true")
 	}
 }
@@ -478,11 +493,11 @@ func TestFirestoreConcurrentCreate(t *testing.T) {
 	var wg sync.WaitGroup
 	for range numGoroutines {
 		wg.Go(func() {
-			_, err := store.Create(ctx, "concurrent-user", CreateParams{
+			_, err := store.Create(ctx, "concurrent-user", completeCreateParams(CreateParams{
 				FirstName:    "Test",
 				LastName:     "User",
 				ContactEmail: "test@example.com",
-			})
+			}))
 			results <- err
 		})
 	}
@@ -514,11 +529,11 @@ func TestFirestoreConcurrentDelete(t *testing.T) {
 	defer cleanup()
 
 	ctx := t.Context()
-	_, err := store.Create(ctx, "delete-concurrent", CreateParams{
+	_, err := store.Create(ctx, "delete-concurrent", completeCreateParams(CreateParams{
 		FirstName:    "Delete",
 		LastName:     "Concurrent",
 		ContactEmail: "concurrent@example.com",
-	})
+	}))
 	if err != nil {
 		t.Fatalf("create profile: %v", err)
 	}
@@ -657,11 +672,11 @@ func TestFirestoreCreateCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, err := store.Create(ctx, "user-canceled", CreateParams{
+	_, err := store.Create(ctx, "user-canceled", completeCreateParams(CreateParams{
 		FirstName:    "Test",
 		LastName:     "User",
 		ContactEmail: "test@example.com",
-	})
+	}))
 	if err == nil {
 		t.Fatal("expected error with canceled context")
 	}

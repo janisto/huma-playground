@@ -2,17 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	"strconv"
+	"regexp"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
 
@@ -21,6 +21,7 @@ import (
 	"github.com/janisto/huma-playground/internal/platform/auth"
 	"github.com/janisto/huma-playground/internal/platform/firebase"
 	appmiddleware "github.com/janisto/huma-playground/internal/platform/middleware"
+	"github.com/janisto/huma-playground/internal/platform/portable"
 	"github.com/janisto/huma-playground/internal/platform/respond"
 	githubsvc "github.com/janisto/huma-playground/internal/service/github"
 	profilesvc "github.com/janisto/huma-playground/internal/service/profile"
@@ -34,13 +35,19 @@ type dependencies struct {
 
 const observabilityTraceContextLevel = obs.TraceContextLevel1
 
+var portableRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+
 type applicationClients struct {
 	*firebase.Clients
 	dependencies
 }
 
 func newApplicationClients(ctx context.Context, cfg config, logger *zap.Logger) (*applicationClients, error) {
-	githubHTTPClient := &http.Client{Timeout: 10 * time.Second}
+	githubHTTPClient := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	githubClient, err := githubsvc.NewClient(githubHTTPClient)
 	if err != nil {
 		return nil, fmt.Errorf("create GitHub client: %w", err)
@@ -103,112 +110,79 @@ func (unavailableProfileStore) Delete(context.Context, string) error {
 }
 
 func newRouter(cfg config, deps dependencies, logger *zap.Logger) http.Handler {
+	portable.ConfigureHuma()
 	apiConfig := huma.DefaultConfig("Huma Playground API", Version)
-	apiConfig.DocsPath = "/api-docs"
-	apiConfig.OpenAPIPath = "/openapi"
-	apiConfig.Servers = []*huma.Server{{URL: cfg.APIPrefix}}
+	apiConfig.DocsPath = ""
+	apiConfig.OpenAPIPath = ""
+	apiConfig.SchemasPath = ""
+	apiConfig.CreateHooks = nil
+	apiConfig.Transformers = nil
+	apiConfig.Formats = portable.Formats()
+	apiConfig.DefaultFormat = portable.MediaTypeJSON
+	apiConfig.NoFormatFallback = true
+	apiConfig.Servers = nil
+	apiConfig.JSONSchemaDialect = "https://json-schema.org/draft/2020-12/schema"
 	apiConfig.Info.Description = "A high-quality Huma v2 example API with JSON and CBOR support."
 	apiConfig.Info.License = &huma.License{Name: "MIT", URL: "https://opensource.org/license/mit"}
 	apiConfig.Tags = []*huma.Tag{
+		{Name: "Health", Description: "Dependency-free liveness."},
 		{Name: "Hello", Description: "Minimal Huma operation examples."},
 		{Name: "Items", Description: "Static cursor-pagination example."},
 		{Name: "Profile", Description: "Firebase-authenticated Firestore profile CRUD."},
 		{Name: "GitHub", Description: "Bounded read-only GitHub API proxy examples."},
 	}
-	apiConfig.RejectUnknownQueryParameters = true
+	apiConfig.RejectUnknownQueryParameters = false
 
-	apiRouter := chi.NewRouter()
-	api := humachi.New(apiRouter, apiConfig)
+	router := chi.NewRouter()
+	api := humachi.New(router, apiConfig)
+	portable.InstallOpenAPIHook(api)
 	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{
 		Logger:            logger,
 		Preset:            obs.PresetGCP,
 		TraceContextLevel: observabilityTraceContextLevel,
+		ValidateRequestID: portableRequestIDPattern.MatchString,
 	}))
+	api.UseMiddleware(auth.NewIdentityContextMiddleware())
 	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{
 		Logger:            logger,
 		Preset:            obs.PresetGCP,
 		TraceContextLevel: observabilityTraceContextLevel,
 	}))
-	addCBOROpenAPIContent(api)
 	auth.RegisterSecurityScheme(api)
-	routes.Register(api, cfg.APIPrefix, deps.verifier, deps.profiles, deps.github)
 
-	router := chi.NewRouter()
 	httpAccessLogger := appmiddleware.AccessLogger()
-	apiRouter.NotFound(httpAccessLogger(respond.NotFoundHandler(api)).ServeHTTP)
-	apiRouter.MethodNotAllowed(httpAccessLogger(respond.MethodNotAllowedHandler(api)).ServeHTTP)
 	router.NotFound(httpAccessLogger(respond.NotFoundHandler(api)).ServeHTTP)
 	router.MethodNotAllowed(httpAccessLogger(respond.MethodNotAllowedHandler(api)).ServeHTTP)
 	router.Use(
-		chimiddleware.GetHead,
 		appmiddleware.IgnoreForwardedHeaders(),
 		obs.HTTPRequestContext(obs.HTTPRequestContextConfig{
 			Logger:            logger,
 			Preset:            obs.PresetGCP,
 			TraceContextLevel: observabilityTraceContextLevel,
+			ValidateRequestID: portableRequestIDPattern.MatchString,
 		}),
 		respond.Recoverer(api, logger),
 		requestContextTimeout(cfg.RequestTimeout),
 		appmiddleware.Security(cfg.APIPrefix),
 		appmiddleware.Vary(),
 		appmiddleware.CORS(cfg.CORSOrigins),
-		chimiddleware.ClientIPFromRemoteAddr,
-		chimiddleware.RequestSize(1<<20),
+		portable.RequestPolicyWithRejectionMiddleware(cfg.APIPrefix, httpAccessLogger),
 	)
-
-	router.Group(func(r chi.Router) {
-		r.Use(httpAccessLogger)
-		r.Get("/health", health.Handler)
-	})
-	router.Mount(cfg.APIPrefix, apiRouter)
+	health.Register(api)
+	routes.Register(api, cfg.APIPrefix, deps.verifier, deps.profiles, deps.github)
+	portable.FinalizeOpenAPI(api)
+	router.With(httpAccessLogger).Get("/openapi.json", openAPIHandler(api))
 	return router
 }
 
-func addCBOROpenAPIContent(api huma.API) {
-	api.OpenAPI().OnAddOperation = append(api.OpenAPI().OnAddOperation, func(_ *huma.OpenAPI, op *huma.Operation) {
-		if op.RequestBody != nil && op.RequestBody.Content != nil {
-			if content, ok := op.RequestBody.Content["application/json"]; ok {
-				op.RequestBody.Content["application/cbor"] = content
-			}
+func openAPIHandler(api huma.API) http.HandlerFunc {
+	return func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", portable.MediaTypeJSON)
+		encoder := json.NewEncoder(writer)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(api.OpenAPI()); err != nil {
+			panic(err)
 		}
-		for _, response := range op.Responses {
-			if response.Content == nil {
-				continue
-			}
-			if content, ok := response.Content["application/json"]; ok {
-				response.Content["application/cbor"] = content
-			}
-			if content, ok := response.Content["application/problem+json"]; ok {
-				response.Content["application/problem+cbor"] = content
-			}
-		}
-		addErrorResponseHeaders(op)
-	})
-}
-
-func addErrorResponseHeaders(op *huma.Operation) {
-	addResponseHeader(op, http.StatusUnauthorized, "WWW-Authenticate", "Bearer authentication challenge")
-	addResponseHeader(op, http.StatusTooManyRequests, "Retry-After", "Delay before retrying")
-	addResponseHeader(op, http.StatusTooManyRequests, "X-RateLimit-Reset", "Upstream rate-limit reset time")
-	for _, security := range op.Security {
-		if _, ok := security[auth.BearerAuthScheme]; ok {
-			addResponseHeader(op, http.StatusServiceUnavailable, "Retry-After", "Delay before retrying")
-			break
-		}
-	}
-}
-
-func addResponseHeader(op *huma.Operation, status int, name, description string) {
-	response := op.Responses[strconv.Itoa(status)]
-	if response == nil {
-		return
-	}
-	if response.Headers == nil {
-		response.Headers = make(map[string]*huma.Param)
-	}
-	response.Headers[name] = &huma.Param{
-		Description: description,
-		Schema:      &huma.Schema{Type: huma.TypeString},
 	}
 }
 

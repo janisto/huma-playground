@@ -48,8 +48,8 @@ Huma Playground is a minimal REST API skeleton built with [Huma](https://github.
 
 - Chi middleware stack with untrusted forwarding-header removal, security headers, environment-aware CORS, privacy-minimized access logging, request size limits, and panic recovery
 - Huma observability middleware via `github.com/janisto/huma-observability/v2` for router-wide request IDs, Huma access logs, request-scoped Zap loggers, and trace metadata enrichment
-- Plain response bodies with RFC 9457 Problem Details for errors
-- Content negotiation supporting JSON and CBOR formats
+- Plain closed response bodies with exact RFC 9457 Problem Details for errors
+- Strict JSON and CBOR success representations; JSON Problem Details with the same model in ordinary CBOR
 - Cursor-based pagination with RFC 8288 Link headers
 - Firebase Authentication with JWT validation via Huma middleware
 - Firestore integration with atomic create, transaction-safe partial update, existence-checked delete, and audit logging
@@ -89,6 +89,8 @@ Key recipes:
 - `just qa` - Quality assurance (tidy + fix + build + test)
 - `just vuln` - Check both modules for reachable vulnerabilities
 - `just container-smoke` - Build and probe the final non-root image
+- `just profile-migration-audit` - Read-only classification of pre-contract profile records
+- `just profile-migration-apply` - Guarded, explicitly confirmed profile storage cutover
 - `just install` - Download module dependencies (alias for download)
 - `just fresh` - Recreate project from clean state
 - `just emulators` - Start Firebase emulators (Auth + Firestore)
@@ -125,8 +127,7 @@ just run
 
 The server starts on port 8080 with endpoints:
 - `http://localhost:8080/health` - health probe
-- `http://localhost:8080/v1/api-docs` - interactive API explorer
-- `http://localhost:8080/v1/openapi.json` - OpenAPI schema
+- `http://localhost:8080/openapi.json` - generated OpenAPI schema
 - `http://localhost:8080/v1/hello` - greeting examples
 - `http://localhost:8080/v1/items` - cursor-paginated items
 - `http://localhost:8080/v1/profile` - authenticated profile CRUD
@@ -321,20 +322,17 @@ type ResourceUpdateInput struct {
 
 Errors follow RFC 9457 Problem Details and honor content negotiation:
 - `application/problem+json` when JSON is requested (default, RFC 9457 registered)
-- `application/problem+cbor` when CBOR is requested (project extension, follows RFC 6839 suffix convention)
+- `application/cbor` with the same Problem Details member model when CBOR is requested
 
-Use Huma's built-in helpers:
+Portable operations use the exact stable taxonomy in `internal/platform/portable`:
 
 ```go
-huma.Error400BadRequest("invalid request")
-huma.Error403Forbidden("access denied")
-huma.Error404NotFound("resource not found")
-huma.Error422UnprocessableEntity("validation failed", fieldErrors...)
-huma.Error500InternalServerError("internal error")
-huma.NewError(http.StatusTeapot, "custom message")
+portable.ErrorForContext(ctx, portable.CodeInvalidRequest)
+portable.ErrorForContext(ctx, portable.CodeValidationFailed, issues...)
+portable.ErrorForContext(ctx, portable.CodeInternalError)
 ```
 
-Panic recovery and Chi-level handlers use Problem Details via `internal/platform/respond`.
+Huma parser/validator errors are converted to the same taxonomy by the portable error builder. Panic recovery and Chi-level handlers use Problem Details via `internal/platform/respond`.
 
 ### Logging
 
@@ -358,7 +356,7 @@ At HTTP dependency boundaries, log unavailable/time-out failures at warning leve
 2. Define output struct with `Body` field for the response payload
 3. Add a registration function and call it from `routes.Register`
 4. Log within handlers using `obs.Logger(ctx)`
-5. Return errors using Huma's error helpers
+5. Return portable-operation errors using `portable.ErrorForContext`
 6. Use Huma operations for API responses and `http.Redirect` only for deliberate Chi-level redirects
 
 ### Handler Pattern
@@ -374,7 +372,7 @@ func registerUser(api huma.API) {
     }) (*UserOutput, error) {
         user, err := db.GetUser(ctx, input.ID)
         if err != nil {
-            return nil, huma.Error404NotFound("user not found")
+            return nil, portable.ErrorForContext(ctx, portable.CodeProfileNotFound)
         }
         return &UserOutput{Body: user}, nil
     })
@@ -424,7 +422,7 @@ huma.Register(api, huma.Operation{
 ### JSON Encoding
 
 - JSON responses are UTF-8 with HTML escaping disabled
-- Response bodies include a `$schema` pointer to the JSON Schema
+- Portable response objects contain only their specified wire members; no `$schema` field is injected
 
 ### JSON Property Naming
 
@@ -525,17 +523,14 @@ All errors use RFC 9457 Problem Details format:
 }
 ```
 
-Use Huma error helpers:
-- `huma.Error400BadRequest("message")`
-- `huma.Error404NotFound("message")`
-- `huma.Error422UnprocessableEntity("message", fieldErrors...)`
-- `huma.NewError(status, "message")`
+Use `portable.ErrorForContext` with a stable portable code and only the allowed validation-source details. Do not expose dependency messages.
 
 ### Request ID
 
 - `X-Request-ID` header tracks all server requests end-to-end
-- Propagate to downstream services and include in logs
-- Generated automatically by `obs.HTTPRequestContext` if not provided, then reused by `obs.RequestContext` on Huma routes
+- Missing, invalid, repeated, or comma-combined candidates are replaced rather than rejected
+- The selected value is installed by `obs.HTTPRequestContext`, reused by `obs.RequestContext`, emitted in responses, and included in logs
+- Do not forward the caller's request ID or any caller credentials to anonymous GitHub requests
 
 ### Content Types
 
@@ -547,7 +542,7 @@ Use Huma error helpers:
 **Responses:**
 - Default: `application/json` (RFC 8259)
 - Alternate: `application/cbor` (RFC 8949)
-- Errors: `application/problem+json` (RFC 9457) or `application/problem+cbor` (extension)
+- Errors: `application/problem+json` (RFC 9457) or ordinary `application/cbor` with the same member model
 - Format selected via `Accept` header
 - Error format is controlled by `Accept` header, not request `Content-Type`
 
@@ -562,7 +557,7 @@ Use Huma error helpers:
 ### Filtering & Sorting
 
 - Use query parameters: `?status=active&sort=created_at&order=desc`
-- Support multiple values with comma separation: `?status=active,pending`
+- Portable scalar query parameters are closed: reject unknown, repeated, and comma-combined values
 - Default sort order should be consistent and documented
 
 ### Pagination
@@ -583,25 +578,23 @@ type ListOutput struct {
     Body ListData
 }
 
-const listCursorType = "list"
+const operationID = "listItems"
 
 // In handler - validate cursor before use:
 cursor, err := pagination.DecodeCursor(input.Cursor)
 if err != nil {
-    return nil, huma.Error400BadRequest("invalid cursor format")
+	return nil, portable.ErrorForContext(ctx, portable.CodeInvalidRequest)
 }
 
-if input.Cursor != "" && cursor.Type != listCursorType {
-    return nil, huma.Error400BadRequest("cursor type mismatch")
-}
-
-// Validate cursor references existing item (if applicable)
-if cursor.Value != "" && !itemExists(cursor.Value) {
-    return nil, huma.Error400BadRequest("cursor references unknown item")
+limit := input.DefaultLimit()
+if input.Cursor != "" && (!cursor.Matches(pagination.Scope{
+	Operation: operationID, Filter: input.Filter, Limit: limit,
+}) || cursor.Anchor == "" || findItemIndex(items, cursor.Anchor) == -1) {
+	return nil, portable.ErrorForContext(ctx, portable.CodeInvalidRequest)
 }
 
 // Use Paginate helper for consistent pagination
-result := pagination.Paginate(items, cursor, input.DefaultLimit(), listCursorType, getID, "/items", query)
+result := pagination.Paginate(items, cursor, limit, operationID, input.Filter, getID, "/v1/items", query)
 return &ListOutput{Link: result.LinkHeader, Body: data}, nil
 ```
 

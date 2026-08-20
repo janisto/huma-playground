@@ -20,10 +20,11 @@ func Register(
 	profileStore profilesvc.Store,
 	githubService githubsvc.Service,
 ) {
-	api.UseMiddleware(auth.NewAuthMiddleware(api, verifier))
+	group := huma.NewGroup(api, prefix)
+	group.UseMiddleware(auth.NewAuthMiddleware(api, verifier))
 
-	hello.Register(api)
-	items.Register(api, prefix)
-	profile.Register(api, prefix, profileStore)
-	githubhandler.Register(api, githubService, prefix)
+	hello.Register(group)
+	items.Register(group, prefix)
+	profile.Register(group, prefix, profileStore)
+	githubhandler.Register(group, githubService, prefix)
 }

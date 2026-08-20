@@ -14,23 +14,13 @@ type Result[T any] struct {
 	PrevCursor string
 }
 
-// Paginate applies cursor-based pagination to a slice of items.
-//
-// Parameters:
-//   - items: The full slice of items to paginate
-//   - cursor: The decoded cursor from the request
-//   - limit: Maximum items per page
-//   - cursorType: Type identifier for cursor validation (e.g., "item", "user")
-//   - getID: Function to extract the ID from an item
-//   - baseURL: Base URL path for Link header (e.g., "/items")
-//   - query: Additional query parameters to preserve in links
-//
-// Returns a Result containing the page of items and pagination metadata.
+// Paginate applies scoped next/previous cursor pagination to a stable slice.
 func Paginate[T any](
 	items []T,
 	cursor Cursor,
 	limit int,
-	cursorType string,
+	operation string,
+	filter string,
 	getID func(T) string,
 	baseURL string,
 	query url.Values,
@@ -38,10 +28,14 @@ func Paginate[T any](
 	total := len(items)
 
 	startIdx := 0
-	if cursor.Value != "" {
+	if cursor.Anchor != "" {
 		for i, item := range items {
-			if getID(item) == cursor.Value {
-				startIdx = i + 1
+			if getID(item) == cursor.Anchor {
+				if cursor.Direction == "next" {
+					startIdx = i + 1
+				} else {
+					startIdx = max(0, i-limit)
+				}
 				break
 			}
 		}
@@ -54,16 +48,17 @@ func Paginate[T any](
 	var nextCursor, prevCursor string
 
 	if endIdx < total && len(pageItems) > 0 {
-		nextCursor = Cursor{Type: cursorType, Value: getID(pageItems[len(pageItems)-1])}.Encode()
+		nextCursor = Cursor{
+			Version: 1, Operation: operation, Limit: limit, Filter: filter,
+			Direction: "next", Anchor: getID(pageItems[len(pageItems)-1]),
+		}.Encode()
 	}
 
-	if startIdx > 0 {
-		if startIdx <= limit {
-			prevCursor = Cursor{Type: cursorType, Value: ""}.Encode()
-		} else {
-			prevLastIdx := startIdx - 1
-			prevCursor = Cursor{Type: cursorType, Value: getID(items[prevLastIdx-limit])}.Encode()
-		}
+	if startIdx > 0 && len(pageItems) > 0 {
+		prevCursor = Cursor{
+			Version: 1, Operation: operation, Limit: limit, Filter: filter,
+			Direction: "prev", Anchor: getID(pageItems[0]),
+		}.Encode()
 	}
 
 	q := cloneValues(query)

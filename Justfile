@@ -38,6 +38,14 @@ run-port port=PORT:
 functions-run port="8080":
     cd functions && GOWORK=off FUNCTION_TARGET=Hello LOCAL_ONLY=true PORT={{ port }} go run ./cmd/server
 
+[group('operations')]
+profile-migration-audit project manifest="":
+    go run ./cmd/profile-migrate --project={{ project }} {{ if manifest != "" { "--manifest=" + manifest } else { "" } }}
+
+[group('operations')]
+profile-migration-apply project manifest confirm:
+    go run ./cmd/profile-migrate --project={{ project }} --manifest={{ manifest }} --apply --confirm-project={{ confirm }}
+
 [group('test')]
 emulators:
     firebase emulators:start --only auth,firestore
@@ -274,9 +282,7 @@ container-smoke image="huma-playground:smoke" name="huma-playground-smoke" host_
       if curl --fail --silent "http://127.0.0.1:{{ host_port }}/health" >/dev/null; then break; fi
       sleep 0.25
     done
-    curl --fail --silent "http://127.0.0.1:{{ host_port }}/v1/api-docs" >/dev/null
-    curl --fail --silent "http://127.0.0.1:{{ host_port }}/v1/openapi.json" | grep -F '"openapi":"3.1.0"' >/dev/null
-    curl --fail --silent "http://127.0.0.1:{{ host_port }}/v1/schemas/ErrorModel.json" >/dev/null
+    curl --fail --silent "http://127.0.0.1:{{ host_port }}/openapi.json" | grep -F '"openapi":"3.1.0"' >/dev/null
     "$runtime" logs {{ name }} 2>&1 | grep -F '"version":"ci-smoke"' >/dev/null
 
 [group('container')]

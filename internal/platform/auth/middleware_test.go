@@ -16,9 +16,11 @@ import (
 type MockVerifier struct {
 	User  *FirebaseUser
 	Error error
+	Calls int
 }
 
 func (v *MockVerifier) Verify(context.Context, string) (*FirebaseUser, error) {
+	v.Calls++
 	return v.User, v.Error
 }
 
@@ -161,6 +163,32 @@ func TestMiddlewareRejectsInvalidAuthFormat(t *testing.T) {
 	}
 }
 
+func TestMiddlewareRejectsAmbiguousAuthorizationWithoutVerification(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		values []string
+	}{
+		{name: "duplicate fields", values: []string{"Bearer first", "Bearer second"}},
+		{name: "comma combined field", values: []string{"Bearer first, Bearer second"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			verifier := &MockVerifier{User: testUser()}
+			router := setupTestAPI(verifier, true)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test", nil)
+			request.Header["Authorization"] = test.values
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusUnauthorized || response.Header().Get("WWW-Authenticate") != "Bearer" {
+				t.Fatalf("status=%d challenge=%q body=%s",
+					response.Code, response.Header().Get("WWW-Authenticate"), response.Body.String())
+			}
+			if verifier.Calls != 0 {
+				t.Fatalf("verifier calls=%d", verifier.Calls)
+			}
+		})
+	}
+}
+
 func TestMiddlewareAuthenticatesValidToken(t *testing.T) {
 	user := &FirebaseUser{UID: "verified-user-789"}
 	verifier := &MockVerifier{User: user}
@@ -233,8 +261,8 @@ func TestMiddlewareHandlesCertificateFetchError(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 for certificate fetch error, got %d", rec.Code)
 	}
-	if retryAfter := rec.Header().Get("Retry-After"); retryAfter != "30" {
-		t.Fatalf("expected Retry-After: 30, got %q", retryAfter)
+	if retryAfter := rec.Header().Get("Retry-After"); retryAfter != "" {
+		t.Fatalf("unexpected Retry-After: %q", retryAfter)
 	}
 }
 
@@ -247,8 +275,8 @@ func TestMiddlewareHandlesUnavailableDependency(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", response.Code)
 	}
-	if response.Header().Get("Retry-After") != "30" {
-		t.Fatalf("expected Retry-After, got %q", response.Header().Get("Retry-After"))
+	if response.Header().Get("Retry-After") != "" {
+		t.Fatalf("unexpected Retry-After %q", response.Header().Get("Retry-After"))
 	}
 }
 
@@ -261,8 +289,8 @@ func TestMiddlewareHandlesVerifierCancellation(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d: %s", response.Code, response.Body.String())
 	}
-	if response.Header().Get("Retry-After") != "30" {
-		t.Fatalf("expected Retry-After, got %q", response.Header().Get("Retry-After"))
+	if response.Header().Get("Retry-After") != "" {
+		t.Fatalf("unexpected Retry-After %q", response.Header().Get("Retry-After"))
 	}
 }
 
@@ -362,7 +390,7 @@ func TestUserFromContextReturnsNilWithoutAuth(t *testing.T) {
 
 func TestUserFromContextReturnsUser(t *testing.T) {
 	expected := &FirebaseUser{UID: "context-user"}
-	ctx := context.WithValue(t.Context(), userContextKey{}, expected)
+	ctx := context.WithValue(t.Context(), identityContextKey{}, &requestIdentity{user: expected})
 
 	user := UserFromContext(ctx)
 	if user == nil {
