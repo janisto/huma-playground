@@ -52,6 +52,34 @@ func TestParseStrictJSONRejectsAmbiguousMalformedAndNonUnicodeDocuments(t *testi
 	}
 }
 
+func TestParseStrictJSONBoundsContainerNesting(t *testing.T) {
+	const expectedMaxJSONNestedLevels = 32
+	tests := []struct {
+		name     string
+		open     string
+		close    string
+		accepted bool
+		depth    int
+	}{
+		{name: "array at limit", open: "[", close: "]", depth: expectedMaxJSONNestedLevels, accepted: true},
+		{name: "array over limit", open: "[", close: "]", depth: expectedMaxJSONNestedLevels + 1},
+		{name: "object at limit", open: `{"value":`, close: "}", depth: expectedMaxJSONNestedLevels, accepted: true},
+		{name: "object over limit", open: `{"value":`, close: "}", depth: expectedMaxJSONNestedLevels + 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document := strings.Repeat(test.open, test.depth) + "0" + strings.Repeat(test.close, test.depth)
+			_, err := ParseStrictJSON([]byte(document))
+			if test.accepted && err != nil {
+				t.Fatalf("depth %d rejected: %v", test.depth, err)
+			}
+			if !test.accepted && err == nil {
+				t.Fatalf("depth %d accepted", test.depth)
+			}
+		})
+	}
+}
+
 func TestStrictJSONUnmarshalDoesNotCoerceTypes(t *testing.T) {
 	var value struct{ Count int }
 	if err := StrictJSONUnmarshal([]byte("{\"count\":\"1\"}"), &value); err == nil {

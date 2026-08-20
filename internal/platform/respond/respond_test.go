@@ -105,6 +105,36 @@ func TestRecoverer(t *testing.T) {
 	}
 }
 
+func TestRecovererUsesOriginalAcceptAfterSuccessNegotiation(t *testing.T) {
+	api := testAPI()
+	handler := Recoverer(api)(portable.RequestPolicy("/v1")(http.HandlerFunc(
+		func(http.ResponseWriter, *http.Request) {
+			panic("boom")
+		},
+	)))
+	const accept = "application/json, application/problem+json;q=0.1, application/cbor;q=0.5"
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/hello", nil)
+	request.Header.Set("Accept", accept)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != portable.MediaTypeCBOR {
+		t.Fatalf("content type=%q want=%q body=%x", got, portable.MediaTypeCBOR, response.Body.Bytes())
+	}
+	if got := request.Header.Get("Accept"); got != accept {
+		t.Fatalf("outer request Accept=%q want=%q", got, accept)
+	}
+	var problem portable.ProblemError
+	if err := cbor.Unmarshal(response.Body.Bytes(), &problem); err != nil ||
+		problem.Code != portable.CodeInternalError {
+		t.Fatalf("problem=%#v err=%v body=%x", problem, err, response.Body.Bytes())
+	}
+}
+
 func TestRecovererPreservesAbortHandler(t *testing.T) {
 	api := testAPI()
 	handler := Recoverer(api)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {

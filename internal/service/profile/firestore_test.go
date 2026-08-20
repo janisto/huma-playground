@@ -161,10 +161,15 @@ func TestFirestoreEncodedUIDCannotAccessLegacyProfile(t *testing.T) {
 
 	ctx := t.Context()
 	const legacyUserID = "uid~Lw"
+	now := store.timestamp()
 	_, err := store.client.Collection(profilesCollection).Doc(legacyUserID).Create(ctx, firestoreProfile{
-		FirstName:    "Legacy",
-		LastName:     "Owner",
-		ContactEmail: "legacy@example.com",
+		FirstName:     "Legacy",
+		LastName:      "Owner",
+		ContactEmail:  "legacy@example.com",
+		PhoneNumber:   "+358401234567",
+		TermsAccepted: true,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	})
 	if err != nil {
 		t.Fatalf("create legacy profile: %v", err)
@@ -338,7 +343,7 @@ func TestFirestoreUpdatePartial(t *testing.T) {
 	}
 }
 
-func TestFirestoreUpdatePreservesContactEmail(t *testing.T) {
+func TestFirestoreUpdatePreservesCanonicalContactEmail(t *testing.T) {
 	store, cleanup := setupFirestoreTest(t)
 	defer cleanup()
 
@@ -350,7 +355,7 @@ func TestFirestoreUpdatePreservesContactEmail(t *testing.T) {
 	}
 	createTestProfile(t, store, ctx, "user-contactEmail", params)
 
-	newEmail := "  UPDATED@EXAMPLE.COM  "
+	newEmail := "UPDATED@example.com"
 	updated, err := store.Update(ctx, "user-contactEmail", UpdateParams{
 		ContactEmail: &newEmail,
 	})
@@ -358,8 +363,18 @@ func TestFirestoreUpdatePreservesContactEmail(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if updated.ContactEmail != "  UPDATED@EXAMPLE.COM  " {
+	if updated.ContactEmail != "UPDATED@example.com" {
 		t.Errorf("expected contactEmail to be preserved, got %s", updated.ContactEmail)
+	}
+}
+
+func TestFirestoreUpdateRejectsNonCanonicalContactEmailBeforeFirestore(t *testing.T) {
+	store := NewFirestoreStore(nil)
+	nonCanonical := "  UPDATED@EXAMPLE.COM  "
+	if _, err := store.Update(t.Context(), "user-contactEmail", UpdateParams{
+		ContactEmail: &nonCanonical,
+	}); !errors.Is(err, ErrInvalidStored) {
+		t.Fatalf("error=%v want=%v", err, ErrInvalidStored)
 	}
 }
 

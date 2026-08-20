@@ -61,7 +61,7 @@ func requestPolicy(
 			}
 
 			originalAccept := AcceptHeader(request.Header)
-			request = request.WithContext(WithOriginalAccept(request.Context(), originalAccept))
+			request = request.Clone(WithOriginalAccept(request.Context(), originalAccept))
 
 			if code := validateRawQuery(request.URL.RawQuery, policy.query); code != "" {
 				writePolicyProblem(w, request, code, rejectionMiddleware)

@@ -124,6 +124,15 @@ func (fixedProfileStore) Get(context.Context, string) (*profilesvc.Profile, erro
 	}, nil
 }
 
+type errorProfileStore struct {
+	unavailableProfileStore
+	err error
+}
+
+func (store errorProfileStore) Get(context.Context, string) (*profilesvc.Profile, error) {
+	return nil, store.err
+}
+
 func (v *stubVerifier) Verify(context.Context, string) (*auth.FirebaseUser, error) {
 	return v.User, v.Error
 }
@@ -755,6 +764,49 @@ func TestRouterEmitsRequiredHeadersAcrossOutcomes(t *testing.T) {
 	}
 }
 
+func TestRouterJSONNestingBoundary(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+	tests := []struct {
+		name, code string
+		depth      int
+		status     int
+	}{
+		{name: "at parser limit", depth: 32, status: http.StatusUnprocessableEntity, code: "validation_failed"},
+		{name: "over parser limit", depth: 33, status: http.StatusBadRequest, code: "invalid_request"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document := strings.Repeat(`{"value":`, test.depth) + "0" + strings.Repeat("}", test.depth)
+			request := httptest.NewRequestWithContext(
+				t.Context(),
+				http.MethodPost,
+				"/v1/hello",
+				strings.NewReader(document),
+			)
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+
+			router.ServeHTTP(response, request)
+
+			var problem struct {
+				Code string `json:"code"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil ||
+				response.Code != test.status || problem.Code != test.code {
+				t.Fatalf(
+					"depth=%d status=%d want=%d problem=%#v err=%v body=%s",
+					test.depth,
+					response.Code,
+					test.status,
+					problem,
+					err,
+					response.Body.String(),
+				)
+			}
+		})
+	}
+}
+
 func TestBodylessOperationDoesNotReadRequestBody(t *testing.T) {
 	providerCalls := 0
 	provider := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -1001,6 +1053,54 @@ func TestRouterHumaAccessLogPreservesErrorStatus(t *testing.T) {
 	assertJSONLogField(t, httpRequest, "status", float64(http.StatusUnauthorized))
 }
 
+func TestRouterProfileFailureLogsRetainUnderlyingDiagnostic(t *testing.T) {
+	tests := []struct {
+		name, message, category, severity, diagnostic string
+		err                                           error
+		status                                        int
+	}{
+		{
+			name: "unavailable", message: "profile store unavailable",
+			category: "dependency_unavailable", severity: "WARNING", diagnostic: "transport sentinel",
+			err:    errors.Join(profilesvc.ErrUnavailable, errors.New("transport sentinel")),
+			status: http.StatusServiceUnavailable,
+		},
+		{
+			name: "unexpected", message: "profile operation failed",
+			category: "internal_error", severity: "ERROR", diagnostic: "storage sentinel",
+			err: errors.New("storage sentinel"), status: http.StatusInternalServerError,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			logger, output := testObservabilityLogger(t)
+			router := testRouterWithProfileStore(
+				t,
+				testConfig(t),
+				errorProfileStore{err: test.err},
+				logger,
+			)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/profile", nil)
+			request.Header.Set("Authorization", "Bearer test-token")
+			response := httptest.NewRecorder()
+
+			router.ServeHTTP(response, request)
+
+			if response.Code != test.status || strings.Contains(response.Body.String(), "sentinel") {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			record := singleLogRecord(t, decodeLogRecords(t, output.Bytes()), test.message)
+			assertJSONLogField(t, record, "operation", "get")
+			assertJSONLogField(t, record, "error_category", test.category)
+			assertJSONLogField(t, record, "severity", test.severity)
+			loggedError, ok := record["error"].(string)
+			if !ok || !strings.Contains(loggedError, test.diagnostic) {
+				t.Fatalf("error field=%#v want diagnostic %q; record=%#v", record["error"], test.diagnostic, record)
+			}
+		})
+	}
+}
+
 func TestRouterChiAccessLogUsesV2PrivacyContract(t *testing.T) {
 	logger, output := testObservabilityLogger(t)
 	router := testRouterWithLogger(t, testConfig(t), logger)
@@ -1151,11 +1251,21 @@ func TestRequestContextTimeout(t *testing.T) {
 func TestServerConfiguration(t *testing.T) {
 	cfg := testConfig(t)
 	server := newServer(cfg, http.NotFoundHandler())
+	if cfg.RequestTimeout != 12*time.Second {
+		t.Fatalf("request timeout=%s want=12s", cfg.RequestTimeout)
+	}
 	if server.Addr != cfg.Address ||
 		server.ReadTimeout != 5*time.Second ||
 		server.WriteTimeout != 15*time.Second ||
 		server.MaxHeaderBytes != 64<<10 {
 		t.Fatalf("unexpected server: %#v", server)
+	}
+	if cfg.RequestTimeout <= 10*time.Second || cfg.RequestTimeout >= server.WriteTimeout {
+		t.Fatalf(
+			"request timeout %s must exceed the provider budget and remain below write timeout %s",
+			cfg.RequestTimeout,
+			server.WriteTimeout,
+		)
 	}
 }
 

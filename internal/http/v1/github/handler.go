@@ -203,15 +203,24 @@ func mapServiceError(ctx context.Context, operation string, err error) error {
 		return huma.ErrorWithHeaders(portable.ErrorForContext(ctx, portable.CodeGitHubRateLimit), headers)
 	case errors.Is(err, githubsvc.ErrTimeout), errors.Is(err, context.DeadlineExceeded):
 		obs.Logger(ctx).Warn("github dependency timed out",
-			zap.String("operation", operation), zap.String("error_category", "github_timeout"))
+			zap.String("operation", operation),
+			zap.String("error_category", "github_timeout"),
+			zap.Error(err),
+		)
 		return portable.ErrorForContext(ctx, portable.CodeGitHubTimeout)
 	case errors.Is(err, githubsvc.ErrUpstream), errors.Is(err, context.Canceled):
 		obs.Logger(ctx).Warn("github dependency failed",
-			zap.String("operation", operation), zap.String("error_category", "github_upstream"))
+			zap.String("operation", operation),
+			zap.String("error_category", "github_upstream"),
+			zap.Error(err),
+		)
 		return portable.ErrorForContext(ctx, portable.CodeGitHubUpstream)
 	default:
 		obs.Logger(ctx).Error("github operation failed",
-			zap.String("operation", operation), zap.String("error_category", "internal_error"))
+			zap.String("operation", operation),
+			zap.String("error_category", "internal_error"),
+			zap.Error(err),
+		)
 		return portable.ErrorForContext(ctx, portable.CodeInternalError)
 	}
 }

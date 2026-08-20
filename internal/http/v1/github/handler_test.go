@@ -16,6 +16,10 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	humachi "github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
+	obs "github.com/janisto/huma-observability/v2"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/janisto/huma-playground/internal/platform/pagination"
 	"github.com/janisto/huma-playground/internal/platform/portable"
@@ -788,6 +792,64 @@ func TestGitHubHandlersMapSafeDependencyErrors(t *testing.T) {
 				}
 			} else if response.Header().Get("Retry-After") != "" || response.Header().Get("X-Ratelimit-Reset") != "" {
 				t.Fatalf("unexpected rate headers = %#v", response.Header())
+			}
+		})
+	}
+}
+
+func TestGitHubDependencyFailureLogsRetainUnderlyingDiagnostic(t *testing.T) {
+	tests := []struct {
+		name, message, category, diagnostic string
+		err                                 error
+		level                               zapcore.Level
+	}{
+		{
+			name: "timeout", message: "github dependency timed out", category: "github_timeout",
+			diagnostic: "deadline sentinel",
+			err:        errors.Join(githubsvc.ErrTimeout, errors.New("deadline sentinel")),
+			level:      zapcore.WarnLevel,
+		},
+		{
+			name: "upstream", message: "github dependency failed", category: "github_upstream",
+			diagnostic: "transport sentinel",
+			err:        errors.Join(githubsvc.ErrUpstream, errors.New("transport sentinel")),
+			level:      zapcore.WarnLevel,
+		},
+		{
+			name: "unexpected", message: "github operation failed", category: "internal_error",
+			diagnostic: "projection sentinel",
+			err:        errors.New("projection sentinel"),
+			level:      zapcore.ErrorLevel,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			core, recorded := observer.New(zapcore.DebugLevel)
+			handler := obs.HTTPRequestContext(obs.HTTPRequestContextConfig{Logger: zap.New(core)})(
+				http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+					_ = mapServiceError(request.Context(), "getGitHubOwner", test.err)
+				}),
+			)
+			handler.ServeHTTP(
+				httptest.NewRecorder(),
+				httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil),
+			)
+
+			entries := recorded.FilterMessage(test.message).All()
+			if len(entries) != 1 {
+				t.Fatalf("log entries=%d want=1; all=%#v", len(entries), recorded.All())
+			}
+			entry := entries[0]
+			if entry.Level != test.level {
+				t.Fatalf("level=%s want=%s", entry.Level, test.level)
+			}
+			fields := entry.ContextMap()
+			if fields["operation"] != "getGitHubOwner" || fields["error_category"] != test.category {
+				t.Fatalf("fields=%#v", fields)
+			}
+			loggedError, ok := fields["error"].(string)
+			if !ok || !strings.Contains(loggedError, test.diagnostic) {
+				t.Fatalf("error field=%#v want diagnostic %q", fields["error"], test.diagnostic)
 			}
 		})
 	}

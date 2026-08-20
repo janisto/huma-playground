@@ -9,6 +9,8 @@ import (
 	"unicode/utf8"
 )
 
+const maxJSONNestedLevels = 32
+
 // ParseStrictJSON parses exactly one RFC 8259 value while rejecting duplicate
 // object names, invalid UTF-8, a BOM, lone surrogates, and trailing content.
 func ParseStrictJSON(data []byte) (any, error) {
@@ -22,7 +24,7 @@ func ParseStrictJSON(data []byte) (any, error) {
 		return nil, errors.New("JSON byte-order mark is not supported")
 	}
 	parser := jsonParser{data: data}
-	value, err := parser.parseValueAfterSpace()
+	value, err := parser.parseValueAfterSpace(0)
 	if err != nil {
 		return nil, err
 	}
@@ -66,16 +68,22 @@ func (p *jsonParser) skipSpace() {
 	}
 }
 
-func (p *jsonParser) parseValueAfterSpace() (any, error) {
+func (p *jsonParser) parseValueAfterSpace(depth int) (any, error) {
 	p.skipSpace()
 	if p.offset >= len(p.data) {
 		return nil, errors.New("missing JSON value")
 	}
 	switch p.data[p.offset] {
 	case '{':
-		return p.parseObject()
+		if depth >= maxJSONNestedLevels {
+			return nil, errors.New("JSON nesting exceeds limit")
+		}
+		return p.parseObject(depth + 1)
 	case '[':
-		return p.parseArray()
+		if depth >= maxJSONNestedLevels {
+			return nil, errors.New("JSON nesting exceeds limit")
+		}
+		return p.parseArray(depth + 1)
 	case '"':
 		return p.parseString()
 	case 't':
@@ -89,7 +97,7 @@ func (p *jsonParser) parseValueAfterSpace() (any, error) {
 	}
 }
 
-func (p *jsonParser) parseObject() (map[string]any, error) {
+func (p *jsonParser) parseObject(depth int) (map[string]any, error) {
 	p.offset++
 	result := make(map[string]any)
 	p.skipSpace()
@@ -111,7 +119,7 @@ func (p *jsonParser) parseObject() (map[string]any, error) {
 		if !p.consume(':') {
 			return nil, errors.New("missing JSON object separator")
 		}
-		value, err := p.parseValueAfterSpace()
+		value, err := p.parseValueAfterSpace(depth)
 		if err != nil {
 			return nil, err
 		}
@@ -127,7 +135,7 @@ func (p *jsonParser) parseObject() (map[string]any, error) {
 	}
 }
 
-func (p *jsonParser) parseArray() ([]any, error) {
+func (p *jsonParser) parseArray(depth int) ([]any, error) {
 	p.offset++
 	result := make([]any, 0)
 	p.skipSpace()
@@ -135,7 +143,7 @@ func (p *jsonParser) parseArray() ([]any, error) {
 		return result, nil
 	}
 	for {
-		value, err := p.parseValueAfterSpace()
+		value, err := p.parseValueAfterSpace(depth)
 		if err != nil {
 			return nil, err
 		}

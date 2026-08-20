@@ -217,11 +217,17 @@ func mapServiceError(ctx context.Context, operation string, err error) error {
 		errors.Is(err, context.DeadlineExceeded),
 		errors.Is(err, context.Canceled):
 		obs.Logger(ctx).Warn("profile store unavailable",
-			zap.String("operation", operation), zap.String("error_category", "dependency_unavailable"))
+			zap.String("operation", operation),
+			zap.String("error_category", "dependency_unavailable"),
+			zap.Error(err),
+		)
 		return portable.ErrorForContext(ctx, portable.CodeDependencyUnavailable)
 	default:
 		obs.Logger(ctx).Error("profile operation failed",
-			zap.String("operation", operation), zap.String("error_category", "internal_error"))
+			zap.String("operation", operation),
+			zap.String("error_category", "internal_error"),
+			zap.Error(err),
+		)
 		return portable.ErrorForContext(ctx, portable.CodeInternalError)
 	}
 }
