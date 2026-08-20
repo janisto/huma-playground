@@ -1,6 +1,7 @@
 package portable
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"io"
@@ -244,7 +245,7 @@ func validateRequestRepresentation(request *http.Request) Code {
 	}
 	contentTypes := request.Header.Values("Content-Type")
 	if len(contentTypes) == 0 {
-		if request.ContentLength > 0 || len(request.TransferEncoding) > 0 {
+		if requestHasContent(request) {
 			return CodeUnsupportedMediaType
 		}
 		return ""
@@ -253,6 +254,25 @@ func validateRequestRepresentation(request *http.Request) Code {
 		return CodeUnsupportedMediaType
 	}
 	return ""
+}
+
+type bufferedRequestBody struct {
+	*bufio.Reader
+	io.Closer
+}
+
+func requestHasContent(request *http.Request) bool {
+	if request.ContentLength > 0 {
+		return true
+	}
+	if request.Body == nil || request.Body == http.NoBody {
+		return false
+	}
+	body := request.Body
+	buffered := bufio.NewReaderSize(body, 1)
+	request.Body = &bufferedRequestBody{Reader: buffered, Closer: body}
+	content, _ := buffered.Peek(1)
+	return len(content) != 0
 }
 
 func parseRequestContentType(value string) string {

@@ -68,3 +68,32 @@ func TestRunRejectsUnsafeApplyArgumentsBeforeFirestoreInitialization(t *testing.
 		})
 	}
 }
+
+func TestRunRejectsFirestoreEmulatorRoutingBeforeManifestOrClient(t *testing.T) {
+	missingManifest := filepath.Join(t.TempDir(), "missing.json")
+	hosts := map[string]string{
+		"address":    "127.0.0.1:7130",
+		"whitespace": " ",
+	}
+	commands := map[string][]string{
+		"audit": {"--project", "live-project", "--manifest", missingManifest},
+		"apply": {
+			"--project", "live-project", "--manifest", missingManifest,
+			"--apply", "--confirm-project", "live-project",
+		},
+	}
+	for hostName, host := range hosts {
+		t.Run(hostName, func(t *testing.T) {
+			t.Setenv("FIRESTORE_EMULATOR_HOST", host)
+			for commandName, arguments := range commands {
+				t.Run(commandName, func(t *testing.T) {
+					err := run(t.Context(), arguments)
+					if err == nil ||
+						err.Error() != "FIRESTORE_EMULATOR_HOST must be empty or unset for profile migration" {
+						t.Fatalf("error=%v", err)
+					}
+				})
+			}
+		})
+	}
+}

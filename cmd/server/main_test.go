@@ -807,6 +807,90 @@ func TestRouterJSONNestingBoundary(t *testing.T) {
 	}
 }
 
+func TestHTTP2UnknownLengthBodyRequiresContentType(t *testing.T) {
+	type requestMetadata struct {
+		contentLength    int64
+		contentType      string
+		protoMajor       int
+		transferEncoding []string
+	}
+	observed := make(chan requestMetadata, 1)
+	router := testRouter(t, testConfig(t))
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		observed <- requestMetadata{
+			contentLength:    request.ContentLength,
+			contentType:      request.Header.Get("Content-Type"),
+			protoMajor:       request.ProtoMajor,
+			transferEncoding: slices.Clone(request.TransferEncoding),
+		}
+		router.ServeHTTP(response, request)
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	t.Cleanup(server.Close)
+
+	tests := []struct {
+		name, document, code string
+		contentLength        int64
+		streamBody           bool
+		status               int
+	}{
+		{
+			name: "non-empty unknown-length body", document: `{"name":"HTTP2"}`,
+			contentLength: -1, streamBody: true,
+			status: http.StatusUnsupportedMediaType, code: "unsupported_media_type",
+		},
+		{
+			name: "empty unknown-length body", contentLength: -1, streamBody: true,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{name: "empty body", contentLength: 0, status: http.StatusBadRequest, code: "invalid_request"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var body io.Reader
+			if test.streamBody {
+				body = io.NopCloser(strings.NewReader(test.document))
+			}
+			request, err := http.NewRequestWithContext(
+				t.Context(), http.MethodPost, server.URL+"/v1/hello", body,
+			)
+			if err != nil {
+				t.Fatalf("create request: %v", err)
+			}
+			request.Header.Set("Accept", "application/json")
+			response, err := server.Client().Do(request)
+			if err != nil {
+				t.Fatalf("send request: %v", err)
+			}
+			responseBody, readErr := io.ReadAll(response.Body)
+			closeErr := response.Body.Close()
+			if readErr != nil || closeErr != nil {
+				t.Fatalf("read error=%v close error=%v", readErr, closeErr)
+			}
+			metadata := <-observed
+			if metadata.protoMajor != 2 || metadata.contentLength != test.contentLength ||
+				len(metadata.transferEncoding) != 0 || metadata.contentType != "" {
+				t.Fatalf("request metadata=%#v", metadata)
+			}
+			var problem struct {
+				Code string `json:"code"`
+			}
+			if err := json.Unmarshal(responseBody, &problem); err != nil ||
+				response.StatusCode != test.status || problem.Code != test.code {
+				t.Fatalf(
+					"status=%d want=%d problem=%#v err=%v body=%s",
+					response.StatusCode,
+					test.status,
+					problem,
+					err,
+					responseBody,
+				)
+			}
+		})
+	}
+}
+
 func TestBodylessOperationDoesNotReadRequestBody(t *testing.T) {
 	providerCalls := 0
 	provider := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

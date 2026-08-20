@@ -133,7 +133,7 @@ Success and error objects are closed and contain no framework-added envelope or 
 
 Operation metadata lists only errors reachable for that operation. Unexpected Firebase and GitHub dependency failures are logged once with request correlation and a safe operation name; clients receive generic Problem Details without upstream internals.
 
-Request bodies are limited to exactly 1,000,000 bytes. Unknown or repeated scalar query parameters, unknown body properties, duplicate JSON object members, non-finite CBOR floats, and trailing documents are rejected. JSON and CBOR container nesting is capped at 32 levels. Missing, malformed, repeated, or comma-combined `X-Request-ID` values are replaced with a generated identifier. Application request contexts expire before the server write timeout so Firebase and GitHub work is canceled within the response budget.
+Request bodies are limited to exactly 1,000,000 bytes. Non-empty bodies require a supported `Content-Type`, including streamed content whose length is unknown. Unknown or repeated scalar query parameters, unknown body properties, duplicate JSON object members, non-finite CBOR floats, and trailing documents are rejected. JSON and CBOR container nesting is capped at 32 levels. Missing, malformed, repeated, or comma-combined `X-Request-ID` values are replaced with a generated identifier. Application request contexts expire before the server write timeout so Firebase and GitHub work is canceled within the response budget.
 
 ## Development commands
 
@@ -194,7 +194,7 @@ The apply command is intentionally separate and requires the project ID twice. I
 just profile-migration-apply PROJECT_ID path/to/reviewed-manifest.json PROJECT_ID
 ```
 
-Quiesce profile writes for the complete audit-and-apply window; otherwise a record created or changed after the dataset preflight can make the reviewed migration set stale. Both commands use Application Default Credentials. Run neither against a project that has not been explicitly selected and reviewed.
+Quiesce profile writes for the complete audit-and-apply window; otherwise a record created or changed after the dataset preflight can make the reviewed migration set stale. Both commands use Application Default Credentials and refuse to run when `FIRESTORE_EMULATOR_HOST` is non-empty. Run neither against a project that has not been explicitly selected and reviewed.
 
 ## Separate Go function
 

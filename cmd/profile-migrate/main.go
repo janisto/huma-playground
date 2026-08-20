@@ -41,6 +41,9 @@ func run(ctx context.Context, arguments []string) error {
 	if *apply && (*confirmation == "" || *confirmation != *project) {
 		return errors.New("--apply requires --confirm-project to exactly equal --project")
 	}
+	if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
+		return errors.New("FIRESTORE_EMULATOR_HOST must be empty or unset for profile migration")
+	}
 	manifest, err := readManifest(*manifestPath)
 	if err != nil {
 		return err

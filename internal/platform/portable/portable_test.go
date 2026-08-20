@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -242,6 +243,8 @@ func TestRequestPolicyRejectsClosedQueryMediaAndNegotiationBeforeHandler(t *test
 	tests := []struct {
 		name, method, target, contentType, encoding, accept string
 		body                                                string
+		transferEncoding                                    []string
+		unknownLength                                       bool
 		want                                                int
 		code                                                Code
 	}{
@@ -293,6 +296,27 @@ func TestRequestPolicyRejectsClosedQueryMediaAndNegotiationBeforeHandler(t *test
 			accept: MediaTypeJSON,
 			want:   415,
 			code:   CodeUnsupportedMediaType,
+		},
+		{
+			name:          "missing media on unknown-length content",
+			method:        "POST",
+			target:        "/v1/hello",
+			body:          "{}",
+			unknownLength: true,
+			accept:        MediaTypeJSON,
+			want:          415,
+			code:          CodeUnsupportedMediaType,
+		},
+		{
+			name:   "missing media on empty unknown-length content",
+			method: "POST",
+			target: "/v1/hello",
+			transferEncoding: []string{
+				"chunked",
+			},
+			unknownLength: true,
+			accept:        MediaTypeJSON,
+			want:          200,
 		},
 		{
 			name:        "unsupported media",
@@ -348,6 +372,10 @@ func TestRequestPolicyRejectsClosedQueryMediaAndNegotiationBeforeHandler(t *test
 			request := httptest.NewRequestWithContext(
 				t.Context(), test.method, test.target, strings.NewReader(test.body),
 			)
+			if test.unknownLength {
+				request.ContentLength = -1
+				request.TransferEncoding = slices.Clone(test.transferEncoding)
+			}
 			if test.contentType != "" {
 				request.Header.Set("Content-Type", test.contentType)
 			}
