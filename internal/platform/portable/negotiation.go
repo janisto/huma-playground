@@ -111,7 +111,7 @@ func matchMediaRange(rawRange, target string, explicitOnly, withCharset bool) (a
 	if !valid || len(parts) == 0 {
 		return acceptMatch{}, false
 	}
-	rangeValue := strings.ToLower(strings.TrimSpace(parts[0]))
+	rangeValue := strings.ToLower(trimOWS(parts[0]))
 	specificity := rangeSpecificity(rangeValue, target)
 	if specificity < 0 || (explicitOnly && specificity < 2) {
 		return acceptMatch{}, false
@@ -120,12 +120,12 @@ func matchMediaRange(rawRange, target string, explicitOnly, withCharset bool) (a
 	qualitySeen := false
 	mediaParameters := make(map[string]struct{})
 	for _, rawParameter := range parts[1:] {
-		parameter := strings.TrimSpace(rawParameter)
+		parameter := trimOWS(rawParameter)
 		if parameter == "" {
 			continue
 		}
 		name, value, found := strings.Cut(parameter, "=")
-		name = strings.ToLower(strings.TrimSpace(name))
+		name = strings.ToLower(name)
 		if !isHTTPToken(name) {
 			return acceptMatch{}, false
 		}
@@ -133,7 +133,7 @@ func matchMediaRange(rawRange, target string, explicitOnly, withCharset bool) (a
 			if qualitySeen || !found {
 				return acceptMatch{}, false
 			}
-			parsed, ok := parseQuality(strings.TrimSpace(value))
+			parsed, ok := parseQuality(value)
 			if !ok {
 				return acceptMatch{}, false
 			}
@@ -141,7 +141,7 @@ func matchMediaRange(rawRange, target string, explicitOnly, withCharset bool) (a
 			qualitySeen = true
 			continue
 		}
-		decoded, ok := decodeParameterValue(strings.TrimSpace(value), found)
+		decoded, ok := decodeParameterValue(value, found)
 		if !ok {
 			return acceptMatch{}, false
 		}
@@ -294,4 +294,8 @@ func isHTTPToken(value string) bool {
 		return false
 	}
 	return true
+}
+
+func trimOWS(value string) string {
+	return strings.Trim(value, " \t")
 }

@@ -1341,6 +1341,17 @@ func TestParseNavigationRejectsAmbiguousOrUnsafeLinks(t *testing.T) {
 	if err != nil || navigation.nextCursor == "" {
 		t.Fatalf("valid navigation = %#v, err = %v", navigation, err)
 	}
+	validParameterForms := []string{
+		strings.Replace(valid, `; title="a,b"`, `; extension`, 1),
+		strings.Replace(valid, `title="a,b"`, "title=\"a\tb\"", 1),
+		valid + `; rel="prev"`,
+	}
+	for _, field := range validParameterForms {
+		navigation, err = parseNavigation(http.Header{"Link": {field}}, firstPageSpec, false)
+		if err != nil || navigation.nextCursor == "" || navigation.prevCursor != "" {
+			t.Errorf("valid parameter form %q navigation=%#v err=%v", field, navigation, err)
+		}
+	}
 
 	middleSpec := firstPageSpec
 	middleSpec.currentValue = "3"
@@ -1372,7 +1383,9 @@ func TestParseNavigationRejectsAmbiguousOrUnsafeLinks(t *testing.T) {
 		`<https://api.github.test/user/42/repos?direction=asc&page=1&per_page=10&sort=full_name&type=owner>; rel="next"`,
 		`<https://api.github.test/user/42/repos?direction=asc&page=&per_page=10&sort=full_name&type=owner>; rel="next"`,
 		`<https://api.github.test/user/42/repos?direction=asc&page=2&page=3&per_page=10&sort=full_name&type=owner>; rel="next"`,
-		`<https://api.github.test/user/42/repos?direction=asc&page=2&per_page=10&sort=full_name&type=owner>; rel="next"; rel="prev"`,
+		`<https://api.github.test/user/42/repos?direction=asc&page=2&per_page=10&sort=full_name&type=owner>; bad@=x; rel="next"`,
+		`<https://api.github.test/user/42/repos?direction=asc&page=2&per_page=10&sort=full_name&type=owner>; extension=bad@; rel="next"`,
+		"<https://api.github.test/user/42/repos?direction=asc&page=2&per_page=10&sort=full_name&type=owner>; extension=\"bad\\\x00\"; rel=\"next\"",
 		`<https://api.github.test/user/0042/repos?direction=asc&page=2&per_page=10&sort=full_name&type=owner>; rel="next"`,
 		`<https://api.github.test/user/9007199254740992/repos?direction=asc&page=2&per_page=10&sort=full_name&type=owner>; rel="next"`,
 		`<https://user@api.github.test/user/42/repos?direction=asc&page=2&per_page=10&sort=full_name&type=owner>; rel="next"`,

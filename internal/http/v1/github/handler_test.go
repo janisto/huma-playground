@@ -581,44 +581,45 @@ func TestGitHubCollectionsTraverseThreeProviderPagesThroughFrameworkBoundary(t *
 
 func TestGitHubHandlersRejectInvalidInputsBeforeService(t *testing.T) {
 	tests := []struct {
-		name, target, code, source, leak string
-		status                           int
+		name, target, code, leak string
+		status                   int
+		sourceFree               bool
 	}{
 		{
 			name: "one-character underscore owner", target: "/v1/github/owners/_",
-			status: 422, code: "validation_failed", source: "owner",
+			status: 422, code: "validation_failed", sourceFree: true,
 		},
 		{
 			name: "owner starts hyphen", target: "/v1/github/owners/-bad",
-			status: 422, code: "validation_failed", source: "owner", leak: "-bad",
+			status: 422, code: "validation_failed", sourceFree: true, leak: "-bad",
 		},
 		{
 			name: "owner ends hyphen", target: "/v1/github/owners/bad-",
-			status: 422, code: "validation_failed", source: "owner", leak: "bad-",
+			status: 422, code: "validation_failed", sourceFree: true, leak: "bad-",
 		},
 		{
-			name:   "owner too long",
-			target: "/v1/github/owners/" + strings.Repeat("a", 40),
-			status: 422,
-			code:   "validation_failed",
-			source: "owner",
-			leak:   strings.Repeat("a", 40),
+			name:       "owner too long",
+			target:     "/v1/github/owners/" + strings.Repeat("a", 40),
+			status:     422,
+			code:       "validation_failed",
+			sourceFree: true,
+			leak:       strings.Repeat("a", 40),
 		},
 		{
 			name: "Unicode owner", target: "/v1/github/owners/octoc%C3%A1t",
-			status: 422, code: "validation_failed", source: "owner", leak: "octocát",
+			status: 422, code: "validation_failed", sourceFree: true, leak: "octocát",
 		},
 		{
 			name: "dot repository", target: "/v1/github/repos/octocat/...",
-			status: 422, code: "validation_failed", source: "repo", leak: "...",
+			status: 422, code: "validation_failed", sourceFree: true, leak: "...",
 		},
 		{
 			name: "repository too long", target: "/v1/github/repos/octocat/" + strings.Repeat("a", 101),
-			status: 422, code: "validation_failed", source: "repo", leak: strings.Repeat("a", 101),
+			status: 422, code: "validation_failed", sourceFree: true, leak: strings.Repeat("a", 101),
 		},
 		{
 			name: "Unicode repository", target: "/v1/github/repos/octocat/r%C3%A9po",
-			status: 422, code: "validation_failed", source: "repo", leak: "répo",
+			status: 422, code: "validation_failed", sourceFree: true, leak: "répo",
 		},
 		{
 			name: "query on owner point read", target: "/v1/github/owners/octocat?limit=1",
@@ -768,12 +769,10 @@ func TestGitHubHandlersRejectInvalidInputsBeforeService(t *testing.T) {
 			if body["code"] != test.code || test.leak != "" && strings.Contains(response.Body.String(), test.leak) {
 				t.Fatalf("problem = %s", response.Body.String())
 			}
-			if test.source != "" {
-				issues := objectArray(t, body, "errors")
-				issue := firstObject(t, issues)
-				source, ok := issue["source"].(map[string]any)
-				if !ok || source["parameter"] != test.source || len(source) != 1 {
-					t.Fatalf("unsafe issue source=%#v", issue["source"])
+			if test.sourceFree {
+				issue := firstObject(t, objectArray(t, body, "errors"))
+				if _, present := issue["source"]; present {
+					t.Fatalf("path issue unexpectedly has source=%#v", issue["source"])
 				}
 			}
 			if len(service.calls) != 0 {

@@ -268,7 +268,7 @@ func normalizeValidationIssue(location string) Issue {
 	case "query":
 		return Issue{Detail: "Invalid query parameter", Source: &Source{Parameter: &name}}
 	case "path":
-		return Issue{Detail: "Invalid path parameter", Source: &Source{Parameter: &name}}
+		return Issue{Detail: "Invalid path parameter"}
 	case "header":
 		canonical := http.CanonicalHeaderKey(name)
 		if _, ok := knownSourceNames[canonical]; !ok {

@@ -270,6 +270,8 @@ func TestNegotiationUsesSpecificityQualityAndDeterministicTies(t *testing.T) {
 			ok:     true,
 		},
 		{name: "charset only", accept: "application/json; charset=UTF-8", want: MediaTypeJSONUTF8, ok: true},
+		{name: "whitespace before charset equals", accept: "application/json; charset =UTF-8", ok: false},
+		{name: "whitespace after quality equals", accept: "application/json; q= 1", ok: false},
 		{name: "exact exclusion controls wildcard", accept: "application/json;q=0, */*;q=1", ok: false},
 		{
 			name:   "parameterless exact exclusion controls charset wildcard",
@@ -338,6 +340,10 @@ func TestValidationIssueNormalizationNeverReflectsUnknownInput(t *testing.T) {
 	if known.Source == nil || known.Source.Pointer == nil || *known.Source.Pointer != "/contactEmail" {
 		t.Fatalf("known issue=%#v", known)
 	}
+	path := normalizeValidationIssue("path.owner")
+	if path.Detail != "Invalid path parameter" || path.Source != nil {
+		t.Fatalf("path issue=%#v", path)
+	}
 	unknown := normalizeValidationIssue("body.attacker-secret")
 	encoded, err := json.Marshal(unknown)
 	if err != nil || strings.Contains(string(encoded), "attacker") || unknown.Source != nil {
@@ -401,6 +407,7 @@ func TestRequestPolicyRejectsClosedQueryMediaAndNegotiationBeforeHandler(t *test
 		body                                                string
 		transferEncoding                                    []string
 		unknownLength                                       bool
+		acceptPresent                                       bool
 		want                                                int
 		code                                                Code
 	}{
@@ -435,6 +442,14 @@ func TestRequestPolicyRejectsClosedQueryMediaAndNegotiationBeforeHandler(t *test
 			accept: MediaTypeJSON,
 			want:   422,
 			code:   CodeValidationFailed,
+		},
+		{
+			name:          "present empty Accept",
+			method:        "GET",
+			target:        "/v1/items",
+			acceptPresent: true,
+			want:          406,
+			code:          CodeNotAcceptable,
 		},
 		{
 			name:   "unsupported success",
@@ -503,6 +518,16 @@ func TestRequestPolicyRejectsClosedQueryMediaAndNegotiationBeforeHandler(t *test
 			code:        CodeUnsupportedMediaType,
 		},
 		{
+			name:        "malformed media parameter whitespace",
+			method:      "POST",
+			target:      "/v1/hello",
+			body:        "{}",
+			contentType: "application/json; charset =utf-8",
+			accept:      MediaTypeJSON,
+			want:        415,
+			code:        CodeUnsupportedMediaType,
+		},
+		{
 			name:        "compressed",
 			method:      "POST",
 			target:      "/v1/hello",
@@ -519,6 +544,24 @@ func TestRequestPolicyRejectsClosedQueryMediaAndNegotiationBeforeHandler(t *test
 			target:      "/v1/hello",
 			body:        "{}",
 			contentType: "Application/JSON; Charset=\"UTF-8\"",
+			accept:      MediaTypeJSON,
+			want:        200,
+		},
+		{
+			name:        "accepted JSON empty parameter slots",
+			method:      "POST",
+			target:      "/v1/hello",
+			body:        "{}",
+			contentType: `Application/JSON;; Charset="UTF-8";`,
+			accept:      MediaTypeJSON,
+			want:        200,
+		},
+		{
+			name:        "accepted CBOR empty parameter slots",
+			method:      "POST",
+			target:      "/v1/hello",
+			body:        "{}",
+			contentType: "application/cbor;;",
 			accept:      MediaTypeJSON,
 			want:        200,
 		},
@@ -546,7 +589,7 @@ func TestRequestPolicyRejectsClosedQueryMediaAndNegotiationBeforeHandler(t *test
 			if test.encoding != "" {
 				request.Header.Set("Content-Encoding", test.encoding)
 			}
-			if test.accept != "" {
+			if test.acceptPresent || test.accept != "" {
 				request.Header.Set("Accept", test.accept)
 			}
 			response := httptest.NewRecorder()

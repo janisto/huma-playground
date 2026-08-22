@@ -88,6 +88,7 @@ func requestPolicy(
 				return
 			}
 
+			acceptPresent := len(request.Header.Values("Accept")) > 0
 			originalAccept := AcceptHeader(request.Header)
 			request = request.Clone(WithOriginalAccept(request.Context(), originalAccept))
 
@@ -106,6 +107,10 @@ func requestPolicy(
 				}
 			}
 			if policy.successMedia && !policy.bodyless {
+				if acceptPresent && originalAccept == "" {
+					writePolicyProblem(w, request, CodeNotAcceptable, rejectionMiddleware)
+					return
+				}
 				selected, ok := NegotiateSuccess(originalAccept, policy.jsonOnly)
 				if !ok {
 					writePolicyProblem(w, request, CodeNotAcceptable, rejectionMiddleware)
@@ -283,9 +288,14 @@ func validateRequestRepresentation(request *http.Request) Code {
 		}
 		return ""
 	}
-	if len(contentTypes) != 1 || parseRequestContentType(contentTypes[0]) == "" {
+	if len(contentTypes) != 1 {
 		return CodeUnsupportedMediaType
 	}
+	mediaType := parseRequestContentType(contentTypes[0])
+	if mediaType == "" {
+		return CodeUnsupportedMediaType
+	}
+	request.Header["Content-Type"] = []string{mediaType}
 	return ""
 }
 
@@ -316,22 +326,28 @@ func parseRequestContentType(value string) string {
 	if !valid || len(parts) == 0 {
 		return ""
 	}
-	mediaType := strings.ToLower(strings.TrimSpace(parts[0]))
+	mediaType := strings.ToLower(trimOWS(parts[0]))
+	parameters := make([]string, 0, len(parts)-1)
+	for _, rawParameter := range parts[1:] {
+		if parameter := trimOWS(rawParameter); parameter != "" {
+			parameters = append(parameters, parameter)
+		}
+	}
 	if mediaType == MediaTypeCBOR {
-		if len(parts) == 1 {
+		if len(parameters) == 0 {
 			return mediaType
 		}
 		return ""
 	}
-	if mediaType != MediaTypeJSON || len(parts) > 2 {
+	if mediaType != MediaTypeJSON || len(parameters) > 1 {
 		return ""
 	}
-	if len(parts) == 1 {
+	if len(parameters) == 0 {
 		return mediaType
 	}
-	name, value, found := strings.Cut(strings.TrimSpace(parts[1]), "=")
-	decoded, ok := decodeParameterValue(strings.TrimSpace(value), found)
-	if !ok || !strings.EqualFold(strings.TrimSpace(name), "charset") || !strings.EqualFold(decoded, "utf-8") {
+	name, value, found := strings.Cut(parameters[0], "=")
+	decoded, ok := decodeParameterValue(value, found)
+	if !ok || !strings.EqualFold(name, "charset") || !strings.EqualFold(decoded, "utf-8") {
 		return ""
 	}
 	return mediaType

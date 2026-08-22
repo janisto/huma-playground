@@ -736,6 +736,63 @@ func TestRouterOpenAPIEmitsNegotiatedJSONContentType(t *testing.T) {
 	}
 }
 
+func TestRouterRequestMediaAndEmptyAcceptUseExactProtocolSemantics(t *testing.T) {
+	router := testRouter(t, testConfig(t))
+
+	request := httptest.NewRequestWithContext(
+		t.Context(), http.MethodPost, "/v1/hello", strings.NewReader(`{"name":"Ada"}`),
+	)
+	request.Header.Set("Content-Type", `Application/JSON;; Charset="UTF-8";`)
+	request.Header.Set("Accept", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("empty request-media parameter slots status=%d body=%s", response.Code, response.Body.String())
+	}
+	cborDocument, err := cbor.Marshal(map[string]string{"name": "CBOR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/hello", bytes.NewReader(cborDocument))
+	request.Header.Set("Content-Type", "application/cbor;;")
+	request.Header.Set("Accept", "application/cbor")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/cbor" {
+		t.Fatalf("empty CBOR parameter slots status=%d content-type=%q body=%x",
+			response.Code, response.Header().Get("Content-Type"), response.Body.Bytes())
+	}
+
+	request = httptest.NewRequestWithContext(
+		t.Context(), http.MethodPost, "/v1/hello", strings.NewReader(`{"name":"Ada"}`),
+	)
+	request.Header.Set("Content-Type", "application/json; charset =utf-8")
+	request.Header.Set("Accept", "application/json")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	var mediaProblem struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &mediaProblem); err != nil ||
+		response.Code != http.StatusUnsupportedMediaType || mediaProblem.Code != "unsupported_media_type" {
+		t.Fatalf("invalid media whitespace status=%d problem=%#v err=%v body=%s",
+			response.Code, mediaProblem, err, response.Body.String())
+	}
+
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/hello", nil)
+	request.Header.Set("Accept", "")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	var problem struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil ||
+		response.Code != http.StatusNotAcceptable || problem.Code != "not_acceptable" {
+		t.Fatalf("empty Accept status=%d problem=%#v err=%v body=%s",
+			response.Code, problem, err, response.Body.String())
+	}
+}
+
 func TestAllOpenAPISchemasResolve(t *testing.T) {
 	router := testRouter(t, testConfig(t))
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil)

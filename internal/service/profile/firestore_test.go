@@ -614,6 +614,7 @@ func TestCategorizeError(t *testing.T) {
 func TestClassifyDependencyError(t *testing.T) {
 	for _, code := range []codes.Code{
 		codes.Aborted,
+		codes.Canceled,
 		codes.DeadlineExceeded,
 		codes.ResourceExhausted,
 		codes.Unavailable,

@@ -38,6 +38,9 @@ func parseNavigation(header http.Header, spec providerSpec, emptyPage bool) (nav
 	seen := map[string]bool{"next": false, "prev": false}
 	for _, field := range header.Values("Link") {
 		for _, rawValue := range splitLinkValues(field) {
+			if rawValue == "" {
+				continue
+			}
 			target, relations, anchored, err := parseLinkValue(rawValue)
 			if err != nil {
 				return navigation{}, ErrUpstream
@@ -91,11 +94,11 @@ func splitLinkValues(value string) []string {
 		case value[index] == '>' && !quoted:
 			inTarget = false
 		case value[index] == ',' && !quoted && !inTarget:
-			parts = append(parts, strings.TrimSpace(value[start:index]))
+			parts = append(parts, trimLinkOWS(value[start:index]))
 			start = index + 1
 		}
 	}
-	return append(parts, strings.TrimSpace(value[start:]))
+	return append(parts, trimLinkOWS(value[start:]))
 }
 
 func parseLinkValue(raw string) (string, []string, bool, error) {
@@ -107,25 +110,30 @@ func parseLinkValue(raw string) (string, []string, bool, error) {
 		return "", nil, false, ErrUpstream
 	}
 	target := raw[1:closeIndex]
-	remainder := strings.TrimSpace(raw[closeIndex+1:])
-	if remainder == "" || remainder[0] != ';' {
+	remainder := trimLinkOWS(raw[closeIndex+1:])
+	if remainder == "" {
+		return target, nil, false, nil
+	}
+	if remainder[0] != ';' {
 		return "", nil, false, ErrUpstream
 	}
 	parameters := splitLinkParameters(remainder[1:])
 	var relations []string
 	anchored := false
-	seenParameters := make(map[string]struct{})
+	relSeen := false
 	for _, rawParameter := range parameters {
-		name, rawValue, ok := strings.Cut(strings.TrimSpace(rawParameter), "=")
-		name = strings.ToLower(strings.TrimSpace(name))
-		if !ok || name == "" {
+		name, rawValue, hasValue := strings.Cut(trimLinkOWS(rawParameter), "=")
+		name = strings.ToLower(trimLinkOWS(name))
+		if !isLinkToken(name) {
 			return "", nil, false, ErrUpstream
 		}
-		if _, duplicate := seenParameters[name]; duplicate {
-			return "", nil, false, ErrUpstream
+		if !hasValue {
+			if name == "rel" || name == "anchor" {
+				return "", nil, false, ErrUpstream
+			}
+			continue
 		}
-		seenParameters[name] = struct{}{}
-		value, err := parseLinkParameterValue(strings.TrimSpace(rawValue))
+		value, err := parseLinkParameterValue(trimLinkOWS(rawValue))
 		if err != nil {
 			return "", nil, false, ErrUpstream
 		}
@@ -133,9 +141,15 @@ func parseLinkValue(raw string) (string, []string, bool, error) {
 		case "anchor":
 			anchored = true
 		case "rel":
-			for relation := range strings.FieldsSeq(strings.ToLower(value)) {
-				relations = append(relations, relation)
+			if relSeen {
+				continue
 			}
+			relSeen = true
+			parsed, err := parseLinkRelations(value)
+			if err != nil {
+				return "", nil, false, ErrUpstream
+			}
+			relations = parsed
 		}
 	}
 	return target, relations, anchored, nil
@@ -165,7 +179,7 @@ func parseLinkParameterValue(value string) (string, error) {
 		return "", ErrUpstream
 	}
 	if value[0] != '"' {
-		if strings.ContainsAny(value, " \t,;") {
+		if !isLinkToken(value) {
 			return "", ErrUpstream
 		}
 		return value, nil
@@ -178,6 +192,9 @@ func parseLinkParameterValue(value string) (string, error) {
 	for index := 1; index < len(value)-1; index++ {
 		character := value[index]
 		if escaped {
+			if !isLinkQuotedPairCharacter(character) {
+				return "", ErrUpstream
+			}
 			decoded.WriteByte(character)
 			escaped = false
 			continue
@@ -186,7 +203,7 @@ func parseLinkParameterValue(value string) (string, error) {
 			escaped = true
 			continue
 		}
-		if character == '"' || character < 0x20 || character == 0x7f {
+		if !isLinkQuotedText(character) {
 			return "", ErrUpstream
 		}
 		decoded.WriteByte(character)
@@ -195,6 +212,73 @@ func parseLinkParameterValue(value string) (string, error) {
 		return "", ErrUpstream
 	}
 	return decoded.String(), nil
+}
+
+func parseLinkRelations(value string) ([]string, error) {
+	if value == "" || value[0] == ' ' || value[len(value)-1] == ' ' || strings.ContainsAny(value, "\t\r\n") {
+		return nil, ErrUpstream
+	}
+	relations := make([]string, 0, 2)
+	for rawRelation := range strings.FieldsFuncSeq(value, func(character rune) bool { return character == ' ' }) {
+		relation := strings.ToLower(rawRelation)
+		if !validLinkRelation(relation) {
+			return nil, ErrUpstream
+		}
+		relations = append(relations, relation)
+	}
+	return relations, nil
+}
+
+func validLinkRelation(value string) bool {
+	if value == "" {
+		return false
+	}
+	registered := value[0] >= 'a' && value[0] <= 'z'
+	for _, character := range []byte(value[1:]) {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' ||
+			character == '.' || character == '-' {
+			continue
+		}
+		registered = false
+		break
+	}
+	if registered {
+		return true
+	}
+	for _, character := range []byte(value) {
+		if character < 0x21 || character > 0x7e {
+			return false
+		}
+	}
+	parsed, err := url.Parse(value)
+	return err == nil && parsed.IsAbs()
+}
+
+func isLinkToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range []byte(value) {
+		if character >= '0' && character <= '9' || character >= 'A' && character <= 'Z' ||
+			character >= 'a' && character <= 'z' || strings.ContainsRune("!#$%&'*+-.^_`|~", rune(character)) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isLinkQuotedText(character byte) bool {
+	return character == '\t' || character == ' ' || character == '!' ||
+		character >= 0x23 && character <= 0x5b || character >= 0x5d && character <= 0x7e || character >= 0x80
+}
+
+func isLinkQuotedPairCharacter(character byte) bool {
+	return character == '\t' || character == ' ' || character >= 0x21 && character <= 0x7e || character >= 0x80
+}
+
+func trimLinkOWS(value string) string {
+	return strings.Trim(value, " \t")
 }
 
 func validateLinkTarget(target, relation string, spec providerSpec) (string, error) {

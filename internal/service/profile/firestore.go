@@ -61,7 +61,7 @@ func classifyDependencyError(err error) error {
 		return errors.Join(ErrUnavailable, err)
 	}
 	switch status.Code(err) {
-	case codes.Aborted, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Unavailable:
+	case codes.Aborted, codes.Canceled, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Unavailable:
 		return errors.Join(ErrUnavailable, err)
 	default:
 		return err
