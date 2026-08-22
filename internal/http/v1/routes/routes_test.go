@@ -2,245 +2,258 @@ package routes
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/danielgtaylor/huma/v2/adapters/humachi"
-	_ "github.com/danielgtaylor/huma/v2/formats/cbor"
+	humachi "github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/janisto/huma-observability/v2"
 
 	"github.com/janisto/huma-playground/internal/platform/auth"
+	"github.com/janisto/huma-playground/internal/platform/pagination"
+	"github.com/janisto/huma-playground/internal/platform/portable"
 	githubsvc "github.com/janisto/huma-playground/internal/service/github"
 	profilesvc "github.com/janisto/huma-playground/internal/service/profile"
 )
 
-type stubVerifier struct {
-	User  *auth.FirebaseUser
-	Error error
+type routeVerifier struct {
+	mu    sync.Mutex
+	calls int
 }
 
-func (v *stubVerifier) Verify(context.Context, string) (*auth.FirebaseUser, error) {
-	return v.User, v.Error
+func (verifier *routeVerifier) Verify(context.Context, string) (*auth.FirebaseUser, error) {
+	verifier.mu.Lock()
+	defer verifier.mu.Unlock()
+	verifier.calls++
+	return &auth.FirebaseUser{UID: "principal-a"}, nil
 }
 
-func testUser() *auth.FirebaseUser {
-	return &auth.FirebaseUser{UID: "test-user-123", Email: "test@example.com", EmailVerified: true}
+func (verifier *routeVerifier) count() int {
+	verifier.mu.Lock()
+	defer verifier.mu.Unlock()
+	return verifier.calls
 }
 
-type mockProfileService struct{}
+type routeProfileStore struct {
+	mu         sync.Mutex
+	calls      int
+	principals []string
+}
 
-type mockGitHubService struct{}
+func (store *routeProfileStore) record(principal string) *profilesvc.Profile {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.calls++
+	store.principals = append(store.principals, principal)
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	return &profilesvc.Profile{
+		ID: principal, FirstName: "Ada", LastName: "Lovelace",
+		ContactEmail: "Ada@example.com", PhoneNumber: "+358401234567",
+		TermsAccepted: true, CreatedAt: now, UpdatedAt: now,
+	}
+}
 
-func (mockGitHubService) GetOwner(context.Context, string) (*githubsvc.Owner, error) {
-	return &githubsvc.Owner{
-		Login:     "octocat",
-		CreatedAt: time.Date(2011, 1, 25, 18, 44, 36, 0, time.UTC),
-		UpdatedAt: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+func (store *routeProfileStore) Create(
+	_ context.Context,
+	principal string,
+	_ profilesvc.CreateParams,
+) (*profilesvc.Profile, error) {
+	return store.record(principal), nil
+}
+
+func (store *routeProfileStore) Get(_ context.Context, principal string) (*profilesvc.Profile, error) {
+	return store.record(principal), nil
+}
+
+func (store *routeProfileStore) Update(
+	_ context.Context,
+	principal string,
+	_ profilesvc.UpdateParams,
+) (*profilesvc.Profile, error) {
+	return store.record(principal), nil
+}
+
+func (store *routeProfileStore) Delete(_ context.Context, principal string) error {
+	store.record(principal)
+	return nil
+}
+
+func (store *routeProfileStore) count() int {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.calls
+}
+
+type routeGitHubService struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (service *routeGitHubService) record() {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	service.calls++
+}
+
+func (service *routeGitHubService) GetOwner(context.Context, string) (githubsvc.Owner, error) {
+	service.record()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	return githubsvc.Owner{
+		ID: 1, Login: "octocat", Type: "User", AvatarURL: "https://avatars.example/1",
+		HTMLURL: "https://github.com/octocat", CreatedAt: now, UpdatedAt: now,
 	}, nil
 }
 
-func (mockGitHubService) ListRepos(context.Context, string) ([]githubsvc.RepoSummary, error) {
-	return []githubsvc.RepoSummary{}, nil
+func (service *routeGitHubService) ListOwnerRepositories(
+	context.Context,
+	string,
+	int,
+	*pagination.Cursor,
+) (githubsvc.Page[githubsvc.RepositorySummary], error) {
+	service.record()
+	return githubsvc.Page[githubsvc.RepositorySummary]{Entries: []githubsvc.RepositorySummary{}}, nil
 }
 
-func (mockGitHubService) GetRepo(context.Context, string, string) (*githubsvc.Repo, error) {
-	return &githubsvc.Repo{RepoSummary: githubsvc.RepoSummary{
-		Name:      "git-consortium",
-		FullName:  "octocat/git-consortium",
-		CreatedAt: time.Date(2011, 1, 25, 18, 44, 36, 0, time.UTC),
-		UpdatedAt: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
-	}}, nil
+func (service *routeGitHubService) GetRepository(context.Context, string, string) (githubsvc.Repository, error) {
+	service.record()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	return githubsvc.Repository{
+		RepositorySummary: githubsvc.RepositorySummary{
+			ID: 1, Name: "repo", FullName: "octocat/repo", HTMLURL: "https://github.com/octocat/repo",
+		},
+		CreatedAt: now, UpdatedAt: now, DefaultBranch: "main", Topics: []string{},
+	}, nil
 }
 
-func (mockGitHubService) ListActivity(
+func (service *routeGitHubService) ListRepositoryActivity(
 	context.Context,
 	string,
 	string,
 	int,
+	*pagination.Cursor,
+) (githubsvc.Page[githubsvc.Activity], error) {
+	service.record()
+	return githubsvc.Page[githubsvc.Activity]{Entries: []githubsvc.Activity{}}, nil
+}
+
+func (service *routeGitHubService) ListRepositoryLanguages(
+	context.Context,
 	string,
-) (*githubsvc.ActivityPage, error) {
-	return &githubsvc.ActivityPage{Activities: []githubsvc.Activity{}}, nil
+	string,
+) ([]githubsvc.Language, error) {
+	service.record()
+	return []githubsvc.Language{}, nil
 }
 
-func (mockGitHubService) ListLanguages(context.Context, string, string) (map[string]int64, error) {
-	return map[string]int64{}, nil
+func (service *routeGitHubService) ListRepositoryTags(
+	context.Context,
+	string,
+	string,
+	int,
+	*pagination.Cursor,
+) (githubsvc.Page[githubsvc.Tag], error) {
+	service.record()
+	return githubsvc.Page[githubsvc.Tag]{Entries: []githubsvc.Tag{}}, nil
 }
 
-func (mockGitHubService) ListTags(context.Context, string, string) ([]githubsvc.Tag, error) {
-	return []githubsvc.Tag{}, nil
+func (service *routeGitHubService) count() int {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	return service.calls
 }
 
-func (m *mockProfileService) Create(
-	_ context.Context,
-	userID string,
-	params profilesvc.CreateParams,
-) (*profilesvc.Profile, error) {
-	now := time.Now().UTC()
-	return &profilesvc.Profile{
-		ID:           userID,
-		FirstName:    params.FirstName,
-		LastName:     params.LastName,
-		ContactEmail: params.ContactEmail,
-		PhoneNumber:  params.PhoneNumber,
-		Marketing:    params.Marketing,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}, nil
-}
-
-func (m *mockProfileService) Get(_ context.Context, userID string) (*profilesvc.Profile, error) {
-	return &profilesvc.Profile{
-		ID:           userID,
-		FirstName:    "Test",
-		LastName:     "User",
-		ContactEmail: "test@example.com",
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
-	}, nil
-}
-
-func (m *mockProfileService) Update(
-	_ context.Context,
-	userID string,
-	_ profilesvc.UpdateParams,
-) (*profilesvc.Profile, error) {
-	return &profilesvc.Profile{
-		ID:           userID,
-		FirstName:    "Updated",
-		LastName:     "User",
-		ContactEmail: "test@example.com",
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
-	}, nil
-}
-
-func (m *mockProfileService) Delete(_ context.Context, _ string) error {
-	return nil
-}
-
-func newTestRouter() chi.Router {
+func routeTestRouter(
+	t *testing.T,
+	verifier auth.Verifier,
+	profiles profilesvc.Store,
+	github githubsvc.Service,
+) http.Handler {
+	t.Helper()
+	portable.ConfigureHuma()
+	config := huma.DefaultConfig("Routes test", "test")
+	config.DocsPath = ""
+	config.OpenAPIPath = ""
+	config.SchemasPath = ""
+	config.CreateHooks = nil
+	config.Transformers = nil
+	config.Formats = portable.Formats()
+	config.DefaultFormat = portable.MediaTypeJSON
+	config.NoFormatFallback = true
 	router := chi.NewRouter()
-	router.Use(
-		chimiddleware.ClientIPFromRemoteAddr,
-	)
-	api := humachi.New(router, huma.DefaultConfig("RoutesTest", "test"))
-	api.UseMiddleware(obs.RequestContext(obs.RequestContextConfig{}))
-	api.UseMiddleware(obs.AccessLogger(obs.AccessLoggerConfig{}))
-	verifier := &stubVerifier{User: testUser()}
-	profileService := &mockProfileService{}
-	githubService := mockGitHubService{}
-	Register(api, "/v1", verifier, profileService, githubService)
+	router.Use(portable.RequestPolicy("/v1"))
+	api := humachi.New(router, config)
+	Register(api, "/v1", verifier, profiles, github)
 	return router
 }
 
-func TestRegisterRoutesHello(t *testing.T) {
-	router := newTestRouter()
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/hello", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "routes-hello")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.Code)
+func TestPublicRoutesNeverInvokeProfileAuthenticationOrPersistence(t *testing.T) {
+	verifier := &routeVerifier{}
+	profiles := &routeProfileStore{}
+	github := &routeGitHubService{}
+	router := routeTestRouter(t, verifier, profiles, github)
+	tests := []struct {
+		method, target, body string
+	}{
+		{method: "GET", target: "/v1/hello"},
+		{method: "POST", target: "/v1/hello", body: `{"name":"Ada"}`},
+		{method: "GET", target: "/v1/items?limit=1"},
+		{method: "GET", target: "/v1/github/owners/octocat"},
+		{method: "GET", target: "/v1/github/owners/octocat/repos"},
+		{method: "GET", target: "/v1/github/repos/octocat/repo"},
+		{method: "GET", target: "/v1/github/repos/octocat/repo/activity"},
+		{method: "GET", target: "/v1/github/repos/octocat/repo/languages"},
+		{method: "GET", target: "/v1/github/repos/octocat/repo/tags"},
+	}
+	for _, test := range tests {
+		request := httptest.NewRequestWithContext(t.Context(), test.method, test.target, strings.NewReader(test.body))
+		request.Header.Set("Accept", "application/json")
+		request.Header.Set("Authorization", "Bearer token-that-must-be-ignored")
+		if test.body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Errorf("%s %s status=%d body=%s", test.method, test.target, response.Code, response.Body.String())
+		}
+	}
+	if verifier.count() != 0 || profiles.count() != 0 {
+		t.Fatalf("public route side effects: verifier=%d profiles=%d", verifier.count(), profiles.count())
+	}
+	if github.count() != 6 {
+		t.Fatalf("GitHub calls=%d want=6", github.count())
 	}
 }
 
-func TestRegisterRoutesItems(t *testing.T) {
-	router := newTestRouter()
+func TestProfileRouteRequiresAuthThenUsesVerifiedPrincipal(t *testing.T) {
+	verifier := &routeVerifier{}
+	profiles := &routeProfileStore{}
+	router := routeTestRouter(t, verifier, profiles, &routeGitHubService{})
 
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/items", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "routes-items")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.Code)
-	}
-}
-
-func TestRegisterRoutesProfileGet(t *testing.T) {
-	router := newTestRouter()
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/profile", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-get")
-	req.Header.Set("Authorization", "Bearer valid-token")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.Code)
-	}
-}
-
-func TestRegisterRoutesProfileUnauthorized(t *testing.T) {
-	router := newTestRouter()
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/profile", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-noauth")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", resp.Code)
+	missing := httptest.NewRecorder()
+	router.ServeHTTP(missing, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/profile", nil))
+	if missing.Code != http.StatusUnauthorized || missing.Header().Get("WWW-Authenticate") != "Bearer" ||
+		verifier.count() != 0 || profiles.count() != 0 {
+		t.Fatalf("missing auth status=%d verifier=%d profiles=%d body=%s",
+			missing.Code, verifier.count(), profiles.count(), missing.Body.String())
 	}
 
-	var problem huma.ErrorModel
-	if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-		t.Fatalf("failed to unmarshal problem: %v", err)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/profile", nil)
+	request.Header.Set("Authorization", "Bearer token-a")
+	request.Header.Set("Accept", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || verifier.count() != 1 || profiles.count() != 1 {
+		t.Fatalf("status=%d verifier=%d profiles=%d body=%s",
+			response.Code, verifier.count(), profiles.count(), response.Body.String())
 	}
-	if problem.Status != http.StatusUnauthorized {
-		t.Fatalf("expected status 401, got %d", problem.Status)
-	}
-}
-
-func TestRegisterRoutesProfileDelete(t *testing.T) {
-	router := newTestRouter()
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/profile", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "routes-profile-delete")
-	req.Header.Set("Authorization", "Bearer valid-token")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d", resp.Code)
-	}
-}
-
-func TestRegisterRoutesGitHubOwner(t *testing.T) {
-	router := newTestRouter()
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/github/owners/octocat", nil)
-	req.Header.Set(chimiddleware.RequestIDHeader, "routes-github-owner")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.Code)
-	}
-}
-
-func TestRegisterRoutesGitHubRepo(t *testing.T) {
-	router := newTestRouter()
-
-	req := httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"/github/repos/octocat/git-consortium",
-		nil,
-	)
-	req.Header.Set(chimiddleware.RequestIDHeader, "routes-github-repo")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.Code)
+	profiles.mu.Lock()
+	defer profiles.mu.Unlock()
+	if len(profiles.principals) != 1 || profiles.principals[0] != "principal-a" {
+		t.Fatalf("principals=%v", profiles.principals)
 	}
 }

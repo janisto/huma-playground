@@ -1,265 +1,119 @@
 package pagination
 
 import (
-	"fmt"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-type testItem struct {
-	ID   string
-	Name string
-}
+type testItem struct{ id string }
 
-func TestPaginateFirstPage(t *testing.T) {
-	items := makeTestItems(30)
-
-	result := Paginate(
-		items,
-		Cursor{},
-		10,
-		"test",
-		func(i testItem) string { return i.ID },
-		"/items",
-		nil,
-	)
-
-	if len(result.Items) != 10 {
-		t.Fatalf("expected 10 items, got %d", len(result.Items))
-	}
-	if result.Total != 30 {
-		t.Fatalf("expected total 30, got %d", result.Total)
-	}
-	if result.Items[0].ID != "item-001" {
-		t.Fatalf("expected first item to be item-001, got %s", result.Items[0].ID)
-	}
-	if result.NextCursor == "" {
-		t.Fatal("expected next cursor")
-	}
-	if result.PrevCursor != "" {
-		t.Fatalf("expected no prev cursor, got %s", result.PrevCursor)
-	}
-}
-
-func TestPaginateMiddlePage(t *testing.T) {
-	items := makeTestItems(30)
-
-	cursor := Cursor{Type: "test", Value: "item-010"}
-	result := Paginate(
-		items,
-		cursor,
-		10,
-		"test",
-		func(i testItem) string { return i.ID },
-		"/items",
-		nil,
-	)
-
-	if len(result.Items) != 10 {
-		t.Fatalf("expected 10 items, got %d", len(result.Items))
-	}
-	if result.Items[0].ID != "item-011" {
-		t.Fatalf("expected first item to be item-011, got %s", result.Items[0].ID)
-	}
-	if result.NextCursor == "" {
-		t.Fatal("expected next cursor")
-	}
-	if result.PrevCursor == "" {
-		t.Fatal("expected prev cursor")
-	}
-}
-
-func TestPaginateLastPage(t *testing.T) {
-	items := makeTestItems(30)
-
-	cursor := Cursor{Type: "test", Value: "item-020"}
-	result := Paginate(
-		items,
-		cursor,
-		10,
-		"test",
-		func(i testItem) string { return i.ID },
-		"/items",
-		nil,
-	)
-
-	if len(result.Items) != 10 {
-		t.Fatalf("expected 10 items, got %d", len(result.Items))
-	}
-	if result.Items[0].ID != "item-021" {
-		t.Fatalf("expected first item to be item-021, got %s", result.Items[0].ID)
-	}
-	if result.NextCursor != "" {
-		t.Fatalf("expected no next cursor, got %s", result.NextCursor)
-	}
-	if result.PrevCursor == "" {
-		t.Fatal("expected prev cursor")
-	}
-}
-
-func TestPaginateEmptyItems(t *testing.T) {
-	var items []testItem
-
-	result := Paginate(
-		items,
-		Cursor{},
-		10,
-		"test",
-		func(i testItem) string { return i.ID },
-		"/items",
-		nil,
-	)
-
-	if len(result.Items) != 0 {
-		t.Fatalf("expected 0 items, got %d", len(result.Items))
-	}
-	if result.Total != 0 {
-		t.Fatalf("expected total 0, got %d", result.Total)
-	}
-	if result.NextCursor != "" {
-		t.Fatalf("expected no next cursor, got %s", result.NextCursor)
-	}
-	if result.PrevCursor != "" {
-		t.Fatalf("expected no prev cursor, got %s", result.PrevCursor)
-	}
-}
-
-func TestPaginateWithQueryParams(t *testing.T) {
-	items := makeTestItems(30)
-
-	query := url.Values{}
-	query.Set("category", "electronics")
-
-	result := Paginate(
-		items,
-		Cursor{},
-		10,
-		"test",
-		func(i testItem) string { return i.ID },
-		"/items",
-		query,
-	)
-
-	if result.LinkHeader == "" {
-		t.Fatal("expected link header")
-	}
-	if !strings.Contains(result.LinkHeader, "category=electronics") {
-		t.Fatalf("expected category in link header, got %s", result.LinkHeader)
-	}
-	if !strings.Contains(result.LinkHeader, "limit=10") {
-		t.Fatalf("expected limit in link header, got %s", result.LinkHeader)
-	}
-}
-
-func TestPaginateCursorNotFound(t *testing.T) {
-	items := makeTestItems(10)
-
-	cursor := Cursor{Type: "test", Value: "nonexistent"}
-	result := Paginate(
-		items,
-		cursor,
-		10,
-		"test",
-		func(i testItem) string { return i.ID },
-		"/items",
-		nil,
-	)
-
-	if len(result.Items) != 10 {
-		t.Fatalf("expected 10 items when cursor not found (starts from beginning), got %d", len(result.Items))
-	}
-	if result.Items[0].ID != "item-001" {
-		t.Fatalf("expected to start from beginning, got %s", result.Items[0].ID)
-	}
-}
-
-func TestPaginatePrevCursorFirstPage(t *testing.T) {
-	items := makeTestItems(30)
-
-	cursor := Cursor{Type: "test", Value: "item-010"}
-	result := Paginate(
-		items,
-		cursor,
-		10,
-		"test",
-		func(i testItem) string { return i.ID },
-		"/items",
-		nil,
-	)
-
-	if result.PrevCursor == "" {
-		t.Fatal("expected prev cursor for page 2")
-	}
-
-	prevDecoded, err := DecodeCursor(result.PrevCursor)
-	if err != nil {
-		t.Fatalf("failed to decode prev cursor: %v", err)
-	}
-	if prevDecoded.Value != "" {
-		t.Fatalf("expected empty prev cursor value for going back to page 1, got %s", prevDecoded.Value)
-	}
-}
-
-func TestPaginatePrevCursorThirdPage(t *testing.T) {
-	items := makeTestItems(30)
-
-	cursor := Cursor{Type: "test", Value: "item-020"}
-	result := Paginate(
-		items,
-		cursor,
-		10,
-		"test",
-		func(i testItem) string { return i.ID },
-		"/items",
-		nil,
-	)
-
-	if result.PrevCursor == "" {
-		t.Fatal("expected prev cursor for page 3")
-	}
-
-	prevDecoded, err := DecodeCursor(result.PrevCursor)
-	if err != nil {
-		t.Fatalf("failed to decode prev cursor: %v", err)
-	}
-	if prevDecoded.Value != "item-010" {
-		t.Fatalf("expected prev cursor to point to item-010, got %s", prevDecoded.Value)
-	}
-}
-
-func TestPaginateLimitLargerThanItems(t *testing.T) {
-	items := makeTestItems(5)
-
-	result := Paginate(
-		items,
-		Cursor{},
-		20,
-		"test",
-		func(i testItem) string { return i.ID },
-		"/items",
-		nil,
-	)
-
-	if len(result.Items) != 5 {
-		t.Fatalf("expected 5 items, got %d", len(result.Items))
-	}
-	if result.NextCursor != "" {
-		t.Fatalf("expected no next cursor, got %s", result.NextCursor)
-	}
-	if result.PrevCursor != "" {
-		t.Fatalf("expected no prev cursor, got %s", result.PrevCursor)
-	}
-}
-
-func makeTestItems(count int) []testItem {
+func testItems(count int) []testItem {
 	items := make([]testItem, count)
-	for i := range count {
-		n := i + 1
-		items[i] = testItem{
-			ID:   fmt.Sprintf("item-%03d", n),
-			Name: fmt.Sprintf("Item %03d", n),
-		}
+	for index := range items {
+		items[index].id = "item-" + strconv.Itoa(index+1)
 	}
 	return items
+}
+
+func paginateTestItems(items []testItem, cursor Cursor, limit int, filter string) Result[testItem] {
+	query := url.Values{}
+	if filter != "" {
+		query.Set("category", filter)
+	}
+	return Paginate(items, cursor, limit, "listItems", filter, func(item testItem) string {
+		return item.id
+	}, "/v1/items", query)
+}
+
+func TestPaginateTraversesThreePagesForwardAndBackwardWithoutLoss(t *testing.T) {
+	t.Parallel()
+	items := testItems(25)
+	first := paginateTestItems(items, Cursor{}, 10, "")
+	assertIDs(t, first.Items, 1, 10)
+	if first.PrevCursor != "" || first.NextCursor == "" {
+		t.Fatalf("first navigation = next %q prev %q", first.NextCursor, first.PrevCursor)
+	}
+
+	secondCursor := mustDecode(t, first.NextCursor)
+	second := paginateTestItems(items, secondCursor, 10, "")
+	assertIDs(t, second.Items, 11, 20)
+	if second.NextCursor == "" || second.PrevCursor == "" {
+		t.Fatalf("middle navigation = next %q prev %q", second.NextCursor, second.PrevCursor)
+	}
+
+	third := paginateTestItems(items, mustDecode(t, second.NextCursor), 10, "")
+	assertIDs(t, third.Items, 21, 25)
+	if third.NextCursor != "" || third.PrevCursor == "" {
+		t.Fatalf("terminal navigation = next %q prev %q", third.NextCursor, third.PrevCursor)
+	}
+
+	backToSecond := paginateTestItems(items, mustDecode(t, third.PrevCursor), 10, "")
+	assertIDs(t, backToSecond.Items, 11, 20)
+	backToFirst := paginateTestItems(items, mustDecode(t, backToSecond.PrevCursor), 10, "")
+	assertIDs(t, backToFirst.Items, 1, 10)
+
+	forward := append(append(slices.Clone(first.Items), second.Items...), third.Items...)
+	if !slices.Equal(forward, items) {
+		t.Fatalf("forward traversal = %#v, want %#v", forward, items)
+	}
+}
+
+func TestPaginateFiltersBeforeBuildingScopedNavigation(t *testing.T) {
+	t.Parallel()
+	items := testItems(3)
+	result := paginateTestItems(items, Cursor{}, 2, "tools")
+	if result.Total != 3 || len(result.Items) != 2 {
+		t.Fatalf("result = %#v", result)
+	}
+	if !strings.Contains(result.LinkHeader, "category=tools") || !strings.Contains(result.LinkHeader, "limit=2") {
+		t.Fatalf("Link = %q", result.LinkHeader)
+	}
+	cursor := mustDecode(t, result.NextCursor)
+	if cursor.Operation != "listItems" || cursor.Filter != "tools" || cursor.Limit != 2 ||
+		cursor.Direction != "next" || cursor.Anchor != "item-2" {
+		t.Fatalf("next cursor = %#v", cursor)
+	}
+}
+
+func TestPaginateSingleAndEmptyPagesOmitNavigation(t *testing.T) {
+	t.Parallel()
+	for name, items := range map[string][]testItem{"empty": {}, "single": {{id: "one"}}} {
+		t.Run(name, func(t *testing.T) {
+			result := paginateTestItems(items, Cursor{}, 20, "")
+			if result.LinkHeader != "" || result.NextCursor != "" || result.PrevCursor != "" {
+				t.Fatalf("unexpected navigation %#v", result)
+			}
+		})
+	}
+}
+
+func TestPaginateMaximumLimitDoesNotOverrun(t *testing.T) {
+	t.Parallel()
+	result := paginateTestItems(testItems(101), Cursor{}, 100, "")
+	if len(result.Items) != 100 || result.NextCursor == "" {
+		t.Fatalf("maximum page = %#v", result)
+	}
+}
+
+func mustDecode(t *testing.T, value string) Cursor {
+	t.Helper()
+	cursor, err := DecodeCursor(value)
+	if err != nil {
+		t.Fatalf("decode cursor: %v", err)
+	}
+	return cursor
+}
+
+func assertIDs(t *testing.T, items []testItem, first, last int) {
+	t.Helper()
+	want := make([]testItem, last-first+1)
+	for index := range want {
+		want[index].id = "item-" + strconv.Itoa(first+index)
+	}
+	if !slices.Equal(items, want) {
+		t.Fatalf("items = %#v, want %#v", items, want)
+	}
 }

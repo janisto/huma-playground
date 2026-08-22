@@ -1,6 +1,6 @@
 ---
 name: openapi-contract
-description: Maintain and verify huma-playground runtime-generated OpenAPI 3.1, Huma operation metadata and schemas, Problem Details media types, bearer security, schema links, and Stoplight Elements when routes, models, errors, or API documentation change.
+description: Maintain and verify huma-playground runtime-generated OpenAPI 3.1 and its canonical root discovery route when operations, models, errors, security, media types, or API documentation change.
 ---
 
 # OpenAPI contract maintenance
@@ -13,11 +13,12 @@ documentation integration.
 The public contract has four connected parts:
 
 1. Huma operation metadata and model tags define paths, operations, validation, schemas, responses, and errors.
-2. `cmd/server/application.go` configures the `/v1` server prefix, runtime OpenAPI routes, Stoplight Elements, bearer
-   security, and JSON/CBOR media types.
-3. Huma serves OpenAPI JSON/YAML and component schemas at runtime; no generated specification is committed.
-4. `cmd/server/main_test.go` verifies routes, media types, security, prefix behavior, and every advertised component
-   schema link.
+2. `cmd/server/application.go` configures the `/v1` server prefix, disables Huma's bundled documentation surfaces,
+   mounts the runtime-generated document at the canonical root `/openapi.json`, and configures bearer security and
+   JSON/CBOR media types.
+3. Huma builds the OpenAPI document in memory; no generated specification or standalone schema is committed.
+4. `cmd/server/main_test.go` verifies the canonical discovery route, media types, security, prefix behavior, exact
+   operation inventory, and every same-document component reference.
 
 Do not add a parallel generator, hand-maintained specification, or runtime filesystem dependency for the contract.
 
@@ -32,8 +33,10 @@ Do not add a parallel generator, hand-maintained specification, or runtime files
 - Use `doc` tags on public fields and representative `example` tags where useful.
 - Keep examples consistent with camelCase JSON names and UTC millisecond timestamps.
 - Keep JSON and CBOR request/success content aligned with actual Huma formats.
-- Ensure error responses expose `application/problem+json` and `application/problem+cbor`.
-- Preserve Huma `$schema` fields and `describedBy` links that resolve beneath the configured API prefix.
+- Ensure error responses expose `application/problem+json` and ordinary `application/cbor`; do not advertise
+  `application/problem+cbor`.
+- Keep every reachable `$ref` as a resolvable same-document fragment. Do not inject `$schema` response members or
+  `describedBy` links to optional standalone-schema routes.
 
 If a systematic contract correction is required, update the Huma configuration hook in `cmd/server/application.go`
 and its tests rather than patching a serialized document.
@@ -44,7 +47,7 @@ and its tests rather than patching a serialized document.
 2. Update operation metadata or model tags.
 3. Add focused handler tests for changed status, media type, validation, security, or headers.
 4. Add cross-cutting assertions in `cmd/server/main_test.go` when an invariant spans operations or mounted routes.
-5. Start the composed application or use its test router and inspect `/v1/openapi.json` plus affected schemas.
+5. Start the composed application or use its test router and inspect `/openapi.json` plus affected component schemas.
 6. Reject unrelated schema churn, duplicate IDs, missing statuses, incorrect security, broken links, or media types that
    disagree with runtime negotiation.
 7. Run `just build`, `just test`, and `just lint`; use `just check` when shared tooling or both modules are in scope.
@@ -58,6 +61,8 @@ and its tests rather than patching a serialized document.
 - Documented errors use both Problem Details media types.
 - Every documented error is reachable; bodyless GET operations do not advertise request-body-only 413 or 415 errors.
 - 201 responses document `Location`; paginated 200 responses document `Link`.
-- All component schema URLs and response `describedBy` links resolve.
-- Stoplight Elements remains at `/v1/api-docs` and OpenAPI JSON/YAML routes remain available.
-- Untrusted forwarding headers cannot change schema origins or links.
+- Every reachable `$ref` is local to `/openapi.json` and resolves within that document.
+- `/openapi.json` is the only required discovery route. Do not restore `/v1/api-docs`, versioned JSON/YAML aliases,
+  or standalone schema routes as compatibility surfaces; any future optional documentation UI needs its own reviewed
+  route, security policy, and tests.
+- Untrusted forwarding headers cannot change document content or introduce external schema references.

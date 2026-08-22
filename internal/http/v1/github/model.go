@@ -1,70 +1,81 @@
 package github
 
-import (
-	"github.com/janisto/huma-playground/internal/platform/timeutil"
-)
+import "github.com/janisto/huma-playground/internal/platform/timeutil"
 
-// Owner represents a GitHub user or organization.
+// Owner is the exact public GitHub owner projection.
 type Owner struct {
-	Login     string        `json:"login"     doc:"GitHub username"     example:"octocat"`
-	Name      string        `json:"name"      doc:"Display name"        example:"The Octocat"`
-	AvatarURL string        `json:"avatarUrl" doc:"Avatar image URL"    example:"https://avatars.githubusercontent.com/u/583231"`
-	HTMLURL   string        `json:"htmlUrl"   doc:"GitHub profile URL"  example:"https://github.com/octocat"`
-	Bio       string        `json:"bio"       doc:"Profile biography"   example:""`
-	Location  string        `json:"location"  doc:"Geographic location" example:"San Francisco"`
-	Blog      string        `json:"blog"      doc:"Blog URL"            example:"https://github.blog"`
-	Company   string        `json:"company"   doc:"Company name"        example:"@github"`
-	CreatedAt timeutil.Time `json:"createdAt" doc:"Account creation"    example:"2011-01-25T18:44:36.000Z"                       format:"date-time"`
-	UpdatedAt timeutil.Time `json:"updatedAt" doc:"Last profile update" example:"2024-06-01T00:00:00.000Z"                       format:"date-time"`
+	ID          uint64        `json:"id"          minimum:"0" maximum:"9007199254740991" example:"583231"`
+	Login       string        `json:"login"                                              example:"octocat"                                        minLength:"1"`
+	Type        string        `json:"type"                                               example:"User"                                           minLength:"1"`
+	Name        *string       `json:"name"                                               example:"The Octocat"                                                  nullable:"true"`
+	AvatarURL   string        `json:"avatarUrl"                                          example:"https://avatars.githubusercontent.com/u/583231"                               format:"uri"`
+	HTMLURL     string        `json:"htmlUrl"                                            example:"https://github.com/octocat"                                                   format:"uri"`
+	Company     *string       `json:"company"                                            example:"@github"                                                      nullable:"true"`
+	Blog        *string       `json:"blog"                                               example:"https://github.blog"                                          nullable:"true"`
+	Location    *string       `json:"location"                                           example:"San Francisco"                                                nullable:"true"`
+	Bio         *string       `json:"bio"                                                example:"Public example biography"                                     nullable:"true"`
+	PublicRepos uint64        `json:"publicRepos" minimum:"0" maximum:"9007199254740991" example:"8"`
+	Followers   uint64        `json:"followers"   minimum:"0" maximum:"9007199254740991" example:"100"`
+	Following   uint64        `json:"following"   minimum:"0" maximum:"9007199254740991" example:"2"`
+	CreatedAt   timeutil.Time `json:"createdAt"                                          example:"2011-01-25T18:44:36.000Z"                                                     format:"date-time"`
+	UpdatedAt   timeutil.Time `json:"updatedAt"                                          example:"2024-06-01T00:00:00.000Z"                                                     format:"date-time"`
 }
 
-// RepoSummary contains basic repository information.
-type RepoSummary struct {
-	Name        string        `json:"name"        doc:"Repository name"                   example:"git-consortium"`
-	FullName    string        `json:"fullName"    doc:"Full repository name (owner/repo)" example:"octocat/git-consortium"`
-	Description string        `json:"description" doc:"Repository description"`
-	HTMLURL     string        `json:"htmlUrl"     doc:"GitHub repository URL"             example:"https://github.com/octocat/git-consortium"`
-	Language    string        `json:"language"    doc:"Primary language"                  example:"Ruby"`
-	Stars       int           `json:"stars"       doc:"Stargazer count"                   example:"16"`
-	Forks       int           `json:"forks"       doc:"Fork count"                        example:"10"`
-	OpenIssues  int           `json:"openIssues"  doc:"Open issue count"                  example:"0"`
-	CreatedAt   timeutil.Time `json:"createdAt"   doc:"Creation timestamp"                example:"2011-01-25T18:44:36.000Z"                  format:"date-time"`
-	UpdatedAt   timeutil.Time `json:"updatedAt"   doc:"Last update timestamp"             example:"2024-06-01T00:00:00.000Z"                  format:"date-time"`
+// RepositorySummary is the exact public repository list projection.
+type RepositorySummary struct {
+	ID          uint64  `json:"id"          minimum:"0" maximum:"9007199254740991" example:"1296269"`
+	Name        string  `json:"name"                                               example:"git-consortium"                            minLength:"1"`
+	FullName    string  `json:"fullName"                                           example:"octocat/git-consortium"                    minLength:"1"`
+	Description *string `json:"description"                                        example:"A public example repository"                             nullable:"true"`
+	HTMLURL     string  `json:"htmlUrl"                                            example:"https://github.com/octocat/git-consortium"                               format:"uri"`
+	Fork        bool    `json:"fork"                                               example:"false"`
 }
 
-// Repo contains detailed repository information.
-type Repo struct {
-	RepoSummary
-	DefaultBranch string   `json:"defaultBranch" doc:"Default branch name"      example:"master"`
-	License       string   `json:"license"       doc:"License name"             example:"MIT License"`
-	Topics        []string `json:"topics"        doc:"Repository topics"                              nullable:"false"`
-	Archived      bool     `json:"archived"      doc:"Whether repo is archived" example:"false"`
-	Disabled      bool     `json:"disabled"      doc:"Whether repo is disabled" example:"false"`
+// Repository is the exact public repository detail projection.
+type Repository struct {
+	ID              uint64         `json:"id"              minimum:"0" maximum:"9007199254740991" example:"1296269"`
+	Name            string         `json:"name"                                                   example:"git-consortium"                            minLength:"1"`
+	FullName        string         `json:"fullName"                                               example:"octocat/git-consortium"                    minLength:"1"`
+	Description     *string        `json:"description"                                            example:"A public example repository"                             nullable:"true"`
+	HTMLURL         string         `json:"htmlUrl"                                                example:"https://github.com/octocat/git-consortium"                                format:"uri"`
+	Fork            bool           `json:"fork"                                                   example:"false"`
+	Language        *string        `json:"language"                                               example:"Go"                                                      nullable:"true"`
+	StargazersCount uint64         `json:"stargazersCount" minimum:"0" maximum:"9007199254740991" example:"16"`
+	ForksCount      uint64         `json:"forksCount"      minimum:"0" maximum:"9007199254740991" example:"10"`
+	OpenIssuesCount uint64         `json:"openIssuesCount" minimum:"0" maximum:"9007199254740991" example:"0"`
+	Archived        bool           `json:"archived"                                               example:"false"`
+	CreatedAt       timeutil.Time  `json:"createdAt"                                              example:"2011-01-25T18:44:36.000Z"                                                 format:"date-time"`
+	UpdatedAt       timeutil.Time  `json:"updatedAt"                                              example:"2024-06-01T00:00:00.000Z"                                                 format:"date-time"`
+	PushedAt        *timeutil.Time `json:"pushedAt"                                               example:"2024-05-31T23:00:00.000Z"                                nullable:"true"  format:"date-time"`
+	DefaultBranch   string         `json:"defaultBranch"                                          example:"main"                                      minLength:"1"`
+	License         *string        `json:"license"                                                example:"MIT"                                                     nullable:"true"`
+	Topics          []string       `json:"topics"                                                 example:"[\"example\",\"portable-api\"]"                          nullable:"false"                    uniqueItems:"true"`
+	Disabled        bool           `json:"disabled"                                               example:"false"`
 }
 
-// Activity represents a repository activity event.
+// Activity is the exact public repository activity projection.
 type Activity struct {
-	ID             int64         `json:"id"             doc:"Activity ID"      example:"1"`
-	Actor          string        `json:"actor"          doc:"Actor username"   example:"octocat"`
-	Ref            string        `json:"ref"            doc:"Git reference"    example:"refs/heads/master"`
-	Timestamp      timeutil.Time `json:"timestamp"      doc:"Event timestamp"  example:"2024-01-15T10:30:00.000Z"                       format:"date-time"`
-	ActivityType   string        `json:"activityType"   doc:"Type of activity" example:"push"`
-	ActorAvatarURL string        `json:"actorAvatarUrl" doc:"Actor avatar URL" example:"https://avatars.githubusercontent.com/u/583231"`
+	ID             uint64        `json:"id"             minimum:"0" maximum:"9007199254740991" example:"1"`
+	Actor          *string       `json:"actor"                                                 example:"octocat"                                        nullable:"true"`
+	ActorAvatarURL *string       `json:"actorAvatarUrl"                                        example:"https://avatars.githubusercontent.com/u/583231" nullable:"true" format:"uri"`
+	Ref            string        `json:"ref"                                                   example:"refs/heads/main"                                                                   minLength:"1"`
+	Timestamp      timeutil.Time `json:"timestamp"                                             example:"2024-01-15T10:30:00.000Z"                                       format:"date-time"`
+	ActivityType   string        `json:"activityType"                                          example:"push"                                                                              minLength:"1"`
 }
 
-// Tag represents a repository tag.
-type Tag struct {
-	Name   string    `json:"name"   doc:"Tag name"   example:"v1.0"`
-	Commit TagCommit `json:"commit" doc:"Tag commit"`
-}
-
-// TagCommit contains the commit SHA for a tag.
-type TagCommit struct {
-	SHA string `json:"sha" doc:"Commit SHA" example:"abc123"`
-}
-
-// Language represents a programming language used in a repository.
+// Language is one sorted public language projection.
 type Language struct {
-	Name  string `json:"name"  doc:"Language name" example:"Ruby"`
-	Bytes int64  `json:"bytes" doc:"Bytes of code" example:"6789"`
+	Name  string `json:"name"  minLength:"1" example:"Go"`
+	Bytes uint64 `json:"bytes"               example:"6789" minimum:"0" maximum:"9007199254740991"`
+}
+
+// Tag is one public repository tag projection.
+type Tag struct {
+	Name   string    `json:"name"   minLength:"1" example:"v1.0.0"`
+	Commit TagCommit `json:"commit"`
+}
+
+// TagCommit contains an exact Git object identifier.
+type TagCommit struct {
+	SHA string `json:"sha" pattern:"^(?:[0-9a-f]{40}|[0-9a-f]{64})$" example:"0123456789abcdef0123456789abcdef01234567"`
 }

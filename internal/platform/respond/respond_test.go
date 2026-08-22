@@ -10,10 +10,11 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
-	_ "github.com/danielgtaylor/huma/v2/formats/cbor"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
+
+	"github.com/janisto/huma-playground/internal/platform/portable"
 )
 
 func testAPI() huma.API {
@@ -42,26 +43,29 @@ func TestNotFoundUsesHumaProblemDetails(t *testing.T) {
 				t.Fatalf("expected 404, got %d", response.Code)
 			}
 			if accept == "application/cbor" {
-				if got := response.Header().Get("Content-Type"); got != "application/problem+cbor" {
+				if got := response.Header().Get("Content-Type"); got != "application/cbor" {
 					t.Fatalf("unexpected content type %q", got)
 				}
-				var problem huma.ErrorModel
+				var problem portable.ProblemError
 				if err := cbor.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 					t.Fatalf("decode CBOR: %v", err)
+				}
+				if problem.Code != portable.CodeNotFound {
+					t.Fatalf("unexpected problem: %#v", problem)
 				}
 			} else {
 				if got := response.Header().Get("Content-Type"); got != "application/problem+json" {
 					t.Fatalf("unexpected content type %q", got)
 				}
-				var problem huma.ErrorModel
+				var problem portable.ProblemError
 				if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 					t.Fatalf("decode JSON: %v", err)
 				}
-				if problem.Status != http.StatusNotFound {
+				if problem.Status != http.StatusNotFound || problem.Code != portable.CodeNotFound {
 					t.Fatalf("unexpected problem: %#v", problem)
 				}
 			}
-			if link := response.Header().Get("Link"); link != "</v1/schemas/ErrorModel.json>; rel=\"describedBy\"" {
+			if link := response.Header().Get("Link"); link != "" {
 				t.Fatalf("unexpected schema link %q", link)
 			}
 		})
@@ -98,6 +102,36 @@ func TestRecoverer(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", response.Code)
+	}
+}
+
+func TestRecovererUsesOriginalAcceptAfterSuccessNegotiation(t *testing.T) {
+	api := testAPI()
+	handler := Recoverer(api)(portable.RequestPolicy("/v1")(http.HandlerFunc(
+		func(http.ResponseWriter, *http.Request) {
+			panic("boom")
+		},
+	)))
+	const accept = "application/json, application/problem+json;q=0.1, application/cbor;q=0.5"
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/hello", nil)
+	request.Header.Set("Accept", accept)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != portable.MediaTypeCBOR {
+		t.Fatalf("content type=%q want=%q body=%x", got, portable.MediaTypeCBOR, response.Body.Bytes())
+	}
+	if got := request.Header.Get("Accept"); got != accept {
+		t.Fatalf("outer request Accept=%q want=%q", got, accept)
+	}
+	var problem portable.ProblemError
+	if err := cbor.Unmarshal(response.Body.Bytes(), &problem); err != nil ||
+		problem.Code != portable.CodeInternalError {
+		t.Fatalf("problem=%#v err=%v body=%x", problem, err, response.Body.Bytes())
 	}
 }
 

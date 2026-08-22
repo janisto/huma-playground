@@ -32,10 +32,7 @@ func (t *Time) UnmarshalJSON(data []byte) error {
 }
 
 func (t Time) MarshalCBOR() ([]byte, error) {
-	return cbor.Marshal(cbor.Tag{
-		Number:  0,
-		Content: t.UTC().Format(RFC3339Millis),
-	})
+	return cbor.Marshal(t.UTC().Format(RFC3339Millis))
 }
 
 func (t *Time) UnmarshalCBOR(data []byte) error {
@@ -50,15 +47,6 @@ func (t *Time) UnmarshalCBOR(data []byte) error {
 	case time.Time:
 		t.Time = typed
 		return nil
-	case cbor.Tag:
-		if typed.Number != 0 {
-			return fmt.Errorf("timeutil: expected date/time tag 0, got %d", typed.Number)
-		}
-		text, ok := typed.Content.(string)
-		if !ok {
-			return errors.New("timeutil: expected tagged text string")
-		}
-		return t.parse(text)
 	case string:
 		return t.parse(typed)
 	default:

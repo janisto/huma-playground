@@ -102,11 +102,11 @@ func loadConfig(getenv func(string) string) (config, error) {
 		FirebaseProjectID: projectID,
 		CORSOrigins:       origins,
 		LogLevel:          level,
-		RequestTimeout:    8 * time.Second,
+		RequestTimeout:    12 * time.Second,
 		ShutdownTimeout:   10 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		ReadHeaderTimeout: 2 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}, nil
 }

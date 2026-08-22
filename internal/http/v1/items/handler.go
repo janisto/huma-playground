@@ -9,37 +9,40 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/janisto/huma-playground/internal/platform/pagination"
+	"github.com/janisto/huma-playground/internal/platform/portable"
 )
 
-const cursorType = "item"
+const operationID = "listItems"
 
 // Register wires item routes into the provided API router.
 func Register(api huma.API, prefix string) {
 	huma.Register(api, huma.Operation{
-		OperationID: "list-items",
+		OperationID: operationID,
 		Method:      http.MethodGet,
 		Path:        "/items",
 		Summary:     "List items with cursor-based pagination",
-		Description: "Returns a paginated list of items. Use the cursor from the Link header to navigate between pages.",
+		Description: "Returns a paginated list of items. Only limit, cursor, and category are accepted; unknown or repeated query parameters are rejected.",
 		Tags:        []string{"Items"},
+		Security:    []map[string][]string{},
 		Errors: []int{
 			http.StatusBadRequest,
+			http.StatusNotAcceptable,
 			http.StatusUnprocessableEntity,
+			http.StatusInternalServerError,
 		},
-	}, func(_ context.Context, input *ItemsListInput) (*ItemsListOutput, error) {
+	}, func(ctx context.Context, input *ItemsListInput) (*ItemsListOutput, error) {
 		cursor, err := pagination.DecodeCursor(input.Cursor)
 		if err != nil {
-			return nil, huma.Error400BadRequest("invalid cursor format")
-		}
-
-		if input.Cursor != "" && cursor.Type != cursorType {
-			return nil, huma.Error400BadRequest("cursor type mismatch")
+			return nil, portable.ErrorForContext(ctx, portable.CodeInvalidRequest)
 		}
 
 		filtered := filterItems(mockItems, input.Category)
 
-		if cursor.Value != "" && findItemIndex(filtered, cursor.Value) == -1 {
-			return nil, huma.Error400BadRequest("cursor references unknown item")
+		limit := input.DefaultLimit()
+		if input.Cursor != "" && (cursor.Operation != operationID || cursor.Limit != limit ||
+			cursor.Filter != input.Category || cursor.Owner != "" || cursor.Repo != "" ||
+			cursor.Upstream != "" || cursor.Anchor == "" || findItemIndex(filtered, cursor.Anchor) == -1) {
+			return nil, portable.ErrorForContext(ctx, portable.CodeInvalidRequest)
 		}
 
 		query := url.Values{}
@@ -50,8 +53,9 @@ func Register(api huma.API, prefix string) {
 		result := pagination.Paginate(
 			filtered,
 			cursor,
-			input.DefaultLimit(),
-			cursorType,
+			limit,
+			operationID,
+			input.Category,
 			func(item Item) string { return item.ID },
 			prefix+"/items",
 			query,

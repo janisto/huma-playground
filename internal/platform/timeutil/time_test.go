@@ -45,18 +45,18 @@ func TestJSONRejectsInvalidInput(t *testing.T) {
 	}
 }
 
-func TestCBORRoundTripUsesDateTimeTag(t *testing.T) {
+func TestCBORRoundTripUsesPortableTextString(t *testing.T) {
 	input := NewTime(time.Date(2024, 1, 15, 10, 30, 45, 123456789, time.UTC))
 	data, err := input.MarshalCBOR()
 	if err != nil {
 		t.Fatalf("marshal CBOR: %v", err)
 	}
-	var tag cbor.Tag
-	if err := cbor.Unmarshal(data, &tag); err != nil {
-		t.Fatalf("decode tag: %v", err)
+	var encoded string
+	if err := cbor.Unmarshal(data, &encoded); err != nil {
+		t.Fatalf("decode text: %v", err)
 	}
-	if tag.Number != 0 || tag.Content != "2024-01-15T10:30:45.123Z" {
-		t.Fatalf("unexpected tag: %#v", tag)
+	if encoded != "2024-01-15T10:30:45.123Z" {
+		t.Fatalf("unexpected timestamp: %q", encoded)
 	}
 
 	var output Time

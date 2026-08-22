@@ -1,322 +1,299 @@
 package github
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	obs "github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
 
 	"github.com/janisto/huma-playground/internal/platform/pagination"
+	"github.com/janisto/huma-playground/internal/platform/portable"
 	"github.com/janisto/huma-playground/internal/platform/timeutil"
 	githubsvc "github.com/janisto/huma-playground/internal/service/github"
 )
 
-const activityCursorType = "gh-activity"
-
 var githubErrors = []int{
-	http.StatusForbidden,
+	http.StatusBadRequest,
 	http.StatusNotFound,
+	http.StatusNotAcceptable,
 	http.StatusUnprocessableEntity,
 	http.StatusTooManyRequests,
+	http.StatusInternalServerError,
 	http.StatusBadGateway,
-	http.StatusServiceUnavailable,
+	http.StatusGatewayTimeout,
 }
 
-var githubActivityErrors = append([]int{http.StatusBadRequest}, githubErrors...)
-
-// Register wires GitHub routes into the provided API router.
-func Register(api huma.API, svc githubsvc.Service, prefix string) {
+// Register wires the six portable anonymous GitHub routes into the API.
+func Register(api huma.API, service githubsvc.Service, prefix string) {
 	huma.Register(api, huma.Operation{
-		OperationID: "get-github-owner",
+		OperationID: "getGitHubOwner",
 		Method:      http.MethodGet,
 		Path:        "/github/owners/{owner}",
-		Summary:     "Get a GitHub user or organization",
-		Description: "Returns public profile information for the specified GitHub user or organization.",
+		Summary:     "Get a public GitHub owner",
 		Tags:        []string{"GitHub"},
+		Security:    []map[string][]string{},
 		Errors:      githubErrors,
 	}, func(ctx context.Context, input *OwnerGetInput) (*OwnerGetOutput, error) {
-		owner, err := svc.GetOwner(ctx, input.Owner)
+		owner, err := service.GetOwner(ctx, input.Owner)
 		if err != nil {
-			return nil, mapServiceError(ctx, "get_owner", err)
+			return nil, mapServiceError(ctx, "getGitHubOwner", err)
 		}
-		result := toHTTPOwner(owner)
-		return &OwnerGetOutput{Body: result}, nil
+		return &OwnerGetOutput{Body: toHTTPOwner(owner)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "list-github-owner-repos",
+		OperationID: "listGitHubOwnerRepositories",
 		Method:      http.MethodGet,
 		Path:        "/github/owners/{owner}/repos",
-		Summary:     "List repositories for a GitHub user",
-		Description: "Returns up to 30 repositories for the specified GitHub user or organization.",
+		Summary:     "List a public GitHub owner's repositories",
+		Description: "Accepts only limit and cursor; unknown or repeated query parameters are rejected.",
 		Tags:        []string{"GitHub"},
+		Security:    []map[string][]string{},
 		Errors:      githubErrors,
-	}, func(ctx context.Context, input *OwnerGetInput) (*OwnerReposListOutput, error) {
-		repos, err := svc.ListRepos(ctx, input.Owner)
+	}, func(ctx context.Context, input *OwnerRepositoriesListInput) (*OwnerRepositoriesListOutput, error) {
+		limit := input.DefaultLimit()
+		scope := pagination.Scope{Operation: "listGitHubOwnerRepositories", Owner: input.Owner, Limit: limit}
+		cursor, err := decodeCursor(ctx, input.Cursor, scope)
 		if err != nil {
-			return nil, mapServiceError(ctx, "list_owner_repositories", err)
+			return nil, err
 		}
-		httpRepos := toHTTPRepoSummaries(repos)
-		return &OwnerReposListOutput{Body: OwnerReposListData{
-			Repos: httpRepos,
-			Count: len(httpRepos),
-		}}, nil
-	})
-
-	huma.Register(api, huma.Operation{
-		OperationID: "get-github-repo",
-		Method:      http.MethodGet,
-		Path:        "/github/repos/{owner}/{repo}",
-		Summary:     "Get a GitHub repository",
-		Description: "Returns detailed information for the specified GitHub repository.",
-		Tags:        []string{"GitHub"},
-		Errors:      githubErrors,
-	}, func(ctx context.Context, input *RepoGetInput) (*RepoGetOutput, error) {
-		repo, err := svc.GetRepo(ctx, input.Owner, input.Repo)
+		page, err := service.ListOwnerRepositories(ctx, input.Owner, limit, cursor)
 		if err != nil {
-			return nil, mapServiceError(ctx, "get_repository", err)
+			return nil, mapServiceError(ctx, "listGitHubOwnerRepositories", err)
 		}
-		result := toHTTPRepo(repo)
-		return &RepoGetOutput{Body: result}, nil
-	})
-
-	huma.Register(api, huma.Operation{
-		OperationID: "list-github-repo-activity",
-		Method:      http.MethodGet,
-		Path:        "/github/repos/{owner}/{repo}/activity",
-		Summary:     "List repository activity",
-		Description: "Returns paginated activity events for the specified GitHub repository.",
-		Tags:        []string{"GitHub"},
-		Errors:      githubActivityErrors,
-	}, func(ctx context.Context, input *RepoActivityListInput) (*RepoActivityListOutput, error) {
-		cursor, err := pagination.DecodeCursor(input.Cursor)
-		if err != nil {
-			return nil, huma.Error400BadRequest("invalid cursor format")
-		}
-
-		if input.Cursor != "" && cursor.Type != activityCursorType {
-			return nil, huma.Error400BadRequest("cursor type mismatch")
-		}
-
-		page, err := svc.ListActivity(ctx, input.Owner, input.Repo, input.DefaultLimit(), cursor.Value)
-		if err != nil {
-			return nil, mapServiceError(ctx, "list_repository_activity", err)
-		}
-
-		var linkHeader string
-		if page.NextCursor != "" {
-			nextEncoded := pagination.Cursor{
-				Type:  activityCursorType,
-				Value: page.NextCursor,
-			}.Encode()
-			linkHeader = pagination.BuildLinkHeader(
-				prefix+"/github/repos/"+url.PathEscape(input.Owner)+"/"+url.PathEscape(input.Repo)+"/activity",
-				url.Values{"limit": {strconv.Itoa(input.DefaultLimit())}},
-				nextEncoded,
-				"",
-			)
-		}
-
-		httpActivities := toHTTPActivities(page.Activities)
-		return &RepoActivityListOutput{
-			Link: linkHeader,
-			Body: RepoActivityListData{
-				Activities: httpActivities,
-				Count:      len(httpActivities),
-			},
+		return &OwnerRepositoriesListOutput{
+			Link: pageLink(
+				prefix+"/github/owners/"+url.PathEscape(input.Owner)+"/repos",
+				limit,
+				page.NextCursor,
+				page.PrevCursor,
+			),
+			Body: RepositoryPage{Repos: toHTTPRepositorySummaries(page.Entries), Count: len(page.Entries)},
 		}, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "get-github-repo-languages",
+		OperationID: "getGitHubRepository",
 		Method:      http.MethodGet,
-		Path:        "/github/repos/{owner}/{repo}/languages",
-		Summary:     "Get repository languages",
-		Description: "Returns programming languages used in the specified repository with byte counts.",
+		Path:        "/github/repos/{owner}/{repo}",
+		Summary:     "Get a public GitHub repository",
 		Tags:        []string{"GitHub"},
+		Security:    []map[string][]string{},
 		Errors:      githubErrors,
-	}, func(ctx context.Context, input *RepoGetInput) (*RepoLanguagesGetOutput, error) {
-		languages, err := svc.ListLanguages(ctx, input.Owner, input.Repo)
+	}, func(ctx context.Context, input *RepositoryGetInput) (*RepositoryGetOutput, error) {
+		repository, err := service.GetRepository(ctx, input.Owner, input.Repo)
 		if err != nil {
-			return nil, mapServiceError(ctx, "get_repository_languages", err)
+			return nil, mapServiceError(ctx, "getGitHubRepository", err)
 		}
-		return &RepoLanguagesGetOutput{Body: LanguagesData{
-			Languages: toHTTPLanguages(languages),
-		}}, nil
+		return &RepositoryGetOutput{Body: toHTTPRepository(repository)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "list-github-repo-tags",
+		OperationID: "listGitHubRepositoryActivity",
+		Method:      http.MethodGet,
+		Path:        "/github/repos/{owner}/{repo}/activity",
+		Summary:     "List public GitHub repository activity",
+		Description: "Accepts only limit and cursor; unknown or repeated query parameters are rejected.",
+		Tags:        []string{"GitHub"},
+		Security:    []map[string][]string{},
+		Errors:      githubErrors,
+	}, func(ctx context.Context, input *RepositoryPageListInput) (*RepositoryActivityListOutput, error) {
+		limit := input.DefaultLimit()
+		scope := pagination.Scope{
+			Operation: "listGitHubRepositoryActivity", Owner: input.Owner, Repo: input.Repo, Limit: limit,
+		}
+		cursor, err := decodeCursor(ctx, input.Cursor, scope)
+		if err != nil {
+			return nil, err
+		}
+		page, err := service.ListRepositoryActivity(ctx, input.Owner, input.Repo, limit, cursor)
+		if err != nil {
+			return nil, mapServiceError(ctx, "listGitHubRepositoryActivity", err)
+		}
+		return &RepositoryActivityListOutput{
+			Link: pageLink(
+				prefix+"/github/repos/"+url.PathEscape(input.Owner)+"/"+url.PathEscape(input.Repo)+"/activity",
+				limit, page.NextCursor, page.PrevCursor,
+			),
+			Body: ActivityPage{Activities: toHTTPActivities(page.Entries), Count: len(page.Entries)},
+		}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "listGitHubRepositoryLanguages",
+		Method:      http.MethodGet,
+		Path:        "/github/repos/{owner}/{repo}/languages",
+		Summary:     "List public GitHub repository languages",
+		Tags:        []string{"GitHub"},
+		Security:    []map[string][]string{},
+		Errors:      githubErrors,
+	}, func(ctx context.Context, input *RepositoryGetInput) (*RepositoryLanguagesListOutput, error) {
+		languages, err := service.ListRepositoryLanguages(ctx, input.Owner, input.Repo)
+		if err != nil {
+			return nil, mapServiceError(ctx, "listGitHubRepositoryLanguages", err)
+		}
+		return &RepositoryLanguagesListOutput{Body: Languages{Languages: toHTTPLanguages(languages)}}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "listGitHubRepositoryTags",
 		Method:      http.MethodGet,
 		Path:        "/github/repos/{owner}/{repo}/tags",
-		Summary:     "List repository tags",
-		Description: "Returns up to 30 tags for the specified GitHub repository.",
+		Summary:     "List public GitHub repository tags",
+		Description: "Accepts only limit and cursor; unknown or repeated query parameters are rejected.",
 		Tags:        []string{"GitHub"},
+		Security:    []map[string][]string{},
 		Errors:      githubErrors,
-	}, func(ctx context.Context, input *RepoGetInput) (*RepoTagsListOutput, error) {
-		tags, err := svc.ListTags(ctx, input.Owner, input.Repo)
-		if err != nil {
-			return nil, mapServiceError(ctx, "list_repository_tags", err)
+	}, func(ctx context.Context, input *RepositoryPageListInput) (*RepositoryTagsListOutput, error) {
+		limit := input.DefaultLimit()
+		scope := pagination.Scope{
+			Operation: "listGitHubRepositoryTags", Owner: input.Owner, Repo: input.Repo, Limit: limit,
 		}
-		httpTags := toHTTPTags(tags)
-		return &RepoTagsListOutput{Body: RepoTagsListData{
-			Tags:  httpTags,
-			Count: len(httpTags),
-		}}, nil
+		cursor, err := decodeCursor(ctx, input.Cursor, scope)
+		if err != nil {
+			return nil, err
+		}
+		page, err := service.ListRepositoryTags(ctx, input.Owner, input.Repo, limit, cursor)
+		if err != nil {
+			return nil, mapServiceError(ctx, "listGitHubRepositoryTags", err)
+		}
+		return &RepositoryTagsListOutput{
+			Link: pageLink(
+				prefix+"/github/repos/"+url.PathEscape(input.Owner)+"/"+url.PathEscape(input.Repo)+"/tags",
+				limit, page.NextCursor, page.PrevCursor,
+			),
+			Body: TagPage{Tags: toHTTPTags(page.Entries), Count: len(page.Entries)},
+		}, nil
 	})
 }
 
+func decodeCursor(ctx context.Context, raw string, scope pagination.Scope) (*pagination.Cursor, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	cursor, err := pagination.DecodeCursor(raw)
+	if err != nil || !cursor.Matches(scope) || cursor.Anchor == "" || cursor.Upstream != "" {
+		return nil, portable.ErrorForContext(ctx, portable.CodeInvalidRequest)
+	}
+	return &cursor, nil
+}
+
+func pageLink(path string, limit int, next, previous string) string {
+	return pagination.BuildLinkHeader(path, url.Values{"limit": {strconv.Itoa(limit)}}, next, previous)
+}
+
 func mapServiceError(ctx context.Context, operation string, err error) error {
-	if errors.Is(err, context.DeadlineExceeded) {
-		obs.Logger(ctx).Warn("github upstream request timed out",
-			zap.String("operation", operation), zap.Error(err))
-		return huma.Error503ServiceUnavailable("upstream service temporarily unavailable")
-	}
-	if upstreamErr, ok := errors.AsType[*githubsvc.UpstreamError](err); ok {
-		switch upstreamErr.Kind {
-		case githubsvc.UpstreamErrorKindNotFound:
-			return huma.Error404NotFound("resource not found")
-		case githubsvc.UpstreamErrorKindRateLimited:
-			rateLimitErr := huma.Error429TooManyRequests("rate limit exceeded")
-			headers := make(http.Header)
-			if upstreamErr.RetryAfter != "" {
-				headers.Set("Retry-After", upstreamErr.RetryAfter)
-			}
-			if upstreamErr.RateLimitReset != "" {
-				headers.Set("X-Ratelimit-Reset", upstreamErr.RateLimitReset)
-			}
-			if len(headers) > 0 {
-				return huma.ErrorWithHeaders(rateLimitErr, headers)
-			}
-			return rateLimitErr
-		case githubsvc.UpstreamErrorKindForbidden:
-			return huma.Error403Forbidden("access denied")
-		default:
-			obs.Logger(ctx).Error("github upstream request failed",
-				zap.String("operation", operation), zap.Error(err))
-			return huma.Error502BadGateway("upstream error")
-		}
-	}
-
+	var rateLimit *githubsvc.RateLimitError
 	switch {
+	case errors.Is(err, githubsvc.ErrInvalidCursor):
+		return portable.ErrorForContext(ctx, portable.CodeInvalidRequest)
 	case errors.Is(err, githubsvc.ErrNotFound):
-		return huma.Error404NotFound("resource not found")
-	case errors.Is(err, githubsvc.ErrRateLimited):
-		rateLimitErr := huma.Error429TooManyRequests("rate limit exceeded")
-		return rateLimitErr
-	case errors.Is(err, githubsvc.ErrForbidden):
-		return huma.Error403Forbidden("access denied")
+		return portable.ErrorForContext(ctx, portable.CodeGitHubNotFound)
+	case errors.As(err, &rateLimit):
+		headers := http.Header{"Retry-After": {rateLimit.RetryAfter}}
+		if rateLimit.Reset != "" {
+			headers.Set("X-Ratelimit-Reset", rateLimit.Reset)
+		}
+		return huma.ErrorWithHeaders(portable.ErrorForContext(ctx, portable.CodeGitHubRateLimit), headers)
+	case errors.Is(err, githubsvc.ErrTimeout), errors.Is(err, context.DeadlineExceeded):
+		obs.Logger(ctx).Warn("github dependency timed out",
+			zap.String("operation", operation),
+			zap.String("error_category", "github_timeout"),
+			zap.Error(err),
+		)
+		return portable.ErrorForContext(ctx, portable.CodeGitHubTimeout)
+	case errors.Is(err, githubsvc.ErrUpstream), errors.Is(err, context.Canceled):
+		obs.Logger(ctx).Warn("github dependency failed",
+			zap.String("operation", operation),
+			zap.String("error_category", "github_upstream"),
+			zap.Error(err),
+		)
+		return portable.ErrorForContext(ctx, portable.CodeGitHubUpstream)
 	default:
-		obs.Logger(ctx).Error("github upstream request failed",
-			zap.String("operation", operation), zap.Error(err))
-		return huma.Error502BadGateway("upstream error")
+		obs.Logger(ctx).Error("github operation failed",
+			zap.String("operation", operation),
+			zap.String("error_category", "internal_error"),
+			zap.Error(err),
+		)
+		return portable.ErrorForContext(ctx, portable.CodeInternalError)
 	}
 }
 
-func toHTTPOwner(o *githubsvc.Owner) Owner {
+func toHTTPOwner(owner githubsvc.Owner) Owner {
 	return Owner{
-		Login:     o.Login,
-		Name:      o.Name,
-		AvatarURL: o.AvatarURL,
-		HTMLURL:   o.HTMLURL,
-		Bio:       o.Bio,
-		Location:  o.Location,
-		Blog:      o.Blog,
-		Company:   o.Company,
-		CreatedAt: timeutil.Time{Time: o.CreatedAt},
-		UpdatedAt: timeutil.Time{Time: o.UpdatedAt},
+		ID: owner.ID, Login: owner.Login, Type: owner.Type, Name: owner.Name,
+		AvatarURL: owner.AvatarURL, HTMLURL: owner.HTMLURL, Company: owner.Company,
+		Blog: owner.Blog, Location: owner.Location, Bio: owner.Bio,
+		PublicRepos: owner.PublicRepos, Followers: owner.Followers, Following: owner.Following,
+		CreatedAt: timeutil.NewTime(owner.CreatedAt), UpdatedAt: timeutil.NewTime(owner.UpdatedAt),
 	}
 }
 
-func toHTTPRepoSummary(r *githubsvc.RepoSummary) RepoSummary {
-	return RepoSummary{
-		Name:        r.Name,
-		FullName:    r.FullName,
-		Description: r.Description,
-		HTMLURL:     r.HTMLURL,
-		Language:    r.Language,
-		Stars:       r.Stars,
-		Forks:       r.Forks,
-		OpenIssues:  r.OpenIssues,
-		CreatedAt:   timeutil.Time{Time: r.CreatedAt},
-		UpdatedAt:   timeutil.Time{Time: r.UpdatedAt},
+func toHTTPRepositorySummary(repository githubsvc.RepositorySummary) RepositorySummary {
+	return RepositorySummary{
+		ID: repository.ID, Name: repository.Name, FullName: repository.FullName,
+		Description: repository.Description, HTMLURL: repository.HTMLURL, Fork: repository.Fork,
 	}
 }
 
-func toHTTPRepoSummaries(repos []githubsvc.RepoSummary) []RepoSummary {
-	result := make([]RepoSummary, len(repos))
-	for i := range repos {
-		result[i] = toHTTPRepoSummary(&repos[i])
+func toHTTPRepositorySummaries(repositories []githubsvc.RepositorySummary) []RepositorySummary {
+	result := make([]RepositorySummary, len(repositories))
+	for index := range repositories {
+		result[index] = toHTTPRepositorySummary(repositories[index])
 	}
 	return result
 }
 
-func toHTTPRepo(r *githubsvc.Repo) Repo {
-	topics := r.Topics
-	if topics == nil {
-		topics = []string{}
-	}
-	return Repo{
-		RepoSummary:   toHTTPRepoSummary(&r.RepoSummary),
-		DefaultBranch: r.DefaultBranch,
-		License:       r.License,
-		Topics:        topics,
-		Archived:      r.Archived,
-		Disabled:      r.Disabled,
+func toHTTPRepository(repository githubsvc.Repository) Repository {
+	return Repository{
+		ID: repository.ID, Name: repository.Name, FullName: repository.FullName,
+		Description: repository.Description, HTMLURL: repository.HTMLURL, Fork: repository.Fork,
+		Language: repository.Language, StargazersCount: repository.StargazersCount,
+		ForksCount: repository.ForksCount, OpenIssuesCount: repository.OpenIssuesCount,
+		Archived: repository.Archived, CreatedAt: timeutil.NewTime(repository.CreatedAt),
+		UpdatedAt: timeutil.NewTime(repository.UpdatedAt), PushedAt: optionalTime(repository.PushedAt),
+		DefaultBranch: repository.DefaultBranch, License: repository.License,
+		Topics: repository.Topics, Disabled: repository.Disabled,
 	}
 }
 
-func toHTTPActivity(a *githubsvc.Activity) Activity {
-	return Activity{
-		ID:             a.ID,
-		Actor:          a.Actor,
-		Ref:            a.Ref,
-		Timestamp:      timeutil.Time{Time: a.Timestamp},
-		ActivityType:   a.ActivityType,
-		ActorAvatarURL: a.ActorAvatarURL,
+func optionalTime(value *time.Time) *timeutil.Time {
+	if value == nil {
+		return nil
 	}
+	timestamp := timeutil.NewTime(*value)
+	return &timestamp
 }
 
 func toHTTPActivities(activities []githubsvc.Activity) []Activity {
 	result := make([]Activity, len(activities))
-	for i := range activities {
-		result[i] = toHTTPActivity(&activities[i])
+	for index, activity := range activities {
+		result[index] = Activity{
+			ID: activity.ID, Actor: activity.Actor, ActorAvatarURL: activity.ActorAvatarURL,
+			Ref: activity.Ref, Timestamp: timeutil.NewTime(activity.Timestamp), ActivityType: activity.ActivityType,
+		}
 	}
 	return result
 }
 
-func toHTTPTag(t *githubsvc.Tag) Tag {
-	return Tag{
-		Name:   t.Name,
-		Commit: TagCommit{SHA: t.Commit.SHA},
+func toHTTPLanguages(languages []githubsvc.Language) []Language {
+	result := make([]Language, len(languages))
+	for index, language := range languages {
+		result[index] = Language{Name: language.Name, Bytes: language.Bytes}
 	}
+	return result
 }
 
 func toHTTPTags(tags []githubsvc.Tag) []Tag {
 	result := make([]Tag, len(tags))
-	for i := range tags {
-		result[i] = toHTTPTag(&tags[i])
+	for index, tag := range tags {
+		result[index] = Tag{Name: tag.Name, Commit: TagCommit{SHA: tag.SHA}}
 	}
-	return result
-}
-
-func toHTTPLanguages(languages map[string]int64) []Language {
-	result := make([]Language, 0, len(languages))
-	for name, bytes := range languages {
-		result = append(result, Language{Name: name, Bytes: bytes})
-	}
-	slices.SortFunc(result, func(a, b Language) int {
-		if byBytes := cmp.Compare(b.Bytes, a.Bytes); byBytes != 0 {
-			return byBytes
-		}
-		return cmp.Compare(a.Name, b.Name)
-	})
 	return result
 }

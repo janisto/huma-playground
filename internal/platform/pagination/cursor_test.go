@@ -1,197 +1,96 @@
 package pagination
 
 import (
-	"errors"
-	"strings"
+	"encoding/base64"
 	"testing"
 )
 
-func TestCursorEncodeDecodeRoundTrip(t *testing.T) {
-	tests := []struct {
-		name   string
-		cursor Cursor
-	}{
-		{"simple", Cursor{Type: "user", Value: "123"}},
-		{"with-uuid", Cursor{Type: "order", Value: "550e8400-e29b-41d4-a716-446655440000"}},
-		{"with-timestamp", Cursor{Type: "event", Value: "2024-01-15T10:30:00.000Z"}},
-		{"with-special-chars", Cursor{Type: "item", Value: "abc/def+ghi=jkl"}},
-		{"empty-value", Cursor{Type: "test", Value: ""}},
+func TestCursorRoundTripPreservesCompleteScope(t *testing.T) {
+	t.Parallel()
+	scope := Scope{
+		Operation: "listGitHubRepositoryActivity", Owner: "octocat", Repo: "hello-world", Filter: "", Limit: 100,
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			encoded := tc.cursor.Encode()
-			decoded, err := DecodeCursor(encoded)
-			if err != nil {
-				t.Fatalf("decode error: %v", err)
-			}
-			if decoded.Type != tc.cursor.Type {
-				t.Errorf("type mismatch: got %q, want %q", decoded.Type, tc.cursor.Type)
-			}
-			if decoded.Value != tc.cursor.Value {
-				t.Errorf("value mismatch: got %q, want %q", decoded.Value, tc.cursor.Value)
-			}
-		})
-	}
-}
-
-func TestDecodeCursorEmpty(t *testing.T) {
-	cursor, err := DecodeCursor("")
+	want := NewCursor(scope, "prev", "opaque-provider-position")
+	encoded := want.Encode()
+	got, err := DecodeCursor(encoded)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("decode emitted cursor: %v", err)
 	}
-	if cursor.Type != "" || cursor.Value != "" {
-		t.Errorf("expected empty cursor, got %+v", cursor)
+	if got != want || !got.Matches(scope) {
+		t.Fatalf("decoded cursor = %#v, want %#v", got, want)
+	}
+	if len(encoded) > MaxCursorLength {
+		t.Fatalf("emitted cursor length = %d", len(encoded))
 	}
 }
 
-func TestDecodeCursorInvalid(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-	}{
-		{"not-base64", "!!!invalid!!!"},
-		{"no-separator", "dGVzdA"},          // base64("test") - no colon
-		{"invalid-base64-chars", "abc def"}, // space is invalid
+func TestDecodeCursorRejectsMalformedOrNonCanonicalState(t *testing.T) {
+	t.Parallel()
+	encode := func(raw string) string { return base64.RawURLEncoding.EncodeToString([]byte(raw)) }
+	tests := map[string]string{
+		"base64 padding":  NewCursor(Scope{Operation: "listItems", Limit: 20}, "next", "item-020").Encode() + "=",
+		"invalid base64":  "not+a+cursor",
+		"whitespace json": encode(` {"v":1,"operation":"listItems","limit":20,"direction":"next","anchor":"item-020"}`),
+		"reordered json":  encode(`{"operation":"listItems","v":1,"limit":20,"direction":"next","anchor":"item-020"}`),
+		"unknown member": encode(
+			`{"v":1,"operation":"listItems","limit":20,"direction":"next","anchor":"item-020","extra":true}`,
+		),
+		"duplicate member": encode(
+			`{"v":1,"operation":"listItems","operation":"listItems","limit":20,"direction":"next","anchor":"item-020"}`,
+		),
+		"wrong version": encode(`{"v":2,"operation":"listItems","limit":20,"direction":"next","anchor":"item-020"}`),
+		"no operation":  encode(`{"v":1,"operation":"","limit":20,"direction":"next","anchor":"item-020"}`),
+		"zero limit":    encode(`{"v":1,"operation":"listItems","limit":0,"direction":"next","anchor":"item-020"}`),
+		"limit 101":     encode(`{"v":1,"operation":"listItems","limit":101,"direction":"next","anchor":"item-020"}`),
+		"bad direction": encode(
+			`{"v":1,"operation":"listItems","limit":20,"direction":"sideways","anchor":"item-020"}`,
+		),
+		"trailing json": encode(`{"v":1,"operation":"listItems","limit":20,"direction":"next","anchor":"item-020"}x`),
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := DecodeCursor(tc.input)
-			if !errors.Is(err, ErrInvalidCursor) {
-				t.Errorf("expected ErrInvalidCursor, got %v", err)
+	for name, value := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := DecodeCursor(value); err == nil {
+				t.Fatal("expected invalid cursor")
 			}
 		})
 	}
 }
 
-func TestCursorEncodeURLSafe(t *testing.T) {
-	cursor := Cursor{Type: "test", Value: "value+with/special=chars"}
-	encoded := cursor.Encode()
+func TestDecodeCursorEmptySelectsFirstPage(t *testing.T) {
+	t.Parallel()
+	got, err := DecodeCursor("")
+	if err != nil || got != (Cursor{}) {
+		t.Fatalf("DecodeCursor(empty) = %#v, %v", got, err)
+	}
+}
 
-	// URL-safe Base64 should not contain + or /
-	for _, c := range encoded {
-		if c == '+' || c == '/' {
-			t.Errorf("encoded cursor contains non-URL-safe character: %c", c)
+func TestCursorScopeDetectsEveryResultShapingChange(t *testing.T) {
+	t.Parallel()
+	base := Scope{Operation: "listGitHubRepositoryTags", Owner: "octocat", Repo: "hello-world", Limit: 20}
+	cursor := NewCursor(base, "next", "2")
+	changes := []Scope{
+		{Operation: "listGitHubRepositoryActivity", Owner: base.Owner, Repo: base.Repo, Limit: base.Limit},
+		{Operation: base.Operation, Owner: "other", Repo: base.Repo, Limit: base.Limit},
+		{Operation: base.Operation, Owner: base.Owner, Repo: "other", Limit: base.Limit},
+		{Operation: base.Operation, Owner: base.Owner, Repo: base.Repo, Limit: 21},
+		{Operation: base.Operation, Owner: base.Owner, Repo: base.Repo, Filter: "tools", Limit: base.Limit},
+	}
+	for _, changed := range changes {
+		if cursor.Matches(changed) {
+			t.Fatalf("cursor unexpectedly matched changed scope %#v", changed)
 		}
-	}
-}
-
-func TestCursorEmptyTypeNonEmptyValue(t *testing.T) {
-	cursor := Cursor{Type: "", Value: "some-value"}
-	encoded := cursor.Encode()
-
-	decoded, err := DecodeCursor(encoded)
-	if err != nil {
-		t.Fatalf("decode error: %v", err)
-	}
-	if decoded.Type != "" {
-		t.Errorf("expected empty type, got %q", decoded.Type)
-	}
-	if decoded.Value != "some-value" {
-		t.Errorf("expected 'some-value', got %q", decoded.Value)
-	}
-}
-
-func TestCursorWithColonInValue(t *testing.T) {
-	cursor := Cursor{Type: "item", Value: "2024-01-15T10:30:00.000Z"}
-	encoded := cursor.Encode()
-
-	decoded, err := DecodeCursor(encoded)
-	if err != nil {
-		t.Fatalf("decode error: %v", err)
-	}
-	if decoded.Type != "item" {
-		t.Errorf("type mismatch: got %q", decoded.Type)
-	}
-	if decoded.Value != "2024-01-15T10:30:00.000Z" {
-		t.Errorf("value mismatch: got %q", decoded.Value)
-	}
-}
-
-func TestCursorWithMultipleColonsInValue(t *testing.T) {
-	cursor := Cursor{Type: "composite", Value: "a:b:c:d"}
-	encoded := cursor.Encode()
-
-	decoded, err := DecodeCursor(encoded)
-	if err != nil {
-		t.Fatalf("decode error: %v", err)
-	}
-	if decoded.Value != "a:b:c:d" {
-		t.Errorf("value should preserve all colons, got %q", decoded.Value)
-	}
-}
-
-func TestCursorLongValue(t *testing.T) {
-	longValue := strings.Repeat("x", 1000)
-	cursor := Cursor{Type: "item", Value: longValue}
-	encoded := cursor.Encode()
-
-	decoded, err := DecodeCursor(encoded)
-	if err != nil {
-		t.Fatalf("decode error: %v", err)
-	}
-	if decoded.Value != longValue {
-		t.Error("long value not preserved correctly")
-	}
-}
-
-func TestCursorUnicodeValue(t *testing.T) {
-	cursor := Cursor{Type: "item", Value: "日本語テスト"}
-	encoded := cursor.Encode()
-
-	decoded, err := DecodeCursor(encoded)
-	if err != nil {
-		t.Fatalf("decode error: %v", err)
-	}
-	if decoded.Value != "日本語テスト" {
-		t.Errorf("unicode value mismatch: got %q", decoded.Value)
-	}
-}
-
-func TestDecodeCursorPaddingVariations(t *testing.T) {
-	tests := []struct {
-		name   string
-		cursor Cursor
-	}{
-		{"no-padding-needed", Cursor{Type: "abc", Value: "def"}},
-		{"one-pad", Cursor{Type: "ab", Value: "cd"}},
-		{"two-pad", Cursor{Type: "a", Value: "b"}},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			encoded := tc.cursor.Encode()
-			decoded, err := DecodeCursor(encoded)
-			if err != nil {
-				t.Fatalf("decode error: %v", err)
-			}
-			if decoded.Type != tc.cursor.Type || decoded.Value != tc.cursor.Value {
-				t.Errorf("mismatch: got %+v, want %+v", decoded, tc.cursor)
-			}
-		})
 	}
 }
 
 func FuzzDecodeCursor(f *testing.F) {
+	f.Add(NewCursor(Scope{Operation: "listItems", Limit: 20}, "next", "item-020").Encode())
 	f.Add("")
-	f.Add("not-base64")
-	f.Add(Cursor{Type: "item", Value: "item-001"}.Encode())
-	f.Fuzz(func(t *testing.T, input string) {
-		cursor, err := DecodeCursor(input)
-		if err != nil {
-			return
-		}
-		encoded := cursor.Encode()
-		decoded, err := DecodeCursor(encoded)
-		if err != nil {
-			t.Fatalf("canonical cursor %q failed to decode: %v", encoded, err)
-		}
-		if decoded != cursor {
-			t.Fatalf("cursor round trip = %#v, want %#v", decoded, cursor)
-		}
-		if input != "" && encoded == "" {
-			t.Fatal("valid non-empty cursor encoded to empty string")
+	f.Add("not-a-cursor")
+	f.Fuzz(func(t *testing.T, value string) {
+		cursor, err := DecodeCursor(value)
+		if err == nil && value != "" && cursor.Encode() != value {
+			t.Fatalf("accepted noncanonical cursor %q", value)
 		}
 	})
 }

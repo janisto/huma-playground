@@ -14,8 +14,8 @@ A compact, production-conscious REST API example using [Huma v2](https://huma.ro
 ## What this example demonstrates
 
 - Huma v2 typed operations and runtime-generated OpenAPI 3.1
-- Stoplight Elements interactive API documentation
-- JSON and CBOR requests, responses, and Problem Details
+- Exact fourteen-operation portable contract plus `GET /openapi.json` discovery
+- Strict JSON and CBOR requests and responses; JSON Problem Details with the same model in ordinary CBOR
 - One Huma error pipeline for operation and Chi-level 404, 405, and recovery responses
 - Request IDs, trace metadata, operation-aware access logs, and request-scoped Zap loggers
 - Cursor pagination with RFC 8288 `Link` headers
@@ -23,7 +23,7 @@ A compact, production-conscious REST API example using [Huma v2](https://huma.ro
 - Firestore atomic create, transaction-safe partial update, existence-checked delete, and audit events
 - Explicit development-offline, emulator, and live Firebase modes
 - Bounded request, upstream response, server, and shutdown work
-- Anonymous, public-only GitHub proxy requests without credential forwarding
+- Anonymous, public-only GitHub proxy requests with fixed-origin transport, redirect, timeout, and response-size bounds
 - Non-root distroless container execution
 - A deliberately small, separately deployable Go Functions Framework example
 - Required CI execution for both Go modules plus separate emulator-backed coverage
@@ -55,9 +55,7 @@ just run
 Open:
 
 - `http://localhost:8080/health`
-- `http://localhost:8080/v1/api-docs`
-- `http://localhost:8080/v1/openapi.json`
-- `http://localhost:8080/v1/openapi.yaml`
+- `http://localhost:8080/openapi.json`
 
 Example:
 
@@ -109,17 +107,18 @@ These checks prevent accidental use of the Auth emulator outside development, wh
 | PATCH | `/v1/profile` | Partially update the authenticated user's profile |
 | DELETE | `/v1/profile` | Delete the authenticated user's profile |
 | GET | `/v1/github/owners/{owner}` | GitHub owner information |
-| GET | `/v1/github/owners/{owner}/repos` | Up to 30 owner repositories |
+| GET | `/v1/github/owners/{owner}/repos` | Cursor-paginated public repositories |
 | GET | `/v1/github/repos/{owner}/{repo}` | Repository details |
 | GET | `/v1/github/repos/{owner}/{repo}/activity` | Cursor-paginated activity |
 | GET | `/v1/github/repos/{owner}/{repo}/languages` | Repository language bytes |
-| GET | `/v1/github/repos/{owner}/{repo}/tags` | Up to 30 tags |
+| GET | `/v1/github/repos/{owner}/{repo}/tags` | Cursor-paginated tags |
+| GET | `/openapi.json` | Generated OpenAPI 3.1 document |
 
-Profile JSON uses camelCase (`firstName`, `lastName`, `contactEmail`, `phoneNumber`). Firestore uses snake_case (`first_name`, `last_name`, `contact_email`, `phone_number`). `contactEmail` is user-supplied and is not the verified Firebase identity email.
+Profile JSON uses camelCase (`firstName`, `lastName`, `contactEmail`, `phoneNumber`, `marketingOptIn`, `termsAccepted`). Firestore uses independent snake_case storage names. `contactEmail` is normalized user-supplied contact data and is not the verified Firebase identity email. `termsAccepted` must be `true`; updates cannot revoke it.
 
-Profile creation uses Firestore create-if-absent semantics, partial updates preserve unrelated stored fields, and deletion uses an existence precondition rather than a read-before-delete transaction.
+Profile creation uses Firestore create-if-absent semantics, partial updates preserve unrelated stored fields, no-op updates perform no write, and deletion uses an existence precondition rather than a read-before-delete transaction. Stored records are validated before exposure so legacy or corrupt documents fail closed.
 
-The sample item price is `priceMinor` plus `currency`. The integer is expressed in the ISO 4217 currency's minor unit.
+Each sample item's `price` is a closed money object with non-negative `amountMinor` and fixed `currency: "USD"`. The static catalog contains 30 items and list pages default to 20 with a maximum of 100.
 
 ## Content negotiation and errors
 
@@ -128,13 +127,13 @@ Use `Accept: application/json` or `Accept: application/cbor`. JSON is the defaul
 Errors are RFC 9457 Problem Details:
 
 - `application/problem+json`
-- `application/problem+cbor`
+- `application/cbor` when CBOR is negotiated
 
-Huma provides the same schema transformation and content negotiation for operation failures and Chi-level errors. Advertised schema links resolve under `/v1/schemas/`.
+Success and error objects are closed and contain no framework-added envelope or schema-link fields. Malformed syntax returns `400`; semantic validation returns `422`; unsupported request media returns `415`; and an unacceptable response representation returns `406`.
 
 Operation metadata lists only errors reachable for that operation. Unexpected Firebase and GitHub dependency failures are logged once with request correlation and a safe operation name; clients receive generic Problem Details without upstream internals.
 
-Request bodies are limited to 1 MiB. Unknown query parameters and unknown body properties are rejected. Application request contexts expire before the server write timeout so Firebase and GitHub work is canceled within the response budget.
+Request bodies are limited to exactly 1,000,000 bytes. Non-empty bodies require a supported `Content-Type`, including streamed content whose length is unknown. Unknown or repeated scalar query parameters, unknown body properties, duplicate JSON object members, non-finite CBOR floats, and trailing documents are rejected. JSON and CBOR container nesting is capped at 32 levels, and inbound containers are bounded to 1,024 entries without unbounded materialization. Missing, malformed, repeated, or comma-combined `X-Request-ID` values are replaced with a generated identifier. Application request contexts expire before the server write timeout so Firebase and GitHub work is canceled within the response budget.
 
 ## Development commands
 
@@ -158,6 +157,8 @@ All repository workflows go through Just so `.env` and `GOTOOLCHAIN` are applied
 | `just emulators` | Start Auth and Firestore emulators |
 | `just test-integration-ci` | Require emulator-backed tests and generate their separate coverage report |
 | `just container-smoke` | Build and probe the final non-root image |
+| `just profile-migration-audit PROJECT [MANIFEST]` | Read and classify profile records without writing |
+| `just profile-migration-apply PROJECT MANIFEST CONFIRM` | Apply an authorized profile cutover after exact project confirmation |
 
 `go.work` is optional, local-only convenience. It is ignored intentionally. Every root recipe sets `GOWORK=off` for the nested function module, so clean clones and CI do not depend on a workspace file.
 
@@ -176,6 +177,24 @@ Ports:
 - Emulator UI: `127.0.0.1:4000`
 
 Ordinary local tests skip emulator cases when emulators are absent. The required CI recipe sets `REQUIRE_FIREBASE_EMULATORS=1`, so unavailable or broken emulators fail rather than silently reducing coverage. It writes a separate `integration-coverage.*` report; CI does not merge that profile with the fast unit report.
+
+## One-time profile data migration
+
+Deployments with pre-contract profile records must audit them before serving the adopted profile lifecycle. The audit recognizes only the exact known legacy shape and the accepted canonical shape. It blocks ambiguous ownership, duplicate logical principals, invalid data, and legacy records without explicit terms-acceptance evidence; output uses one-way principal fingerprints rather than identifiers or profile data.
+
+Start read-only with the intended Firestore project and, when legacy records exist, a reviewed manifest based on [`docs/profile-migration-manifest.example.json`](docs/profile-migration-manifest.example.json):
+
+```bash
+just profile-migration-audit PROJECT_ID path/to/reviewed-manifest.json
+```
+
+The apply command is intentionally separate and requires the project ID twice. It preflights the full dataset before writing and replaces each authorized record transactionally, so reruns are safe after interruption:
+
+```bash
+just profile-migration-apply PROJECT_ID path/to/reviewed-manifest.json PROJECT_ID
+```
+
+Quiesce profile writes for the complete audit-and-apply window; otherwise a record created or changed after the dataset preflight can make the reviewed migration set stale. Both commands use Application Default Credentials and refuse to run when `FIRESTORE_EMULATOR_HOST` is non-empty. Run neither against a project that has not been explicitly selected and reviewed.
 
 ## Separate Go function
 
@@ -231,6 +250,7 @@ Do not combine this image deployment with `--base-image` or `--automatic-updates
 .agents/skills/                 six portable project workflows with Codex UI metadata
 .github/agents/                 evidence-based security review profile for GitHub Copilot
 cmd/server/                     typed config, composition, lifecycle
+cmd/profile-migrate/            guarded one-time profile storage cutover
 internal/http/health/           unversioned liveness transport
 internal/http/v1/               Huma operations grouped by resource
 internal/http/v1/routes/        route composition
@@ -238,6 +258,7 @@ internal/platform/auth/         Firebase verification and Huma auth middleware
 internal/platform/firebase/     Firebase Admin client initialization
 internal/platform/middleware/   HTTP security, CORS, Vary, Chi access logs
 internal/platform/pagination/   transport-independent cursor mechanics
+internal/platform/portable/     accepted representations, errors, validation, and OpenAPI projection
 internal/platform/respond/      Chi recovery/errors delegated to Huma
 internal/platform/timeutil/     fixed-precision JSON/CBOR timestamps
 internal/service/github/        bounded GitHub API adapter
