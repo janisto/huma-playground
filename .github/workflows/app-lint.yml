@@ -1,10 +1,9 @@
-name: App code quality
+name: App code quality (linting and formatting)
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -17,71 +16,31 @@ env:
   GOTOOLCHAIN: local
 
 jobs:
-  quality:
-    name: Static analysis and repository checks
+  lint:
+    name: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-
       - name: Set up Go
         uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          check-latest: true
-          cache: true
           cache-dependency-path: |
             go.sum
             functions/go.sum
-
       - name: Set up Just
         uses: extractions/setup-just@v4.0.0
         with:
-          just-version: "1.59.0"
-
+          just-version: '1.59.0'
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v9.3.0
         with:
           version: v2.15.0
           install-only: true
 
-      - name: Check formatting
-        run: just fmt-check
-
-      - name: Lint both modules
-        run: just lint
-
-      - name: Check module files
-        run: just tidy-check
-
-      - name: Check Go modernizations
-        run: just modernize-check
-
-      - name: Check patches
-        run: git diff --check
-
-  lint:
-    name: lint
-    if: ${{ always() }}
-    needs: [quality]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require quality job
-        env:
-          QUALITY: ${{ needs.quality.result }}
-        run: test "$QUALITY" = success
-
-  legacy-lint:
-    name: Require code quality
-    if: ${{ always() }}
-    needs: [lint]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions: {}
-    steps:
-      - name: Require lint
-        env:
-          RESULT: ${{ needs.lint.result }}
-        run: test "$RESULT" = success
+      - name: Check formatting and lint rules in both modules
+        run: just fmt-check lint

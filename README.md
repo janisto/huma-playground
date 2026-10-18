@@ -36,7 +36,7 @@ This repository is not deployed. GCP is a possible future deployment target; the
 - [Just](https://github.com/casey/just)
 - [golangci-lint 2.15.0](https://golangci-lint.run/)
 - [actionlint 1.7.12](https://github.com/rhysd/actionlint) and [zizmor 1.31.1](https://docs.zizmor.sh/) (`brew install actionlint zizmor`)
-- Node.js 24 LTS and Java 21 for emulator integration tests (recipes run Firebase CLI 15.34.0)
+- Node.js 24 LTS and Java 27 for emulator integration tests (recipes run Firebase CLI 15.34.0)
 - Docker or Podman, curl, and jq for container checks
 
 Copy the example environment:
@@ -264,6 +264,14 @@ The app uses `github.com/janisto/huma-observability/v2`. `obs.HTTPRequestContext
 Access logs are privacy-minimized: Huma records route templates and operation IDs without raw paths, peer IPs, or user agents; the local Chi logger follows the same boundary and wraps only Chi-only routes and error handlers. Escaping non-abort panics before a response write are recorded as status 500 with `terminal_reason: "panic"` and error severity. This split also prevents duplicate `/v1` access logs. `obs.Logger(ctx)` is intentionally request-bound; process and background work must receive an explicit logger.
 
 Forwarding headers are removed at the outer HTTP boundary because this example does not define a trusted-proxy boundary; this also prevents forwarded-host values from influencing Huma schema links.
+
+## GitHub Actions
+
+Required `lint` provides independent formatting and lint feedback for both Go modules. Required `ci` enforces Go quality and native vulnerability checks, both modules' builds and tests, race and fuzz checks, Firebase emulators, the production container, actionlint, and offline pedantic zizmor. Expensive validation waits for quality; workflow scanners run independently. PR checks run for every target branch, including stacked PRs.
+
+Coverage reports remain downloadable after test failures when a profile was produced. Workflow scans are read-only and enforcing; there is no duplicate SARIF upload or privileged coverage-comment job.
+
+Dependabot keeps scheduled module, container, and Actions version updates. Verified minor/patch updates can auto-merge after required checks. Security alerts and automated security updates are disabled; native `govulncheck` remains part of local and CI validation.
 
 ## Security notes
 

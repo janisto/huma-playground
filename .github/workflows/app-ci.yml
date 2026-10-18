@@ -1,10 +1,9 @@
-name: App build, tests and deployable artifacts
+name: App validation
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   schedule:
     - cron: '17 5 * * 1'
 
@@ -19,35 +18,56 @@ env:
   GOTOOLCHAIN: local
 
 jobs:
-  unit:
-    name: Unit, race, and fuzz tests
+  quality:
+    name: Go quality and dependency safety
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-
       - name: Set up Go
         uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          check-latest: true
-          cache: true
           cache-dependency-path: |
             go.sum
             functions/go.sum
-
       - name: Set up Just
         uses: extractions/setup-just@v4.0.0
         with:
-          just-version: "1.59.0"
+          just-version: '1.59.0'
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: v2.15.0
+          install-only: true
 
-      - name: Validate toolchain
-        run: go version
+      - name: Check both modules
+        run: just fmt-check lint tidy-check modernize-check vuln
 
-      - name: Download both modules
-        run: just download
+  tests:
+    name: Build, tests, race, and fuzz
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            functions/go.sum
+      - name: Set up Just
+        uses: extractions/setup-just@v4.0.0
+        with:
+          just-version: '1.59.0'
 
       - name: Build both modules
         run: just build
@@ -55,7 +75,18 @@ jobs:
       - name: Test root module with coverage
         run: just test-coverage
 
-      - name: Test function module
+      - name: Generate coverage reports
+        if: ${{ !cancelled() && hashFiles('coverage.out') != '' }}
+        run: |
+          go tool cover -func=coverage.out > coverage-summary.txt
+          go tool cover -html=coverage.out -o coverage.html
+          {
+            echo '### Test coverage'
+            echo
+            sed 's/^/    /' coverage-summary.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Test Functions
         run: just test-functions
 
       - name: Smoke-test Functions Framework target
@@ -67,180 +98,149 @@ jobs:
       - name: Fuzz high-risk parsers
         run: just fuzz
 
-      - name: Generate coverage artifacts
-        run: |
-          go tool cover -func=coverage.out > coverage-summary.txt
-          go tool cover -html=coverage.out -o coverage.html
-
-      - name: Publish coverage summary
-        run: |
-          total=$(grep '^total:' coverage-summary.txt | awk '{print $3}')
-          {
-            echo "### Test Coverage"
-            echo
-            echo "Total coverage: ${total}"
-            echo
-            sed 's/^/    /' coverage-summary.txt
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v7.0.1
+        if: ${{ !cancelled() && hashFiles('coverage.out') != '' }}
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-report
           path: |
             coverage.out
             coverage.html
             coverage-summary.txt
+          if-no-files-found: error
 
   firebase-emulators:
     name: Firebase emulator integration tests
+    needs: quality
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: /dev/null
+      GCE_METADATA_HOST: '127.0.0.1:9'
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-
       - name: Set up Go
         uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          check-latest: true
-          cache: true
-
-      - name: Set up Java
-        uses: actions/setup-java@v6.0.1
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7.0.0
-        with:
-          node-version: '24'
-
+          cache-dependency-path: |
+            go.sum
+            functions/go.sum
       - name: Set up Just
         uses: extractions/setup-just@v4.0.0
         with:
-          just-version: "1.59.0"
+          just-version: '1.59.0'
 
-      - name: Install Firebase CLI
-        run: npm install --global firebase-tools@15.34.0 # zizmor: ignore[adhoc-packages] Pinned standalone CI tool.
+      - name: Set up Java for emulators
+        uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: '27'
+
+      - name: Set up Node.js for Firebase CLI
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24.22.0'
 
       - name: Run required emulator tests
         run: just test-integration-ci
 
-      - name: Publish emulator coverage summary
+      - name: Generate emulator coverage reports
+        if: ${{ !cancelled() && hashFiles('integration-coverage.out') != '' }}
         run: |
-          total=$(grep '^total:' integration-coverage-summary.txt | awk '{print $3}')
+          go tool cover -func=integration-coverage.out > integration-coverage-summary.txt
+          go tool cover -html=integration-coverage.out -o integration-coverage.html
           {
-            echo "### Emulator-backed Test Coverage"
+            echo '### Emulator-backed test coverage'
             echo
-            echo "Total coverage: ${total}"
-            echo
-            echo "This profile includes the root test suite with required Auth and Firestore emulators."
+            sed 's/^/    /' integration-coverage-summary.txt
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload emulator coverage artifacts
-        uses: actions/upload-artifact@v7.0.1
+        if: ${{ !cancelled() && hashFiles('integration-coverage.out') != '' }}
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: emulator-coverage-report
           path: |
             integration-coverage.out
             integration-coverage.html
             integration-coverage-summary.txt
-
-  vulnerability:
-    name: Reachable vulnerability scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@v7.0.0
-        with:
-          go-version-file: go.mod
-          check-latest: true
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            functions/go.sum
-
-      - name: Set up Just
-        uses: extractions/setup-just@v4.0.0
-        with:
-          just-version: "1.59.0"
-
-      - name: Scan both modules
-        run: just vuln
-
-  dependency-review:
-    name: Dependency review
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Review dependency changes
-        if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@v5.0.0
+          if-no-files-found: error
 
   container:
-    name: Container smoke test
+    name: Container build and smoke
+    needs: quality
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-
       - name: Set up Just
         uses: extractions/setup-just@v4.0.0
         with:
-          just-version: "1.59.0"
+          just-version: '1.59.0'
 
       - name: Probe final image
         run: just container-smoke
 
+  actionlint:
+    name: Workflow syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@v0.7.1
+        env:
+          ZIZMOR_OFFLINE: 'true'
+        with:
+          version: '1.31.1'
+          persona: pedantic
+          online-audits: false
+          advanced-security: false
+
   ci:
     name: ci
     if: ${{ always() }}
-    needs:
-      - unit
-      - firebase-emulators
-      - vulnerability
-      - dependency-review
-      - container
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require all CI jobs
-        env:
-          UNIT: ${{ needs.unit.result }}
-          FIREBASE_EMULATORS: ${{ needs['firebase-emulators'].result }}
-          VULNERABILITY: ${{ needs.vulnerability.result }}
-          DEPENDENCY_REVIEW: ${{ needs['dependency-review'].result }}
-          CONTAINER: ${{ needs.container.result }}
-        run: |
-          test "$UNIT" = success
-          test "$FIREBASE_EMULATORS" = success
-          test "$VULNERABILITY" = success
-          test "$DEPENDENCY_REVIEW" = success
-          test "$CONTAINER" = success
-
-  legacy-ci:
-    name: Require CI
-    if: ${{ always() }}
-    needs: [ci]
+    needs: [quality, tests, firebase-emulators, container, actionlint, zizmor]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
-      - name: Require ci
+      - name: Require every validation job to succeed
         env:
-          RESULT: ${{ needs.ci.result }}
-        run: test "$RESULT" = success
+          QUALITY: ${{ needs.quality.result }}
+          TESTS: ${{ needs.tests.result }}
+          FIREBASE_EMULATORS: ${{ needs['firebase-emulators'].result }}
+          CONTAINER: ${{ needs.container.result }}
+          ACTIONLINT: ${{ needs.actionlint.result }}
+          ZIZMOR: ${{ needs.zizmor.result }}
+        run: |
+          test "$QUALITY" = success
+          test "$TESTS" = success
+          test "$FIREBASE_EMULATORS" = success
+          test "$CONTAINER" = success
+          test "$ACTIONLINT" = success
+          test "$ZIZMOR" = success
