@@ -61,10 +61,6 @@ linters:
       require-explanation: true
       require-specific: true
 
-    recvcheck:
-      exclusions:
-        - "Time.MarshalCBOR"
-
     staticcheck:
       checks:
         - all
@@ -89,7 +85,9 @@ formatters:
 
     gofumpt:
       module-path: github.com/janisto/huma-playground
-      extra-rules: true
+      extra:
+        group-params: true
+        clothe-returns: true
 
     golines:
       max-len: 120

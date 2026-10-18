@@ -2,780 +2,90 @@
 
 Instructions for coding agents working in this repository.
 
-`README.md` is for human users and contributors: setup, capabilities, architecture, operations, and contribution entry points. `AGENTS.md` is for coding agents: execution rules, implementation constraints, and validation policy. Do not duplicate agent instructions into the README or turn this file into human onboarding documentation.
-
-## Engineering priorities
-
-- Correctness first, then readability and maintainability, then performance.
-- Inspect the relevant implementation, callers, and existing tests before changing behavior.
-- Prefer the smallest safe change that solves the problem.
-- Reuse existing local patterns and utilities, refactoring them when needed, instead of creating parallel abstractions or adding dependencies.
-- State the failure mode before architectural, security, persistence, or production-impacting changes.
-- Do not declare completion until implementation, validation, and remaining risks are reported.
-- Keep source comments and documentation concise. Do not add progress narration, generated banners, emojis, or speculative TODOs.
-
-## Pull requests
-
-- Format titles as `type[optional scope]: description`. Prefer no scope; include one only when it materially improves clarity.
-- Use `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`, or `revert` as the type. Example: `feat: add response size field`.
-- Keep each pull request focused. In the body, explain why the change is needed, what changed, how it was validated, and any remaining risk.
-- Keep the title suitable for the final squash or merge commit.
-- This repository does not maintain a `CHANGELOG.md`; do not create one or require changelog entries in pull requests.
-
-## Commits
-
-- Follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).
-- Prefer no scope; include one only when it materially improves clarity. Write a short, imperative description. Example: `fix: preserve request ID`.
-- Mark breaking changes with `!` and explain them in a `BREAKING CHANGE:` footer.
-- Before committing, run `just qa` and `git diff --check`.
-
-## GitHub automation
-
-- Reference GitHub Actions by explicit full release tags such as
-  `owner/action@v1.2.3`, not full commit SHAs or floating major-version tags.
-  Dependabot updates those release tags.
-
-## Mandatory skills
-
-- Use `.agents/skills/adversarial-testing/SKILL.md` for every task that plans, creates, modifies, reviews, debugs, or evaluates tests. Apply it alongside any more specific framework or infrastructure testing skill.
-- Use `.agents/skills/readme-maintenance/SKILL.md` for every README audit or change. Also use it to assess README impact whenever public behavior, configuration, setup, commands, architecture, deployment, CI, or supported versions change. A README edit is required only when the audit finds a stale or missing reader-facing claim.
-
-## Project Overview
-
-Huma Playground is a minimal REST API skeleton built with [Huma](https://github.com/danielgtaylor/huma) running on top of Chi via `humachi`. It demonstrates structured logging, RFC 9457 Problem Details for errors, and a modular route layout.
-
-### Key Features
-
-- Chi middleware stack with untrusted forwarding-header removal, security headers, environment-aware CORS, privacy-minimized access logging, request size limits, and panic recovery
-- Huma observability middleware via `github.com/janisto/huma-observability/v2` for router-wide request IDs, Huma access logs, request-scoped Zap loggers, and trace metadata enrichment
-- Plain closed response bodies with exact RFC 9457 Problem Details for errors
-- Strict JSON and CBOR success representations; JSON Problem Details with the same model in ordinary CBOR
-- Cursor-based pagination with RFC 8288 Link headers
-- Firebase Authentication with JWT validation via Huma middleware
-- Firestore integration with atomic create, transaction-safe partial update, existence-checked delete, and audit logging
-- Explicit offline, emulator, and live Firebase modes with fail-closed protected routes
-- Separate minimal Go Cloud Run function module with a local Functions Framework runner
-
-### Tech & Tooling
-
-- Language/runtime: Go 1.26.5+ (repository pin: 1.26.5)
-- Frameworks/libs: Huma v2, Chi v5, Zap, go-chi/cors, Firebase Admin SDK
-- Testing: Go standard `testing` package, Firebase Emulators
-- Task runner: [Just](https://github.com/casey/just) (required for pinned Go toolchain)
-- Firebase CLI: Required for emulators (`just emulators`)
-
----
-
-## Justfile
-
-The project includes a `Justfile` for common development tasks. Run `just` to list available commands.
-
-Key recipes:
-- `just build` - Build both Go modules
-- `just run` - Run the server
-- `just test` - Test both Go modules
-- `just test-race` - Run both modules with the race detector
-- `just fuzz` - Fuzz the cursor and GitHub Link-header parsers
-- `just test-integration-ci` - Require emulator-backed tests and generate separate integration coverage
-- `just functions-smoke` - Probe the registered function target
-- `just coverage` - Run tests and generate coverage report
-- `just lint` - Lint both Go modules
-- `just fmt-check` - Reject formatting drift
-- `just tidy-check` - Reject module-file drift
-- `just workflow-check` - Validate GitHub Actions locally with the installed `actionlint`
-- `just fmt` - Apply formatters
-- `just fix` - Run linter and apply formatters
-- `just check` - Full check (build + test + lint)
-- `just qa` - Quality assurance (tidy + fix + build + test)
-- `just vuln` - Check both modules for reachable vulnerabilities
-- `just container-smoke` - Build and probe the final non-root image
-- `just profile-migration-audit` - Read-only classification of pre-contract profile records
-- `just profile-migration-apply` - Guarded, explicitly confirmed profile storage cutover
-- `just install` - Download module dependencies (alias for download)
-- `just fresh` - Recreate project from clean state
-- `just emulators` - Start Firebase emulators (Auth + Firestore)
-
-The Justfile uses `set dotenv-load` so all recipes automatically load `.env`, including the repository's `GOTOOLCHAIN` pin. Emulator tests configure their fixed local endpoints through `internal/testutil` and do not depend on `.env`; emulator variables in `.env` are only needed when running the application itself in emulator mode. Always prefer `just` recipes over raw `go` or `golangci-lint` commands.
-
----
-
-## Setup
-
-### Requirements
-
-- Go 1.26.5+
-- Just
-- Firebase CLI (for emulators): `npm install -g firebase-tools`
-
-### Install Dependencies
-
-```bash
-just install
-```
-
-### Build
-
-```bash
-just build
-```
-
-### Run
-
-```bash
-just run
-```
-
-The server starts on port 8080 with endpoints:
-- `http://localhost:8080/health` - health probe
-- `http://localhost:8080/openapi.json` - generated OpenAPI schema
-- `http://localhost:8080/v1/hello` - greeting examples
-- `http://localhost:8080/v1/items` - cursor-paginated items
-- `http://localhost:8080/v1/profile` - authenticated profile CRUD
-- `http://localhost:8080/v1/github/owners/{owner}` - GitHub owner info
-- `http://localhost:8080/v1/github/owners/{owner}/repos` - GitHub owner repos
-- `http://localhost:8080/v1/github/repos/{owner}/{repo}` - GitHub repo details
-- `http://localhost:8080/v1/github/repos/{owner}/{repo}/activity` - GitHub repo activity
-- `http://localhost:8080/v1/github/repos/{owner}/{repo}/languages` - GitHub repo languages
-- `http://localhost:8080/v1/github/repos/{owner}/{repo}/tags` - GitHub repo tags
-
----
-
-## Testing
-
-Run all tests:
-
-```bash
-just test
-```
-
-Run tests with coverage report:
-
-```bash
-just coverage
-```
-
-The coverage recipe runs `go test -v -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...`, then generates both a function summary (`go tool cover -func`) and an HTML report (`coverage.html`). Use `go tool cover -func=coverage.out` for the accurate total; per-package percentages shown during the test run are misleadingly low due to `-coverpkg=./...` cross-package instrumentation.
-
----
-
-## Linting
-
-The project uses [golangci-lint](https://golangci-lint.run/) v2 for static analysis and code formatting. Configuration is defined in `.golangci.yml`.
-
-The enabled checks emphasize correctness and reproducibility: error wrapping and nil handling, context and response-body safety, canonical HTTP headers, Zap call structure, duration and slice mistakes, receiver consistency, modern testing APIs, compiler directives, security-sensitive Unicode, and unused or wasted work. Avoid subjective complexity thresholds and blanket exclusions.
-
-Run linter:
-
-```bash
-just lint
-```
-
-Apply formatters (gci, gofumpt, golines) automatically:
-
-```bash
-just fmt
-```
-
-Run linter and apply formatters in one step:
-
-```bash
-just fix
-```
-
----
-
-## Project Structure
-
-```
-.agents/skills/        # Reusable project-specific agent skills
-.github/agents/       # GitHub Copilot custom-agent profiles
-cmd/server/            # Application entrypoint and HTTP server bootstrap
-functions/             # Independent Functions Framework Go module
-internal/http/         # HTTP transport layer
-  health/              # Health check handler (unversioned)
-  v1/                  # Versioned API (v1)
-    github/            # GitHub API proxy endpoint handlers
-    hello/             # Hello endpoint handlers
-    items/             # Items endpoint handlers
-    profile/           # Profile endpoint handlers (requires auth)
-    routes/            # Route registration
-internal/platform/     # Cross-cutting infrastructure
-  audit/               # Audit event logging helpers
-  auth/                # Firebase Auth middleware and JWT validation
-  firebase/            # Firebase Admin SDK initialization
-  middleware/          # Security headers, CORS, vary, Chi-only access logs
-  pagination/          # Cursor-based pagination
-  respond/             # Panic recovery and Problem Details
-  timeutil/            # Time formatting utilities
-internal/service/      # Business logic and data access
-  github/              # GitHub API client and service
-  profile/             # Profile service with Firestore backend
-internal/testutil/     # Test utilities (emulator helpers)
-```
-
-Repository-wide instructions live in this file. Task-specific, portable skills live at
-`.agents/skills/<skill-name>/SKILL.md`. GitHub Copilot custom-agent profiles remain in `.github/agents/` because that is
-the product's supported discovery location.
-
-The repository follows these upstream conventions:
-
-- [AGENTS.md](https://github.com/agentsmd/agents.md) is the canonical open format for repository agent instructions,
-  stewarded by the Agentic AI Foundation under the Linux Foundation.
-- [Agent Skills](https://github.com/agentskills/agentskills) is the canonical specification and documentation source for
-  the required `SKILL.md` filename and `name` and `description` frontmatter. The rendered
-  [format specification](https://agentskills.io/specification) provides detailed schema and validation rules, while
-  [GitHub's Agent Skills documentation](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) lists
-  `.agents/skills/` as a supported project discovery location.
-
-Use `readme-maintenance` for README audits and `openapi-contract` for public API contract work. Do not duplicate these
-workflows in custom-agent profiles. Each skill also keeps Codex UI metadata in `agents/openai.yaml`; regenerate it with
-the `skill-creator` tooling whenever a skill name, description, or default prompt changes.
-
-Current task-specific guidance:
-
-| Name | Location | Purpose |
-|---|---|---|
-| `adversarial-testing` | `.agents/skills/adversarial-testing/` | Enforce risk-driven, mutation-resistant testing across every test layer |
-| `huma-endpoint` | `.agents/skills/huma-endpoint/` | Implement or change Huma v2 endpoints |
-| `go-testing` | `.agents/skills/go-testing/` | Write and review tests in either Go module |
-| `pagination-endpoint` | `.agents/skills/pagination-endpoint/` | Implement cursor-paginated list endpoints |
-| `readme-maintenance` | `.agents/skills/readme-maintenance/` | Reconcile README claims with the repository |
-| `openapi-contract` | `.agents/skills/openapi-contract/` | Maintain runtime-generated OpenAPI and canonical discovery |
-| `security-review` | `.github/agents/security-review.agent.md` | Run an evidence-based GitHub Copilot security audit with a prompt-level read-only boundary |
-
-Repository automation under `.github/` independently checks both Go modules, required Firebase emulators,
-vulnerabilities, the final container, and root and function lint. Labeler configuration treats `.agents/**/*.md` and
-`.github/**/*.md` as documentation.
-
----
-
-## Architecture Principles
-
-### Platform Layer
-
-The `internal/platform/` packages provide shared infrastructure used by HTTP handlers. These packages are organized by concern rather than transport:
-
-| Package | Purpose | Dependencies |
-|---------|---------|--------------|
-| `audit` | Audit event logging helpers | huma-observability, Zap |
-| `auth` | Firebase JWT validation, user context, Huma security middleware | Firebase Admin SDK, Huma |
-| `firebase` | Firebase Admin SDK initialization (Auth + Firestore clients) | Firebase Admin SDK |
-| `middleware` | HTTP middleware (CORS, security headers, vary, Chi-only access logs) | Chi, go-chi/cors, huma-observability, Zap |
-| `pagination` | Cursor encoding/decoding, link header generation | Standard library only |
-| `respond` | Panic recovery, Problem Details error responses | Chi, Huma (for error types) |
-| `timeutil` | Time formatting constants | Standard library only |
-
-**Truly transport-agnostic packages:**
-- `pagination` - Cursor logic works for any transport
-- `timeutil` - Time formatting has no transport coupling
-
-**HTTP-coupled packages (by design):**
-- `middleware` - HTTP-specific (CORS, headers, vary, Chi-only access logs)
-- `respond` - HTTP error handling with RFC 9457 Problem Details
-
-**Key rule:** Platform packages must not import from `internal/http/` (no circular dependencies). HTTP handlers import platform packages, never the reverse.
-
----
-
-## Coding Conventions
-
-### Response Format
-
-Responses use plain structs; no custom envelope wrapper:
-
-```go
-type HelloGetOutput struct {
-    Body Data
-}
-
-func Register(api huma.API) {
-    huma.Get(api, "/hello", func(ctx context.Context, _ *struct{}) (*HelloGetOutput, error) {
-        return &HelloGetOutput{Body: Data{Message: "Hello, World!"}}, nil
-    })
-}
-```
-
-### Input/Output Type Naming
-
-Always prefix input/output types with the resource name for consistency and clarity. This ensures unique schema names in Huma's global registry and makes code self-documenting.
-
-| Operation | Input Type | Output Type |
-|-----------|------------|-------------|
-| GET single | `{Resource}GetInput` | `{Resource}GetOutput` |
-| GET list | `{Resource}ListInput` | `{Resource}ListOutput` |
-| POST | `{Resource}CreateInput` | `{Resource}CreateOutput` |
-| PUT/PATCH | `{Resource}UpdateInput` | `{Resource}UpdateOutput` |
-| DELETE | `{Resource}DeleteInput` | (no body) |
-
-For endpoints needing both path params and body:
-
-```go
-type ResourceUpdateInput struct {
-    ID   string `path:"id"`
-    Body struct {
-        Name string `json:"name"`
-    }
-}
-```
-
-### Error Handling
-
-Errors follow RFC 9457 Problem Details and honor content negotiation:
-- `application/problem+json` when JSON is requested (default, RFC 9457 registered)
-- `application/cbor` with the same Problem Details member model when CBOR is requested
-
-Portable operations use the exact stable taxonomy in `internal/platform/portable`:
-
-```go
-portable.ErrorForContext(ctx, portable.CodeInvalidRequest)
-portable.ErrorForContext(ctx, portable.CodeValidationFailed, issues...)
-portable.ErrorForContext(ctx, portable.CodeInternalError)
-```
-
-Huma parser/validator errors are converted to the same taxonomy by the portable error builder. Panic recovery and Chi-level handlers use Problem Details via `internal/platform/respond`.
-
-### Logging
-
-Use request-scoped loggers from `github.com/janisto/huma-observability/v2`:
-
-```go
-import "github.com/janisto/huma-observability/v2"
-
-obs.Logger(ctx).Info("message", zap.String("key", "value"))
-obs.Logger(ctx).Warn("message", zap.String("key", "value"))
-obs.Logger(ctx).Error("message", zap.Error(err), zap.String("key", "value"))
-```
-
-`obs.Logger(ctx)` preserves request metadata installed by router-wide `obs.HTTPRequestContext` and Huma `obs.RequestContext`. It intentionally returns a no-op logger when no request logger is installed. That means audit helpers and service warning logs are valid only for request-driven paths; direct service calls, background jobs, scripts, and tests using `context.Background()` must use an explicit process logger instead. The app pins Trace Context Level 1 across both context middleware layers and `obs.AccessLogger`. Huma and Chi access logs omit raw paths, peer IPs, and user agents; use route templates for aggregation. Use `internal/platform/middleware.AccessLogger` only for Chi-only route groups and Chi error handlers to avoid duplicate `/v1` access logs. Use the startup logger returned by `obs.NewLogger` for process-level logs outside a request context.
-
-At HTTP dependency boundaries, log unavailable/time-out failures at warning level and unexpected failures at error level exactly once, including a stable operation name and the underlying error. Keep expected domain outcomes such as not found or already exists out of duplicate error logs. Never return dependency internals to clients or log tokens, request bodies, profile data, or other PII.
-
-### Adding New Routes
-
-1. Create a new file under `internal/http/v1` (e.g., `users/handler.go`)
-2. Define output struct with `Body` field for the response payload
-3. Add a registration function and call it from `routes.Register`
-4. Log within handlers using `obs.Logger(ctx)`
-5. Return portable-operation errors using `portable.ErrorForContext`
-6. Use Huma operations for API responses and `http.Redirect` only for deliberate Chi-level redirects
-
-### Handler Pattern
-
-```go
-type UserOutput struct {
-    Body User
-}
-
-func registerUser(api huma.API) {
-    huma.Get(api, "/users/{id}", func(ctx context.Context, input *struct {
-        ID string `path:"id"`
-    }) (*UserOutput, error) {
-        user, err := db.GetUser(ctx, input.ID)
-        if err != nil {
-            return nil, portable.ErrorForContext(ctx, portable.CodeProfileNotFound)
-        }
-        return &UserOutput{Body: user}, nil
-    })
-}
-```
-
-### POST 201 Created Pattern
-
-```go
-type CreateUserOutput struct {
-    Body User
-}
-
-huma.Register(api, huma.Operation{
-    OperationID:   "create-user",
-    Method:        http.MethodPost,
-    Path:          "/users",
-    DefaultStatus: http.StatusCreated,
-}, func(ctx context.Context, input *CreateUserInput) (*CreateUserOutput, error) {
-    user := createUser(input)
-    return &CreateUserOutput{Body: user}, nil
-})
-```
-
-For responses that need a Location header (e.g., resource creation with redirect):
-
-```go
-type CreateUserOutput struct {
-    Location string `header:"Location"`
-    Body     User
-}
-
-huma.Register(api, huma.Operation{
-    OperationID:   "create-user",
-    Method:        http.MethodPost,
-    Path:          "/users",
-    DefaultStatus: http.StatusCreated,
-}, func(ctx context.Context, input *CreateUserInput) (*CreateUserOutput, error) {
-    user := createUser(input)
-    return &CreateUserOutput{
-        Location: fmt.Sprintf("/users/%s", user.ID),
-        Body:     user,
-    }, nil
-})
-```
-
-### JSON Encoding
-
-- JSON responses are UTF-8 with HTML escaping disabled
-- Portable response objects contain only their specified wire members; no `$schema` field is injected
-
-### JSON Property Naming
-
-Use **camelCase** for all JSON property names in API request and response bodies. This aligns with Google's protobuf-to-JSON mapping convention.
-
-```go
-type Item struct {
-    ID        string        `json:"id"`
-    InStock   bool          `json:"inStock"`
-    CreatedAt timeutil.Time `json:"createdAt"`
-}
-```
-
-### Firestore Field Naming
-
-Always use **snake_case** for Firestore document field names. Storage naming is independent of the JSON API contract. The mapping between API and storage representations happens in the service layer:
-
-```go
-// API model (camelCase JSON)
-type Profile struct {
-    PhoneNumber string        `json:"phoneNumber"`
-    CreatedAt   timeutil.Time `json:"createdAt"`
-}
-
-// Firestore document (snake_case storage)
-type firestoreProfile struct {
-    PhoneNumber string    `firestore:"phone_number"`
-    CreatedAt   time.Time `firestore:"created_at"`
-}
-```
-
----
-
-## REST API Implementation Guidelines
-
-### URI Design
-
-- Use plural nouns for collections (`/users`, not `/user`)
-- Avoid verbs in URIs; let HTTP methods convey the action
-- Nest resources to express relationships (`/posts/{postId}/comments`); limit nesting to one level
-- Use lowercase with hyphens for multi-word segments (`/user-profiles`)
-
-### Input Validation
-
-- Validate all input; never sanitize (reject invalid input, don't transform it)
-- Use Huma's built-in validation tags (`minimum`, `maximum`, `pattern`, `required`)
-- Return 400 for malformed syntax; 422 for validation failures on valid syntax
-- Reject path values that URL resolution can reinterpret, including repository names made only of dot segments
-
-### OpenAPI Error Metadata
-
-- List only status codes that the operation can reach through its handler and applicable middleware
-- Do not advertise request-body failures such as 413 or 415 on bodyless GET operations
-- Add exact contract assertions when a shared error list could accidentally broaden operation metadata
-
-### Firestore Mutations
-
-- Use `DocumentRef.Create` for create-if-absent behavior
-- Use transactions only when an update must read current state before writing narrow fields
-- Use `DocumentRef.Delete` with `firestore.Exists` for delete-if-present behavior; do not add a read-before-delete transaction
-- Map Firestore precondition/not-found results to the service's not-found sentinel and preserve dependency error classification
-
-### HTTP Methods
-
-| Method | Purpose | Success Status |
-|--------|---------|----------------|
-| GET | Retrieve resource(s) | 200 OK |
-| POST | Create a resource | 201 Created |
-| PUT | Replace a resource entirely | 200 OK or 204 No Content |
-| PATCH | Partial update | 200 OK or 204 No Content |
-| DELETE | Remove a resource | 204 No Content |
-
-### Status Codes
-
-| Status | Use Case |
-|--------|----------|
-| 200 OK | Successful GET, PUT, PATCH |
-| 201 Created | Successful POST (include Location header) |
-| 204 No Content | Successful DELETE |
-| 304 Not Modified | Conditional GET with matching ETag |
-| 400 Bad Request | Malformed syntax, missing required fields |
-| 401 Unauthorized | Missing or invalid authentication |
-| 403 Forbidden | Authenticated but not authorized |
-| 404 Not Found | Resource does not exist |
-| 405 Method Not Allowed | HTTP method not supported for resource |
-| 422 Unprocessable Content | Validation failures on specific fields |
-| 500 Internal Server Error | Unexpected server error |
-
-### Error Responses
-
-All errors use RFC 9457 Problem Details format:
-
-```json
-{
-  "title": "Not Found",
-  "status": 404,
-  "detail": "resource not found"
-}
-```
-
-Use `portable.ErrorForContext` with a stable portable code and only the allowed validation-source details. Do not expose dependency messages.
-
-### Request ID
-
-- `X-Request-ID` header tracks all server requests end-to-end
-- Missing, invalid, repeated, or comma-combined candidates are replaced rather than rejected
-- The selected value is installed by `obs.HTTPRequestContext`, reused by `obs.RequestContext`, emitted in responses, and included in logs
-- Do not forward the caller's request ID or any caller credentials to anonymous GitHub requests
-
-### Content Types
-
-**Requests:**
-- Set `Content-Type: application/json` for JSON request bodies
-- Set `Content-Type: application/cbor` for CBOR request bodies
-- Huma returns 415 Unsupported Media Type for invalid content types
-
-**Responses:**
-- Default: `application/json` (RFC 8259)
-- Alternate: `application/cbor` (RFC 8949)
-- Errors: `application/problem+json` (RFC 9457) or ordinary `application/cbor` with the same member model
-- Format selected via `Accept` header
-- Error format is controlled by `Accept` header, not request `Content-Type`
-
-### Timestamps
-
-- Use ISO 8601 / RFC 3339 format with UTC timezone and millisecond precision: `2024-01-15T10:30:00.000Z`
-- Use `timeutil.Time` wrapper for JSON responses to ensure consistent `.000Z` output
-- Use `timeutil.RFC3339Millis` constant for formatting: `time.Now().UTC().Format(timeutil.RFC3339Millis)`
-- Go uses a reference time for format strings: `2006-01-02T15:04:05.000Z` (Jan 2, 2006 15:04:05)
-- Store and transmit in UTC; convert for display only
-
-### Filtering & Sorting
-
-- Use query parameters: `?status=active&sort=created_at&order=desc`
-- Portable scalar query parameters are closed: reject unknown, repeated, and comma-combined values
-- Default sort order should be consistent and documented
-
-### Pagination
-
-Use cursor-based pagination via `internal/platform/pagination`. Invalid cursors must return 400 Bad Request per JSON:API cursor pagination best practices.
-
-```go
-// Input struct with pagination params
-// pagination.Params provides Cursor and Limit (default 20, max 100)
-type ListInput struct {
-    pagination.Params
-    Filter string `query:"filter"`
-}
-
-// Output struct with Link header
-type ListOutput struct {
-    Link string `header:"Link" doc:"RFC 8288 pagination links"`
-    Body ListData
-}
-
-const operationID = "listItems"
-
-// In handler - validate cursor before use:
-cursor, err := pagination.DecodeCursor(input.Cursor)
-if err != nil {
-	return nil, portable.ErrorForContext(ctx, portable.CodeInvalidRequest)
-}
-
-limit := input.DefaultLimit()
-if input.Cursor != "" && (!cursor.Matches(pagination.Scope{
-	Operation: operationID, Filter: input.Filter, Limit: limit,
-}) || cursor.Anchor == "" || findItemIndex(items, cursor.Anchor) == -1) {
-	return nil, portable.ErrorForContext(ctx, portable.CodeInvalidRequest)
-}
-
-// Use Paginate helper for consistent pagination
-result := pagination.Paginate(items, cursor, limit, operationID, input.Filter, getID, "/v1/items", query)
-return &ListOutput{Link: result.LinkHeader, Body: data}, nil
-```
-
-Links provided via HTTP `Link` header per RFC 8288.
-
----
-
-## Testing Guidelines
-
-### Test Structure
-
-- Tests are colocated with source files using `_test.go` suffix
-- Use Go's standard `testing` package
-- Create test servers using Chi router and Huma
-
-### Test Pattern
-
-```go
-import (
-    "github.com/danielgtaylor/huma/v2/humatest"
-)
-
-func TestMyFeature(t *testing.T) {
-    _, api := humatest.New(t)
-    hello.Register(api)
-    resp := api.Get("/hello")
-
-    if resp.Code != http.StatusOK {
-        t.Fatalf("expected 200 OK, got %d", resp.Code)
-    }
-
-    var data hello.Data
-    if err := json.Unmarshal(resp.Body.Bytes(), &data); err != nil {
-        t.Fatalf("failed to decode response: %v", err)
-    }
-    if data.Message != "Hello, World!" {
-        t.Fatalf("unexpected message: %s", data.Message)
-    }
-}
-```
-
-Use the real Chi/Huma composition in `cmd/server` tests when middleware order, request IDs, mounts, 404/405 handling, documentation, or schema links are part of the behavior under test.
-
-### Error Response Testing
-
-```go
-var problem huma.ErrorModel
-if err := json.Unmarshal(resp.Body.Bytes(), &problem); err != nil {
-    t.Fatalf("failed to unmarshal problem: %v", err)
-}
-if problem.Status != http.StatusNotFound {
-    t.Fatalf("expected 404, got %d", problem.Status)
-}
-if problem.Title != "Not Found" {
-    t.Fatalf("unexpected title: %s", problem.Title)
-}
-```
-
-### Coverage Requirements
-
-- Tests should cover success paths, error paths, and edge cases
-- Verify error responses use Problem Details format
-- Test trace ID propagation through the request context
-
-### Firebase Emulator Testing
-
-Firestore integration tests require running emulators. Start them before running tests:
-
-```bash
-just emulators
-```
-
-Emulator configuration (from `firebase.json`):
-| Service | Port |
-|---------|------|
-| Auth | 7110 |
-| Firestore | 7130 |
-| Emulator UI | 4000 |
-
-Integration test pattern with emulator detection:
-
-```go
-import (
-    "cloud.google.com/go/firestore"
-
-    "github.com/janisto/huma-playground/internal/testutil"
-)
-
-func TestFirestoreOperation(t *testing.T) {
-    testutil.SkipIfEmulatorUnavailable(t)
-    testutil.SetupEmulator(t)
-    testutil.ClearFirestore(t)
-
-    client, err := firestore.NewClient(t.Context(), testutil.ProjectID)
-    if err != nil {
-        t.Fatalf("create Firestore client: %v", err)
-    }
-    defer func() {
-        testutil.ClearFirestore(t)
-        if err := client.Close(); err != nil {
-            t.Errorf("close Firestore client: %v", err)
-        }
-    }()
-
-    // Test operations using client
-}
-```
-
-Tests auto-skip when emulators are unavailable locally. `just test-integration-ci`
-sets `REQUIRE_FIREBASE_EMULATORS=1`, so the required lane fails instead of
-skipping. Use narrow fakes declared in the consuming `*_test.go` file; production
-packages must not export mocks or test fixtures. Keep emulator helper status and
-bounded-diagnostic behavior covered by ordinary unit tests; use the real emulators
-for Firebase SDK, authentication, cleanup, CRUD, and concurrency behavior.
-
----
-
-## Testing & Testability
-
-- **NEVER add test-related code to production code.** No `if testing` branches, no test flags, no mock injection points.
-- If code is not unit testable, refactor it. Use dependency injection, extract interfaces, or restructure. Do not pollute production code with test scaffolding.
-- Tests belong in `*_test.go` files; production code must remain test-agnostic.
-
----
-
-## Secrets & Environment Variables
-
-- Never commit secrets. Use environment variables for configuration.
-- Access config through environment variables; don't hardcode secrets in business logic.
-- Don't log secrets or PII; ensure logs redact sensitive fields.
-- Typical env vars:
-  - `FIREBASE_MODE` (`offline`, `emulator`, or `live`)
-  - `FIREBASE_PROJECT_ID`
-  - `FIREBASE_AUTH_EMULATOR_HOST` and `FIRESTORE_EMULATOR_HOST` (configure together as valid `host:port` authorities)
-  - `CORS_ALLOWED_ORIGINS` (required outside development)
-  - `GOOGLE_APPLICATION_CREDENTIALS` (path to service account JSON; uses ADC if not set)
-  - `GOOGLE_CLOUD_PROJECT`, `GCP_PROJECT`, `GCLOUD_PROJECT`, or `PROJECT_ID` (for Cloud Trace correlation)
-
----
-
-## Authentication
-
-### Protected Endpoints
-
-Use Huma's security mechanism with Firebase Auth middleware for protected routes:
-
-```go
-import "github.com/janisto/huma-playground/internal/platform/auth"
-
-func registerProfile(api huma.API) {
-    huma.Register(api, huma.Operation{
-        OperationID: "get-profile",
-        Method:      http.MethodGet,
-        Path:        "/profile",
-        Security:    auth.RequireAuth(),
-    }, handleGetProfile)
-}
-```
-
-`cmd/server/application.go` registers the bearer scheme, and
-`internal/http/v1/routes/routes.go` installs `auth.NewAuthMiddleware` once for
-the Huma router. Handler packages declare only the security requirement.
-
-### Accessing User in Handlers
-
-The auth middleware sets the user in context for secured endpoints. For any endpoint with `Security` configured, the middleware either rejects the request (401/503) before the handler is called, or successfully authenticates and sets the user in context. Therefore, `UserFromContext` is guaranteed non-nil in secured handlers:
-
-```go
-func handleGetProfile(ctx context.Context, _ *struct{}) (*ProfileOutput, error) {
-    user := auth.UserFromContext(ctx)
-    // user is guaranteed non-nil for secured endpoints because the auth
-    // middleware rejects unauthenticated requests before reaching the handler
-    return &ProfileOutput{Body: Profile{ID: user.UID}}, nil
-}
-```
-
----
-
-## Repository restrictions
-
-- Do not modify `go.mod` or `go.sum` unless a dependency change is explicitly in scope.
-- Use Huma's built-in helpers for Huma operation errors.
-- Use `internal/platform/respond` for Chi-level 404, 405, and panic recovery; it delegates serialization and schema links to the configured Huma API.
-- Verify repository paths, APIs, and commands from the checkout or current tooling before relying on them.
+## Engineering
+
+- Inspect the affected implementation, callers, and tests first. Reuse local
+  patterns and keep changes focused, readable, and idiomatic Go.
+- State the failure mode before architectural, security, persistence, or
+  production-impacting changes. Preserve unrelated work.
+- Validate review findings against actual behavior and requirements. Simplify
+  unnecessary behavior instead of adding machinery to defend it.
+- Keep instructions actionable. Remove obsolete rules, completed-task narration,
+  and duplicated onboarding or tutorials. README.md owns contributor setup.
+- Report implementation, validation, and remaining risks before completion.
+
+## Commits and pull requests
+
+- Work on task branches, never directly on the default branch.
+- Use Conventional Commits and PR titles: `type: imperative description`, with a
+  scope only when useful. Mark breaking changes with `!` and a
+  `BREAKING CHANGE:` footer explaining the impact.
+- Keep each PR focused; explain the problem, resulting behavior, validation,
+  and remaining risk. Run `just qa` and `git diff --check` before committing.
+- This repository has no CHANGELOG.md; do not introduce one.
+
+## Architecture and contracts
+
+- The root application and `functions/` are independent Go modules. Root
+  `./...` does not cover Functions; validate both through the Just recipes.
+- Platform packages must not import `internal/http`. Keep the separate
+  Functions Framework example independent of Huma and application internals.
+- Preserve current public behavior and stable, unique operation IDs. Use
+  resource-prefixed input/output types and closed JSON/CBOR bodies with
+  camelCase properties and UTC millisecond timestamps. Keep Firestore field
+  tags snake_case independently of JSON names.
+- Use `internal/platform/portable` for operation errors. Chi-level 404, 405,
+  and recovery use `internal/platform/respond` and the configured Huma API.
+  Keep generated OpenAPI aligned with runtime behavior.
+- Protected operations declare `auth.RequireAuth()`; registration installs
+  authentication middleware once. Derive profile ownership from verified UID.
+- Firestore create is atomic, updates use transactions, and deletes use an
+  existence precondition. Do not replace these with read-then-write sequences.
+- Use `obs.Logger(ctx)` for request work and an explicit logger for process or
+  background work. Preserve Trace Context Level 1 and one terminal access log.
+  Do not log raw paths, tokens, profile data, peer IPs, or user agents. Sanitize
+  public dependency errors; log their cause once at the owning boundary.
+- Keep offline mode credential-free. Emulators require both local hosts and a
+  synthetic `demo-*` project. Live mode requires explicit real credentials.
+  Never run cloud or live-data mutations as part of local validation.
+- This repository is not deployed; GCP is a possible future target. Keep
+  generic deployment examples accurate without claiming deployment readiness.
+
+## Tooling and GitHub automation
+
+- Support only the current stable Go line. Update both modules, the example
+  toolchain pin, CI, containers, implementation, and tests together. Review
+  official dependency/tool migrations and explain concrete upstream constraints.
+- Prefer Just recipes, which load `.env` and its Go toolchain selection.
+- Keep an independent pure formatting/lint workflow for early feedback. Keep
+  module consistency, audits, tests, builds, and workflow scans in CI.
+- Critical: before changing Actions, inspect GitHub Settings > Rules > Rulesets
+  in Chrome. Preserve required check names and GitHub App sources or update
+  them in Chrome with the change. Keep existing required checks reporting
+  until replacement enforcement reaches trunk. Verify actual PR checks and
+  final settings in Chrome; API/CLI inspection supplements this verification.
+  Never weaken protection to make a PR pass.
+- Pin Actions to explicit full release tags and downloaded tools to reviewed
+  versions. Keep local and CI actionlint/zizmor selections aligned. Enforce one
+  read-only offline pedantic zizmor scan in plain mode, without SARIF uploads.
+- Keep auto-merge limited to verified Dependabot minor/patch updates behind
+  required checks. Do not add duplicate package filters, enablement triggers,
+  state queries, or revocation machinery. Handle old PR cleanup once.
+- Keep Dependabot security alerts and automated security updates disabled.
+  Preserve scheduled version updates, native audits, and secret protection.
+  Do not add replacement alert bots or repeatedly triage unchanged blockers.
+
+## Skills and validation
+
+- Use `.agents/skills/adversarial-testing/SKILL.md` for test work and apply
+  `.agents/skills/go-testing/SKILL.md` for Go/Huma conventions.
+- Use `.agents/skills/readme-maintenance/SKILL.md` to assess README impact for
+  behavior, configuration, command, tooling, CI, or deployment-guidance changes.
+- Use the existing endpoint, pagination, and OpenAPI skills for those tasks.
+- Exercise production boundaries and credible failure paths. Keep narrow fakes
+  in tests; do not add production test flags, backdoors, or mock-only hooks.
+- Run focused checks first, then `just qa`. Run race, fuzz, required emulator,
+  Functions smoke, and real container checks when their paths are affected.
+  Required emulator validation must fail when emulators are unavailable.
+- Validate modified skills with the skill-creator validator and check local
+  Markdown links. Do not claim checks that were not executed.

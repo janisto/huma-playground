@@ -1,5 +1,5 @@
-cloud.google.com/go/functions v1.25.0 h1:ndUtLkam3XF9b0t2zVACH9D/EgFBISbVuQFqRz/X58k=
-cloud.google.com/go/functions v1.25.0/go.mod h1:b/tqakoKeAkj9RspEjqswWf5299Lkz9C/742QUD3OEk=
+cloud.google.com/go/functions v1.26.0 h1:I1698A08LwvH3ppcIs+F/1pypQ6nzFo2OigLb0hglZ4=
+cloud.google.com/go/functions v1.26.0/go.mod h1:cc40K7+fd6/QLYjPta8YK6nFzLiFaxjqxHBuNAMwdOY=
 github.com/GoogleCloudPlatform/functions-framework-go v1.9.2 h1:Cev/PdoxY86bJjGwHJcpiWMhrZMVEoKp9wuEp9gCUvw=
 github.com/GoogleCloudPlatform/functions-framework-go v1.9.2/go.mod h1:wLEV4uSJztSBI+QyUy2fkHBuGFjRIAEDOqcEQ2hwmgE=
 github.com/cloudevents/sdk-go/v2 v2.16.2 h1:ZYDFrYke4FD+jM8TZTJJO6JhKHzOQl2oqpFK1D+NnQM=

@@ -38,17 +38,9 @@ run-port port=PORT:
 functions-run port="8080":
     cd functions && GOWORK=off FUNCTION_TARGET=Hello LOCAL_ONLY=true PORT={{ port }} go run ./cmd/server
 
-[group('operations')]
-profile-migration-audit project manifest="":
-    go run ./cmd/profile-migrate --project={{ project }} {{ if manifest != "" { "--manifest=" + manifest } else { "" } }}
-
-[group('operations')]
-profile-migration-apply project manifest confirm:
-    go run ./cmd/profile-migrate --project={{ project }} --manifest={{ manifest }} --apply --confirm-project={{ confirm }}
-
 [group('test')]
 emulators:
-    firebase emulators:start --only auth,firestore
+    npx --yes firebase-tools@15.34.0 emulators:start --only auth,firestore --project demo-test-project
 
 [group('test')]
 test *args:
@@ -87,7 +79,7 @@ fuzz fuzz_time="5s":
 
 [group('test')]
 test-integration-ci *args:
-    REQUIRE_FIREBASE_EMULATORS=1 firebase emulators:exec --only auth,firestore --project demo-test-project \
+    REQUIRE_FIREBASE_EMULATORS=1 npx --yes firebase-tools@15.34.0 emulators:exec --only auth,firestore --project demo-test-project \
         "just test-app -count=1 -covermode=atomic -coverpkg=./... -coverprofile=integration-coverage.out {{ args }}"
     go tool cover -func=integration-coverage.out > integration-coverage-summary.txt
     go tool cover -html=integration-coverage.out -o integration-coverage.html
@@ -191,6 +183,7 @@ vuln-functions:
 [group('qa')]
 workflow-check:
     actionlint
+    zizmor --offline --persona=pedantic .
 
 [group('qa')]
 modernize-check:
@@ -198,10 +191,10 @@ modernize-check:
     cd functions && GOWORK=off go fix -diff ./...
 
 [group('qa')]
-qa: tidy fix build test
+qa: tidy fix check
 
 [group('qa')]
-check: fmt-check lint build test
+check: workflow-check fmt-check lint tidy-check modernize-check build coverage test-functions vuln
 
 alias install := download
 [group('lifecycle')]
@@ -265,25 +258,46 @@ container-smoke image="huma-playground:smoke" name="huma-playground-smoke" host_
     #!/usr/bin/env bash
     set -euo pipefail
     runtime="{{ CONTAINER_RUNTIME }}"
+    tmp="$(mktemp -d)"
+    container_id=""
     cleanup() {
       result=$?
-      if [[ "$result" -ne 0 ]]; then "$runtime" logs {{ name }} 2>&1 | tail -n 200 >&2 || true; fi
-      "$runtime" stop {{ name }} >/dev/null 2>&1 || true
+      if [[ -n "$container_id" ]]; then
+        if [[ "$result" -ne 0 ]]; then "$runtime" logs "$container_id" 2>&1 | tail -n 200 >&2 || true; fi
+        "$runtime" rm --force "$container_id" >/dev/null 2>&1 || true
+      fi
+      rm -rf "$tmp"
     }
     trap cleanup EXIT
     just container-build {{ image }} ci-smoke
     test "$("$runtime" image inspect --format '{{ "{{.Config.User}}" }}' {{ image }})" = "65532:65532"
-    "$runtime" run -d --rm --name {{ name }} \
+    container_id="$("$runtime" run -d --name {{ name }} \
       -e APP_ENVIRONMENT=development \
       -e FIREBASE_MODE=offline \
       -e PORT=8080 \
-      -p {{ host_port }}:8080 {{ image }} >/dev/null
+      -p 127.0.0.1:{{ host_port }}:8080 {{ image }})"
+    base="http://127.0.0.1:{{ host_port }}"
     for _ in {1..60}; do
-      if curl --fail --silent "http://127.0.0.1:{{ host_port }}/health" >/dev/null; then break; fi
+      if curl --fail --silent --max-time 5 "$base/health" >"$tmp/health.json"; then break; fi
       sleep 0.25
     done
-    curl --fail --silent "http://127.0.0.1:{{ host_port }}/openapi.json" | grep -F '"openapi":"3.1.0"' >/dev/null
-    "$runtime" logs {{ name }} 2>&1 | grep -F '"version":"ci-smoke"' >/dev/null
+    jq -e '. == {"status":"healthy"}' "$tmp/health.json"
+    curl --fail --silent --max-time 5 -D "$tmp/headers" -H 'X-Request-ID: container-smoke' "$base/v1/hello" \
+      | jq -e '. == {"message":"Hello, World!"}'
+    tr -d '\r' <"$tmp/headers" | grep -qi '^X-Request-Id: container-smoke$'
+    if grep -qi '^Server:' "$tmp/headers"; then
+      printf '%s\n' 'Unexpected Server header' >&2
+      exit 1
+    fi
+    test "$(curl --fail --silent --max-time 5 -H 'Accept: application/cbor' -o "$tmp/hello.cbor" -w '%{content_type}' "$base/v1/hello")" = application/cbor
+    test -s "$tmp/hello.cbor"
+    curl --fail --silent --max-time 5 "$base/openapi.json" | jq -e '.openapi == "3.1.0"'
+    "$runtime" logs "$container_id" >"$tmp/logs" 2>&1
+    grep -F '"version":"ci-smoke"' "$tmp/logs"
+    grep -F '"go_version":"go1.27.2"' "$tmp/logs"
+    "$runtime" stop --time 10 "$container_id" >/dev/null
+    test "$("$runtime" inspect --format '{{ "{{.State.ExitCode}}" }}' "$container_id")" = 0
+    "$runtime" logs "$container_id" 2>&1 | grep -F '"message":"server exited"'
 
 [group('container')]
 container-logs name="huma-playground":

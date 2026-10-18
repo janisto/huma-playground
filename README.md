@@ -28,14 +28,16 @@ A compact, production-conscious REST API example using [Huma v2](https://huma.ro
 - A deliberately small, separately deployable Go Functions Framework example
 - Required CI execution for both Go modules plus separate emulator-backed coverage
 
+This repository is not deployed. GCP is a possible future deployment target; the commands below are examples for your own project.
+
 ## Requirements
 
-- Go 1.26.5+ (the repository currently pins 1.26.5)
+- Go 1.27.2 (the only supported Go release line is 1.27)
 - [Just](https://github.com/casey/just)
-- [golangci-lint v2](https://golangci-lint.run/)
-- [actionlint](https://github.com/rhysd/actionlint) (`brew install actionlint`)
-- Firebase CLI and Java 21 when running emulator integration tests
-- Docker or Podman for container checks
+- [golangci-lint 2.15.0](https://golangci-lint.run/)
+- [actionlint 1.7.12](https://github.com/rhysd/actionlint) and [zizmor 1.31.1](https://docs.zizmor.sh/) (`brew install actionlint zizmor`)
+- Node.js 24 LTS and Java 21 for emulator integration tests (recipes run Firebase CLI 15.34.0)
+- Docker or Podman, curl, and jq for container checks
 
 Copy the example environment:
 
@@ -141,6 +143,8 @@ All repository workflows go through Just so `.env` and `GOTOOLCHAIN` are applied
 
 | Command | Purpose |
 |---|---|
+| `just qa` | Apply safe fixes, then run the complete local gate |
+| `just check` | Run workflow scans, formatting/lint, module checks, builds, coverage, Functions tests, and audits |
 | `just build` | Build both Go modules |
 | `just test` | Test both Go modules |
 | `just test-race` | Run both modules with the race detector |
@@ -150,15 +154,13 @@ All repository workflows go through Just so `.env` and `GOTOOLCHAIN` are applied
 | `just fmt-check` | Reject formatting drift |
 | `just tidy-check` | Reject module-file drift |
 | `just vuln` | Run `govulncheck` against both modules |
-| `just workflow-check` | Validate GitHub Actions locally with the installed `actionlint` |
+| `just workflow-check` | Validate Actions with actionlint and enforcing offline pedantic zizmor |
 | `just coverage` | Generate root application coverage reports |
 | `just functions-run` | Run the local Functions Framework target |
 | `just functions-smoke` | Build and probe the registered function target |
 | `just emulators` | Start Auth and Firestore emulators |
 | `just test-integration-ci` | Require emulator-backed tests and generate their separate coverage report |
 | `just container-smoke` | Build and probe the final non-root image |
-| `just profile-migration-audit PROJECT [MANIFEST]` | Read and classify profile records without writing |
-| `just profile-migration-apply PROJECT MANIFEST CONFIRM` | Apply an authorized profile cutover after exact project confirmation |
 
 `go.work` is optional, local-only convenience. It is ignored intentionally. Every root recipe sets `GOWORK=off` for the nested function module, so clean clones and CI do not depend on a workspace file.
 
@@ -177,24 +179,6 @@ Ports:
 - Emulator UI: `127.0.0.1:4000`
 
 Ordinary local tests skip emulator cases when emulators are absent. The required CI recipe sets `REQUIRE_FIREBASE_EMULATORS=1`, so unavailable or broken emulators fail rather than silently reducing coverage. It writes a separate `integration-coverage.*` report; CI does not merge that profile with the fast unit report.
-
-## One-time profile data migration
-
-Deployments with pre-contract profile records must audit them before serving the adopted profile lifecycle. The audit recognizes only the exact known legacy shape and the accepted canonical shape. It blocks ambiguous ownership, duplicate logical principals, invalid data, and legacy records without explicit terms-acceptance evidence; output uses one-way principal fingerprints rather than identifiers or profile data.
-
-Start read-only with the intended Firestore project and, when legacy records exist, a reviewed manifest based on [`docs/profile-migration-manifest.example.json`](docs/profile-migration-manifest.example.json):
-
-```bash
-just profile-migration-audit PROJECT_ID path/to/reviewed-manifest.json
-```
-
-The apply command is intentionally separate and requires the project ID twice. It preflights the full dataset before writing and replaces each authorized record transactionally, so reruns are safe after interruption:
-
-```bash
-just profile-migration-apply PROJECT_ID path/to/reviewed-manifest.json PROJECT_ID
-```
-
-Quiesce profile writes for the complete audit-and-apply window; otherwise a record created or changed after the dataset preflight can make the reviewed migration set stale. Both commands use Application Default Credentials and refuse to run when `FIRESTORE_EMULATOR_HOST` is non-empty. Run neither against a project that has not been explicitly selected and reviewed.
 
 ## Separate Go function
 
@@ -218,7 +202,7 @@ Deploy it as a Cloud Run function, not through Firebase CLI:
 gcloud run deploy huma-playground-hello \
   --source functions \
   --function Hello \
-  --base-image go126 \
+  --base-image go127 \
   --region REGION \
   --allow-unauthenticated
 ```
@@ -232,7 +216,7 @@ just container-build
 just container-smoke
 ```
 
-The final image is distroless, statically linked, and runs as UID/GID `65532:65532`. The build injects the supplied version into startup logs and OCI labels.
+The final image is distroless, statically linked, and runs as UID/GID `65532:65532`. The build injects the supplied version into startup logs and OCI labels. The smoke check verifies the compiled Go version, credential-free startup, health and JSON/CBOR behavior, request IDs, OpenAPI discovery, and graceful shutdown.
 
 Deploy the already-built image:
 
@@ -250,7 +234,6 @@ Do not combine this image deployment with `--base-image` or `--automatic-updates
 .agents/skills/                 six portable project workflows with Codex UI metadata
 .github/agents/                 evidence-based security review profile for GitHub Copilot
 cmd/server/                     typed config, composition, lifecycle
-cmd/profile-migrate/            guarded one-time profile storage cutover
 internal/http/health/           unversioned liveness transport
 internal/http/v1/               Huma operations grouped by resource
 internal/http/v1/routes/        route composition
