@@ -44,16 +44,3 @@ jobs:
 
       - name: Check formatting and lint rules in both modules
         run: just fmt-check lint
-
-  legacy-lint:
-    name: Require code quality
-    if: ${{ always() }}
-    needs: [lint]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions: {}
-    steps:
-      - name: Require lint
-        env:
-          RESULT: ${{ needs.lint.result }}
-        run: test "$RESULT" = success

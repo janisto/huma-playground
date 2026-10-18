@@ -244,16 +244,3 @@ jobs:
           test "$CONTAINER" = success
           test "$ACTIONLINT" = success
           test "$ZIZMOR" = success
-
-  legacy-ci:
-    name: Require CI
-    if: ${{ always() }}
-    needs: [ci]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions: {}
-    steps:
-      - name: Require ci
-        env:
-          RESULT: ${{ needs.ci.result }}
-        run: test "$RESULT" = success
