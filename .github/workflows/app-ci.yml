@@ -31,7 +31,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.26.x'
+          go-version-file: go.mod
           check-latest: true
           cache: true
           cache-dependency-path: |
@@ -40,6 +40,8 @@ jobs:
 
       - name: Set up Just
         uses: extractions/setup-just@v4.0.0
+        with:
+          just-version: "1.59.0"
 
       - name: Validate toolchain
         run: go version
@@ -102,7 +104,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.26.x'
+          go-version-file: go.mod
           check-latest: true
           cache: true
 
@@ -119,9 +121,11 @@ jobs:
 
       - name: Set up Just
         uses: extractions/setup-just@v4.0.0
+        with:
+          just-version: "1.59.0"
 
       - name: Install Firebase CLI
-        run: npm install --global firebase-tools@15.24.0 # zizmor: ignore[adhoc-packages] Pinned standalone CI tool.
+        run: npm install --global firebase-tools@15.34.0 # zizmor: ignore[adhoc-packages] Pinned standalone CI tool.
 
       - name: Run required emulator tests
         run: just test-integration-ci
@@ -158,7 +162,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.26.x'
+          go-version-file: go.mod
           check-latest: true
           cache: true
           cache-dependency-path: |
@@ -167,6 +171,8 @@ jobs:
 
       - name: Set up Just
         uses: extractions/setup-just@v4.0.0
+        with:
+          just-version: "1.59.0"
 
       - name: Scan both modules
         run: just vuln
@@ -195,12 +201,14 @@ jobs:
 
       - name: Set up Just
         uses: extractions/setup-just@v4.0.0
+        with:
+          just-version: "1.59.0"
 
       - name: Probe final image
         run: just container-smoke
 
   ci:
-    name: Require CI
+    name: ci
     if: ${{ always() }}
     needs:
       - unit
@@ -223,3 +231,16 @@ jobs:
           test "$VULNERABILITY" = success
           test "$DEPENDENCY_REVIEW" = success
           test "$CONTAINER" = success
+
+  legacy-ci:
+    name: Require CI
+    if: ${{ always() }}
+    needs: [ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require ci
+        env:
+          RESULT: ${{ needs.ci.result }}
+        run: test "$RESULT" = success

@@ -75,5 +75,5 @@ just functions-smoke
 just check
 ```
 
-After code changes, finish with `just build`, `just test`, and `just lint`. Run `just test-integration-ci` when Firebase
-behavior changes.
+Run focused checks first, then `just qa` for the complete local gate. Run `just test-integration-ci` when Firebase
+behavior changes; use invalid ADC credentials during emulator validation to expose accidental credential discovery.

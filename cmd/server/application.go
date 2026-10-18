@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"runtime"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -55,11 +56,11 @@ func newApplicationClients(ctx context.Context, cfg config, logger *zap.Logger) 
 
 	if cfg.FirebaseMode == firebaseModeOffline {
 		logger.Warn("Firebase is offline; protected routes return service unavailable")
-		return &applicationClients{dependencies: dependencies{
+		return &applicationClients{
 			verifier: unavailableVerifier{},
 			profiles: unavailableProfileStore{},
 			github:   githubClient,
-		}}, nil
+		}, nil
 	}
 	if cfg.FirebaseMode == firebaseModeEmulator {
 		logger.Info("using Firebase emulators", zap.String("project_id", cfg.FirebaseProjectID))
@@ -69,12 +70,10 @@ func newApplicationClients(ctx context.Context, cfg config, logger *zap.Logger) 
 		return nil, fmt.Errorf("initialize Firebase clients: %w", err)
 	}
 	return &applicationClients{
-		Clients: clients,
-		dependencies: dependencies{
-			verifier: auth.NewFirebaseVerifier(clients.Auth),
-			profiles: profilesvc.NewFirestoreStore(clients.Firestore),
-			github:   githubClient,
-		},
+		Clients:  clients,
+		verifier: auth.NewFirebaseVerifier(clients.Auth),
+		profiles: profilesvc.NewFirestoreStore(clients.Firestore),
+		github:   githubClient,
 	}, nil
 }
 
@@ -229,7 +228,11 @@ func serveListener(
 	shutdownTimeout time.Duration,
 	logger *zap.Logger,
 ) error {
-	logger.Info("server listening", zap.String("addr", listener.Addr().String()), zap.String("version", Version))
+	logger.Info("server listening",
+		zap.String("addr", listener.Addr().String()),
+		zap.String("version", Version),
+		zap.String("go_version", runtime.Version()),
+	)
 
 	listenErr := make(chan error, 1)
 	go func() {

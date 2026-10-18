@@ -1,11 +1,11 @@
 module github.com/janisto/huma-playground/functions
 
-go 1.26.5
+go 1.27.2
 
 require github.com/GoogleCloudPlatform/functions-framework-go v1.9.2
 
 require (
-	cloud.google.com/go/functions v1.25.0 // indirect
+	cloud.google.com/go/functions v1.26.0 // indirect
 	github.com/cloudevents/sdk-go/v2 v2.16.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

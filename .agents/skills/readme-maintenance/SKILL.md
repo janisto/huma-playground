@@ -50,7 +50,8 @@ maintaining compatibility with an old README structure.
 - State that Huma accepts and returns JSON and CBOR; error format follows `Accept`, not request `Content-Type`.
 - Keep emulator variables development-only and explain why production rejects them.
 - Keep the separate function deliberately small; do not describe it as Huma or Firebase Admin code.
-- Do not claim this repository is deployed to production.
+- State that this repository is not deployed and GCP is a possible future target.
+- Keep manual deployment examples generic and verify provider support for the selected Go line.
 - Prefer primary sources for runtime, framework, deployment, and security claims that may change.
 - Do not add agent instructions, source tutorials, speculative features, or duplicated `AGENTS.md` content.
 

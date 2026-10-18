@@ -51,8 +51,7 @@ func helloHandler(w http.ResponseWriter, r *http.Request) {
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
-			var maxBytesErr *http.MaxBytesError
-			if errors.As(err, &maxBytesErr) {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 				return
 			}
@@ -64,8 +63,7 @@ func helloHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-			var maxBytesErr *http.MaxBytesError
-			if errors.As(err, &maxBytesErr) {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 				return
 			}

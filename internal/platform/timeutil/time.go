@@ -12,6 +12,8 @@ import (
 const RFC3339Millis = "2006-01-02T15:04:05.000Z"
 
 // Time serializes time.Time in UTC with fixed millisecond precision.
+//
+//nolint:recvcheck // Value marshaling and pointer decoding preserve time.Time codec semantics.
 type Time struct {
 	time.Time
 }

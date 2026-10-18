@@ -122,9 +122,7 @@ func (service *routeGitHubService) GetRepository(context.Context, string, string
 	service.record()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	return githubsvc.Repository{
-		RepositorySummary: githubsvc.RepositorySummary{
-			ID: 1, Name: "repo", FullName: "octocat/repo", HTMLURL: "https://github.com/octocat/repo",
-		},
+		ID: 1, Name: "repo", FullName: "octocat/repo", HTMLURL: "https://github.com/octocat/repo",
 		CreatedAt: now, UpdatedAt: now, DefaultBranch: "main", Topics: []string{},
 	}, nil
 }

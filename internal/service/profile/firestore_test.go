@@ -3,6 +3,7 @@ package profile
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -503,39 +504,54 @@ func TestFirestoreConcurrentCreate(t *testing.T) {
 
 	ctx := t.Context()
 	const numGoroutines = 10
-	results := make(chan error, numGoroutines)
-
+	type result struct {
+		profile *Profile
+		err     error
+	}
+	results := make(chan result, numGoroutines)
+	start := make(chan struct{})
 	var wg sync.WaitGroup
-	for range numGoroutines {
+	for index := range numGoroutines {
 		wg.Go(func() {
-			_, err := store.Create(ctx, "concurrent-user", completeCreateParams(CreateParams{
-				FirstName:    "Test",
+			<-start
+			profile, err := store.Create(ctx, "concurrent-user", completeCreateParams(CreateParams{
+				FirstName:    fmt.Sprintf("Writer%d", index),
 				LastName:     "User",
 				ContactEmail: "test@example.com",
 			}))
-			results <- err
+			results <- result{profile: profile, err: err}
 		})
 	}
+	close(start)
 	wg.Wait()
 	close(results)
 
-	var success, alreadyExists int
-	for err := range results {
+	var success, rejected int
+	var winner *Profile
+	for result := range results {
 		switch {
-		case err == nil:
+		case result.err == nil:
 			success++
-		case errors.Is(err, ErrAlreadyExists):
-			alreadyExists++
+			winner = result.profile
+		case errors.Is(result.err, ErrAlreadyExists):
+			rejected++
+		case errors.Is(result.err, ErrUnavailable) && status.Code(result.err) == codes.Aborted:
+			// Firestore may abort contended commits before evaluating the precondition.
+			rejected++
 		default:
-			t.Errorf("unexpected error: %v", err)
+			t.Errorf("unexpected error: %v", result.err)
+		}
+		if result.err != nil && result.profile != nil {
+			t.Errorf("failed create returned a profile: %#v", result.profile)
 		}
 	}
-
-	if success != 1 {
-		t.Errorf("expected exactly 1 success, got %d", success)
+	if success != 1 || rejected != numGoroutines-1 || winner == nil {
+		t.Fatalf("expected one winner and %d rejected writes, got success=%d rejected=%d winner=%#v",
+			numGoroutines-1, success, rejected, winner)
 	}
-	if alreadyExists != numGoroutines-1 {
-		t.Errorf("expected %d already exists, got %d", numGoroutines-1, alreadyExists)
+	stored, err := store.Get(ctx, "concurrent-user")
+	if err != nil || stored == nil || *stored != *winner {
+		t.Fatalf("persisted profile must match the sole winner: stored=%#v winner=%#v err=%v", stored, winner, err)
 	}
 }
 
@@ -565,13 +581,15 @@ func TestFirestoreConcurrentDelete(t *testing.T) {
 	wg.Wait()
 	close(results)
 
-	var success, notFound int
+	var success, rejected int
 	for err := range results {
 		switch {
 		case err == nil:
 			success++
 		case errors.Is(err, ErrNotFound):
-			notFound++
+			rejected++
+		case errors.Is(err, ErrUnavailable) && status.Code(err) == codes.Aborted:
+			rejected++
 		default:
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -580,8 +598,11 @@ func TestFirestoreConcurrentDelete(t *testing.T) {
 	if success != 1 {
 		t.Errorf("expected exactly 1 success, got %d", success)
 	}
-	if notFound != numGoroutines-1 {
-		t.Errorf("expected %d not found, got %d", numGoroutines-1, notFound)
+	if rejected != numGoroutines-1 {
+		t.Errorf("expected %d rejected deletes, got %d", numGoroutines-1, rejected)
+	}
+	if _, err := store.Get(ctx, "delete-concurrent"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("profile must remain deleted after all contenders: %v", err)
 	}
 }
 
