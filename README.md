@@ -231,7 +231,7 @@ Do not combine this image deployment with `--base-image` or `--automatic-updates
 ## Architecture
 
 ```text
-.agents/skills/                 six portable project workflows with Codex UI metadata
+.agents/skills/                 portable project workflows with Codex UI metadata
 .github/agents/                 evidence-based security review profile for GitHub Copilot
 cmd/server/                     typed config, composition, lifecycle
 internal/http/health/           unversioned liveness transport
