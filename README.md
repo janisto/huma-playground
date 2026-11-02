@@ -32,7 +32,7 @@ This repository is not deployed. GCP is a possible future deployment target; the
 
 ## Requirements
 
-- Go 1.27.2 (the only supported Go release line is 1.27)
+- Go 1.27.3 (the only supported Go release line is 1.27)
 - [Just](https://github.com/casey/just)
 - [golangci-lint 2.15.0](https://golangci-lint.run/)
 - [actionlint 1.7.12](https://github.com/rhysd/actionlint) and [zizmor 1.31.1](https://docs.zizmor.sh/) (`brew install actionlint zizmor`)
