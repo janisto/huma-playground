@@ -3,16 +3,16 @@ module github.com/janisto/huma-playground
 go 1.27.3
 
 require (
-	cloud.google.com/go/firestore v1.26.0
+	cloud.google.com/go/firestore v1.29.2
 	firebase.google.com/go/v4 v4.22.0
-	github.com/danielgtaylor/huma/v2 v2.39.1
-	github.com/fxamacker/cbor/v2 v2.9.6
+	github.com/danielgtaylor/huma/v2 v2.40.0
+	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-chi/cors v1.2.2
 	github.com/janisto/huma-observability/v2 v2.0.0
 	github.com/joho/godotenv v1.5.1
 	go.uber.org/zap v1.28.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.85.0
 )
 
 require (
@@ -42,7 +42,7 @@ require (
 	github.com/google/s2a-go v0.1.11 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.23 // indirect
-	github.com/googleapis/gax-go/v2 v2.26.2 // indirect
+	github.com/googleapis/gax-go/v2 v2.27.0 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.9.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
