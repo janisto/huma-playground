@@ -120,6 +120,10 @@ human users and contributors. Do not duplicate agent instructions into it.
 
 ## Tooling and GitHub automation
 
+- Do not add or enable extra workflows, jobs, automated tasks, or scheduled
+  triggers without explicit user permission. Modernization, security work, and
+  consistency requests do not authorize extra automation. This repository
+  showcases conventions; minimize notifications and ongoing maintainer work.
 - Support only the current stable Go line. Update both modules, the example
   toolchain pin, CI, containers, implementation, and tests together. Review
   official dependency/tool migrations and explain concrete upstream constraints.
@@ -139,5 +143,7 @@ human users and contributors. Do not duplicate agent instructions into it.
   required checks. Do not add duplicate package filters, enablement triggers,
   state queries, or revocation machinery. Handle old PR cleanup once.
 - Keep Dependabot security alerts and automated security updates disabled.
-  Preserve scheduled version updates, native audits, and secret protection.
-  Do not add replacement alert bots or repeatedly triage unchanged blockers.
+  Preserve quarterly Dependabot version updates, native audits, and secret
+  protection. Do not add GitHub Actions schedules or increase update frequency
+  without explicit user permission. Do not add replacement alert bots or
+  repeatedly triage unchanged blockers.
