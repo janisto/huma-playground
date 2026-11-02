@@ -1,6 +1,6 @@
 module github.com/janisto/huma-playground/functions
 
-go 1.27.2
+go 1.27.3
 
 require github.com/GoogleCloudPlatform/functions-framework-go v1.9.2
 

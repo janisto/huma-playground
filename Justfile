@@ -294,7 +294,7 @@ container-smoke image="huma-playground:smoke" name="huma-playground-smoke" host_
     curl --fail --silent --max-time 5 "$base/openapi.json" | jq -e '.openapi == "3.1.0"'
     "$runtime" logs "$container_id" >"$tmp/logs" 2>&1
     grep -F '"version":"ci-smoke"' "$tmp/logs"
-    grep -F '"go_version":"go1.27.2"' "$tmp/logs"
+    grep -F '"go_version":"go1.27.3"' "$tmp/logs"
     "$runtime" stop --time 10 "$container_id" >/dev/null
     test "$("$runtime" inspect --format '{{ "{{.State.ExitCode}}" }}' "$container_id")" = 0
     "$runtime" logs "$container_id" 2>&1 | grep -F '"message":"server exited"'
