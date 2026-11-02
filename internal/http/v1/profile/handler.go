@@ -26,7 +26,7 @@ func Register(api huma.API, prefix string, store profilesvc.Store) {
 		Tags:          []string{"Profile"},
 		DefaultStatus: http.StatusCreated,
 		Security:      auth.RequireAuth(),
-		MaxBodyBytes:  portable.MaxRequestBodyBytes + 1,
+		MaxBodyBytes:  portable.MaxRequestBodyBytes,
 		Errors: []int{
 			http.StatusBadRequest,
 			http.StatusUnauthorized,
@@ -91,7 +91,7 @@ func Register(api huma.API, prefix string, store profilesvc.Store) {
 		Description:  "Updates fields on the authenticated user's profile. Only provided fields are updated.",
 		Tags:         []string{"Profile"},
 		Security:     auth.RequireAuth(),
-		MaxBodyBytes: portable.MaxRequestBodyBytes + 1,
+		MaxBodyBytes: portable.MaxRequestBodyBytes,
 		Errors: []int{
 			http.StatusBadRequest,
 			http.StatusUnauthorized,

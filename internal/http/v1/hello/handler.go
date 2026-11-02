@@ -29,7 +29,7 @@ func Register(api huma.API) {
 		Summary:      "Generate a personalized greeting",
 		Tags:         []string{"Hello"},
 		Security:     []map[string][]string{},
-		MaxBodyBytes: portable.MaxRequestBodyBytes + 1,
+		MaxBodyBytes: portable.MaxRequestBodyBytes,
 		Errors: []int{
 			http.StatusBadRequest,
 			http.StatusNotAcceptable,
