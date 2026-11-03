@@ -13,7 +13,13 @@ type Response struct {
 	Status string `json:"status" enum:"healthy" doc:"Dependency-free liveness status"`
 }
 
+const (
+	catalogLink = `</.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"`
+	schemaLink  = `</openapi.json>; rel="service-desc"; type="application/json"`
+)
+
 type output struct {
+	Link []string `header:"Link" doc:"Typed API catalog and OpenAPI discovery links"`
 	Body Response
 }
 
@@ -24,21 +30,25 @@ func Register(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/health",
 		Summary:     "Get application liveness",
-		Tags:        []string{"Health"},
-		Security:    []map[string][]string{},
+		Description: "Returns process liveness without authentication or external-service calls; it does not establish Firebase readiness. " +
+			"No query parameters are accepted.",
+		Tags:     []string{"Health"},
+		Security: []map[string][]string{},
 		Errors: []int{
 			http.StatusBadRequest,
 			http.StatusNotAcceptable,
 			http.StatusInternalServerError,
 		},
 	}, func(context.Context, *struct{}) (*output, error) {
-		return &output{Body: Response{Status: "healthy"}}, nil
+		return &output{Link: []string{catalogLink, schemaLink}, Body: Response{Status: "healthy"}}, nil
 	})
 }
 
 // Handler is a plain HTTP handler for the health check endpoint.
 func Handler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Add("Link", catalogLink)
+	w.Header().Add("Link", schemaLink)
 	if err := json.NewEncoder(w).Encode(Response{Status: "healthy"}); err != nil {
 		return
 	}

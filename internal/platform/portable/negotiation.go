@@ -1,6 +1,7 @@
 package portable
 
 import (
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +13,8 @@ const (
 	MediaTypeCBOR        = "application/cbor"
 	MediaTypeProblemJSON = "application/problem+json"
 )
+
+var utf8MediaParameters = map[string]string{"charset": "utf-8"}
 
 type acceptMatch struct {
 	parameters  int
@@ -32,26 +35,26 @@ func NegotiateSuccess(accept string, jsonOnly bool) (string, bool) {
 	}
 	candidates := []struct {
 		media        string
-		withCharset  bool
+		parameters   map[string]string
 		explicitOnly bool
 	}{
-		{MediaTypeJSON, false, false},
-		{MediaTypeJSON, true, false},
+		{MediaTypeJSON, nil, false},
+		{MediaTypeJSON, utf8MediaParameters, false},
 	}
 	if !jsonOnly {
 		candidates = append(candidates, struct {
 			media        string
-			withCharset  bool
+			parameters   map[string]string
 			explicitOnly bool
-		}{MediaTypeCBOR, false, true})
+		}{MediaTypeCBOR, nil, true})
 	}
 	selected := ""
 	selectedQuality := float64(0)
 	for _, candidate := range candidates {
-		quality, ok := mediaTypeQuality(accept, candidate.media, candidate.explicitOnly, candidate.withCharset)
+		quality, ok := mediaTypeQuality(accept, candidate.media, candidate.explicitOnly, candidate.parameters)
 		if ok && quality > selectedQuality {
 			selectedQuality = quality
-			if candidate.withCharset {
+			if len(candidate.parameters) > 0 {
 				selected = MediaTypeJSONUTF8
 			} else {
 				selected = candidate.media
@@ -64,17 +67,17 @@ func NegotiateSuccess(accept string, jsonOnly bool) (string, bool) {
 // NegotiateProblem selects the GCP Problem Details representation. It falls
 // back to JSON when the request has no acceptable error representation.
 func NegotiateProblem(accept string) string {
-	baseQuality, _ := mediaTypeQuality(accept, MediaTypeProblemJSON, false, false)
-	exactBaseQuality, exactBase := mediaTypeQuality(accept, MediaTypeProblemJSON, true, false)
+	baseQuality, _ := mediaTypeQuality(accept, MediaTypeProblemJSON, false, nil)
+	exactBaseQuality, exactBase := mediaTypeQuality(accept, MediaTypeProblemJSON, true, nil)
 	if exactBase {
 		baseQuality = exactBaseQuality
 	}
-	utf8Quality, _ := mediaTypeQuality(accept, MediaTypeProblemJSON, false, true)
-	exactUTF8Quality, exactUTF8 := mediaTypeQuality(accept, MediaTypeProblemJSON, true, true)
+	utf8Quality, _ := mediaTypeQuality(accept, MediaTypeProblemJSON, false, utf8MediaParameters)
+	exactUTF8Quality, exactUTF8 := mediaTypeQuality(accept, MediaTypeProblemJSON, true, utf8MediaParameters)
 	if exactUTF8 {
 		utf8Quality = exactUTF8Quality
 	}
-	cborQuality, _ := mediaTypeQuality(accept, MediaTypeCBOR, true, false)
+	cborQuality, _ := mediaTypeQuality(accept, MediaTypeCBOR, true, nil)
 	jsonQuality := max(baseQuality, utf8Quality)
 	if cborQuality > jsonQuality && cborQuality > 0 {
 		return MediaTypeCBOR
@@ -85,12 +88,25 @@ func NegotiateProblem(accept string) string {
 	return MediaTypeProblemJSON
 }
 
-func mediaTypeQuality(accept, mediaType string, explicitOnly, withCharset bool) (float64, bool) {
+// AcceptsDocument applies the shared media-range rules to one fixed document.
+func AcceptsDocument(accept, contentType string) bool {
+	if accept == "" {
+		return true
+	}
+	mediaType, parameters, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	quality, matched := mediaTypeQuality(accept, mediaType, false, parameters)
+	return matched && quality > 0
+}
+
+func mediaTypeQuality(accept, mediaType string, explicitOnly bool, parameters map[string]string) (float64, bool) {
 	bestParameters := -1
 	bestSpecificity := -1
 	bestQuality := float64(0)
 	for _, rawRange := range splitOutsideQuotes(accept, ',') {
-		match, ok := matchMediaRange(rawRange, mediaType, explicitOnly, withCharset)
+		match, ok := matchMediaRange(rawRange, mediaType, explicitOnly, parameters)
 		if !ok {
 			continue
 		}
@@ -106,7 +122,7 @@ func mediaTypeQuality(accept, mediaType string, explicitOnly, withCharset bool) 
 	return bestQuality, bestSpecificity >= 0
 }
 
-func matchMediaRange(rawRange, target string, explicitOnly, withCharset bool) (acceptMatch, bool) {
+func matchMediaRange(rawRange, target string, explicitOnly bool, parameters map[string]string) (acceptMatch, bool) {
 	parts, valid := splitSemicolonFields(rawRange)
 	if !valid || len(parts) == 0 {
 		return acceptMatch{}, false
@@ -145,20 +161,14 @@ func matchMediaRange(rawRange, target string, explicitOnly, withCharset bool) (a
 		if !ok {
 			return acceptMatch{}, false
 		}
-		if name != "charset" || !strings.HasSuffix(target, "+json") && target != MediaTypeJSON ||
-			!strings.EqualFold(decoded, "utf-8") {
+		expected, present := parameters[name]
+		if !present || decoded != expected && (name != "charset" || !strings.EqualFold(decoded, expected)) {
 			return acceptMatch{}, false
 		}
 		if _, duplicate := mediaParameters[name]; duplicate {
 			return acceptMatch{}, false
 		}
 		mediaParameters[name] = struct{}{}
-	}
-	// A parameterless media range matches either permitted JSON candidate.
-	// A charset-bearing range is narrower and only matches the candidate with
-	// that parameter.
-	if len(mediaParameters) == 1 && !withCharset {
-		return acceptMatch{}, false
 	}
 	return acceptMatch{parameters: len(mediaParameters), quality: quality, specificity: specificity}, true
 }

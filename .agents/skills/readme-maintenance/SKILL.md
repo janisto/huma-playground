@@ -16,7 +16,7 @@ Read only areas relevant to the documentation change, using these files as the p
 - application and configuration: `cmd/server/main.go`, `cmd/server/application.go`, and `cmd/server/config.go`;
 - routes and contracts: `internal/http/health/`, `internal/http/v1/routes/`, and registered handler packages;
 - Huma documentation and schemas: API construction in `cmd/server/application.go` and contract tests in
-  `cmd/server/main_test.go`;
+  `cmd/server/main_test.go`, plus `internal/http/docs/`, `documentation.go`, `llms.txt`, and `llms-full.txt`;
 - separate function: `functions/function.go`, `functions/cmd/server/main.go`, and `functions/go.mod`;
 - tooling and deployment: `Justfile`, `Dockerfile`, `firebase.json`, `.env.example`, and `.github/workflows/`;
 - dependencies and versions: `go.mod`, `functions/go.mod`, and pinned workflow or container references.
@@ -35,7 +35,8 @@ Keep the document concise and onboarding-oriented. Preserve or update these subj
 - independent root and function module commands;
 - the distinction that Firebase CLI runs Auth and Firestore emulators but does not deploy the Go function;
 - the Cloud Run source-deployment function path and container-image service path;
-- runtime-generated OpenAPI discovery at `/openapi.json`, container behavior, and required CI;
+- runtime-generated OpenAPI at `/openapi.json`, native usage descriptions, the API catalog and embedded usage guides,
+  container behavior, and required CI;
 - concise project layout, contribution pointer, and license.
 
 Organize material for readers rather than preserving a rigid heading order. Remove stale sections instead of
@@ -47,7 +48,10 @@ maintaining compatibility with an old README structure.
 - Match defaults and failure behavior to `loadConfig` and application composition.
 - Describe the Go modules as independent; do not imply root `./...` crosses into `functions/`.
 - Describe `/health` as dependency-free liveness, not Firebase readiness.
-- State that Huma accepts and returns JSON and CBOR; error format follows `Accept`, not request `Content-Type`.
+- State that Huma accepts and returns JSON and CBOR; ordinary API error format follows `Accept`, not request
+  `Content-Type`. Documentation errors are always plain Problem JSON.
+- Keep human onboarding here and link the consumer guides for complete API usage. Describe catalog root-relative
+  resolution, exact embedded guide bytes, dependency-free access, and the catalog-only HEAD extension accurately.
 - Keep emulator variables development-only and explain why production rejects them.
 - Keep the separate function deliberately small; do not describe it as Huma or Firebase Admin code.
 - State that this repository is not deployed and GCP is a possible future target.

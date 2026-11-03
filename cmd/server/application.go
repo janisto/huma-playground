@@ -17,6 +17,7 @@ import (
 	"github.com/janisto/huma-observability/v2"
 	"go.uber.org/zap"
 
+	"github.com/janisto/huma-playground/internal/http/docs"
 	"github.com/janisto/huma-playground/internal/http/health"
 	"github.com/janisto/huma-playground/internal/http/v1/routes"
 	"github.com/janisto/huma-playground/internal/platform/auth"
@@ -170,6 +171,7 @@ func newRouter(cfg config, deps dependencies, logger *zap.Logger) http.Handler {
 	health.Register(api)
 	routes.Register(api, cfg.APIPrefix, deps.verifier, deps.profiles, deps.github)
 	portable.FinalizeOpenAPI(api)
+	docs.Register(router.With(httpAccessLogger))
 	router.With(httpAccessLogger).Get("/openapi.json", openAPIHandler(api))
 	return router
 }
@@ -177,6 +179,7 @@ func newRouter(cfg config, deps dependencies, logger *zap.Logger) http.Handler {
 func openAPIHandler(api huma.API) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", portable.AcceptHeader(request.Header))
+		writer.Header().Add("Link", docs.IndexLink)
 		encoder := json.NewEncoder(writer)
 		encoder.SetEscapeHTML(false)
 		if err := encoder.Encode(api.OpenAPI()); err != nil {

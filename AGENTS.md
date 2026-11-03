@@ -12,6 +12,12 @@ human users and contributors. Do not duplicate agent instructions into it.
   before adding abstractions or dependencies.
 - Validate review findings against requirements and reproducible behavior.
   Simplify unnecessary behavior instead of adding machinery to defend it.
+- Do not add dependency source patches, vendored forks, or runtime monkey-patches.
+  Preserve ordinary installs and routine Dependabot updates. Prefer supported
+  native behavior and document non-blocking upstream limitations. Reproduce
+  failures in core behavior and compare unpatched alternatives; if a solution
+  changes agreed guarantees or has uncertain ongoing maintenance cost, present
+  the evidence and ask the user before implementation.
 - State the failure mode before architectural, security, persistence, or
   production-impacting changes.
 - Report implementation, validation, and remaining risks before completion.
@@ -104,6 +110,9 @@ human users and contributors. Do not duplicate agent instructions into it.
 - Use `internal/platform/portable` for operation errors. Chi-level 404, 405,
   and recovery use `internal/platform/respond` and the configured Huma API.
   Keep generated OpenAPI aligned with runtime behavior.
+- Update root `llms.txt` and `llms-full.txt` with API usage changes. Keep the
+  catalog and guides public, dependency-free, and limited to explicitly embedded
+  assets; preserve typed discovery links and unrelated `Link` values.
 - Protected operations declare `auth.RequireAuth()`; registration installs
   authentication middleware once. Derive profile ownership from verified UID.
 - Firestore create is atomic, updates use transactions, and deletes use an

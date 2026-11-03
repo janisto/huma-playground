@@ -1,0 +1,31 @@
+# Huma Playground
+
+> A local Go/Huma reference REST API with JSON/CBOR, Firebase-owned profiles,
+> cursor pagination, and anonymous read-only GitHub projections.
+
+This application is not deployed. GCP is a possible future target. From the
+repository root, copy `.env.example` to `.env` and run `just run`; the default
+local origin is `http://localhost:8080`. Public operations and documentation
+work without Google credentials. Profiles need the local Firebase emulators
+and an emulator ID token, as described in the complete guide.
+
+From a running application's origin, retrieve `/.well-known/api-catalog` and
+resolve its root-relative links against that retrieval URL. The catalog links
+the runtime OpenAPI contract, both guides, and health. `/health` also advertises
+the catalog and OpenAPI through typed HTTP links. These public documents grant
+no access to protected operations.
+
+## API usage
+
+- [Complete usage guide](llms-full.txt): Curated, self-contained reference for broad or offline retrieval, including requests, profile CRUD, local credentials, and recovery.
+- [Local runtime OpenAPI](http://localhost:8080/openapi.json): Contract for the default local server; replace the origin when running on another address.
+- [README examples](https://github.com/janisto/huma-playground/blob/main/README.md): Human onboarding and local emulator commands.
+
+## Implementation reference
+
+- [Application composition](https://github.com/janisto/huma-playground/blob/main/cmd/server/application.go): Middleware ordering and public/protected routing.
+- [Documentation routes](https://github.com/janisto/huma-playground/blob/main/internal/http/docs/handler.go): Same-build usage guides and RFC 9727 catalog.
+- [Versioned routes](https://github.com/janisto/huma-playground/blob/main/internal/http/v1/routes/routes.go): Hello, items, GitHub, and current-principal profiles.
+- [Authentication](https://github.com/janisto/huma-playground/blob/main/internal/platform/auth/middleware.go): Firebase bearer verification and ownership context.
+- [Persistence](https://github.com/janisto/huma-playground/blob/main/internal/service/profile/firestore.go): Atomic profile create, transactional updates, and existence-preconditioned delete.
+- [OpenAPI projection](https://github.com/janisto/huma-playground/blob/main/internal/platform/portable/openapi.go): Huma runtime-generated schemas and portable response constraints; no generated specification is committed.

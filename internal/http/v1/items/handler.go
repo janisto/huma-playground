@@ -21,9 +21,11 @@ func Register(api huma.API, prefix string) {
 		Method:      http.MethodGet,
 		Path:        "/items",
 		Summary:     "List items with cursor-based pagination",
-		Description: "Returns a paginated list of items. Only limit, cursor, and category are accepted; unknown or repeated query parameters are rejected.",
-		Tags:        []string{"Items"},
-		Security:    []map[string][]string{},
+		Description: "Reads the fixed public item catalog, applying the optional category filter before cursor pagination. " +
+			"Follow returned Link URLs; cursors are opaque and scoped to the original filter and limit. " +
+			"Only limit, cursor, and category are accepted.",
+		Tags:     []string{"Items"},
+		Security: []map[string][]string{},
 		Errors: []int{
 			http.StatusBadRequest,
 			http.StatusNotAcceptable,

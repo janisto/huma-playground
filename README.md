@@ -15,6 +15,7 @@ A compact, production-conscious REST API example using [Huma v2](https://huma.ro
 
 - Huma v2 typed operations and runtime-generated OpenAPI 3.1
 - Exact fourteen-operation portable contract plus `GET /openapi.json` discovery
+- Public RFC 9727 catalog and embedded API usage guides, with typed discovery links
 - Strict JSON and CBOR requests and responses; JSON Problem Details with the same model in ordinary CBOR
 - One Huma error pipeline for operation and Chi-level 404, 405, and recovery responses
 - Request IDs, trace metadata, operation-aware access logs, and request-scoped Zap loggers
@@ -58,6 +59,8 @@ Open:
 
 - `http://localhost:8080/health`
 - `http://localhost:8080/openapi.json`
+- `http://localhost:8080/.well-known/api-catalog`
+- `http://localhost:8080/llms.txt`
 
 Example:
 
@@ -115,6 +118,9 @@ These checks prevent accidental use of the Auth emulator outside development, wh
 | GET | `/v1/github/repos/{owner}/{repo}/languages` | Repository language bytes |
 | GET | `/v1/github/repos/{owner}/{repo}/tags` | Cursor-paginated tags |
 | GET | `/openapi.json` | Generated OpenAPI 3.1 document |
+| GET, HEAD | `/.well-known/api-catalog` | RFC 9727 links to the schema, guides, and health |
+| GET | `/llms.txt` | Selective API usage index |
+| GET | `/llms-full.txt` | Complete API usage guide |
 
 Profile JSON uses camelCase (`firstName`, `lastName`, `contactEmail`, `phoneNumber`, `marketingOptIn`, `termsAccepted`). Firestore uses independent snake_case storage names. `contactEmail` is normalized user-supplied contact data and is not the verified Firebase identity email. `termsAccepted` must be `true`; updates cannot revoke it.
 
@@ -126,16 +132,36 @@ Each sample item's `price` is a closed money object with non-negative `amountMin
 
 Use `Accept: application/json` or `Accept: application/cbor`. JSON is the default.
 
-Errors are RFC 9457 Problem Details:
+Ordinary API errors are RFC 9457 Problem Details:
 
 - `application/problem+json`
 - `application/cbor` when CBOR is negotiated
 
 Success and error objects are closed and contain no framework-added envelope or schema-link fields. Malformed syntax returns `400`; semantic validation returns `422`; unsupported request media returns `415`; and an unacceptable response representation returns `406`.
 
+Documentation failures always use `application/problem+json`, including unsupported methods. The catalog supports
+bodyless HEAD; guides and OpenAPI remain GET-only. HEAD errors never carry a response body.
+
 Operation metadata lists only errors reachable for that operation. Unexpected Firebase and GitHub dependency failures are logged once with request correlation and a safe operation name; clients receive generic Problem Details without upstream internals.
 
 Request bodies are limited to exactly 1,000,000 bytes. Non-empty bodies require a supported `Content-Type`, including streamed content whose length is unknown. Unknown or repeated scalar query parameters, unknown body properties, duplicate JSON object members, non-finite CBOR floats, and trailing documents are rejected. JSON and CBOR container nesting is capped at 32 levels, and inbound containers are bounded to 1,024 entries without unbounded materialization. Missing, malformed, repeated, or comma-combined `X-Request-ID` values are replaced with a generated identifier. Application request contexts expire before the server write timeout so Firebase and GitHub work is canceled within the response budget.
+
+## API documentation and discovery
+
+Huma generates OpenAPI from the native operations and DTOs in the running application; no generated specification is
+committed. All fourteen operations include usage descriptions covering relevant prerequisites, ownership, side effects,
+pagination, and recovery. The root `/openapi.json` route exposes that build's document without a UI or standalone-schema alias.
+
+The public `/.well-known/api-catalog` serves an [RFC 9727](https://www.rfc-editor.org/rfc/rfc9727) linkset. Resolve its
+root-relative schema, guide, and health links against the catalog retrieval URL. Health advertises typed catalog and
+OpenAPI links for both JSON and CBOR. Catalog, OpenAPI, and the complete guide advertise `/llms.txt` through typed
+`describedby` links, preserving unrelated links.
+
+The root [usage index](llms.txt) supports selective retrieval; [the complete guide](llms-full.txt) covers local credentials,
+profile CRUD, pagination, failures, and recovery after uncertain writes. `documentation.go` embeds only those two files;
+the public routes serve unchanged `text/plain; charset=utf-8` bytes, including in the binary-only container. Documentation
+rejects queries and unsupported success media and requires no authentication, credential refresh, dependency calls, or
+runtime filesystem access.
 
 ## Development commands
 
@@ -216,7 +242,7 @@ just container-build
 just container-smoke
 ```
 
-The final image is distroless, statically linked, and runs as UID/GID `65532:65532`. The build injects the supplied version into startup logs and OCI labels. The smoke check verifies the compiled Go version, credential-free startup, health and JSON/CBOR behavior, request IDs, OpenAPI discovery, and graceful shutdown.
+The final image is distroless, statically linked, embeds both usage guides, and runs as UID/GID `65532:65532`. The build injects the supplied version into startup logs and OCI labels. The smoke check verifies the compiled Go version, credential-free startup, health and JSON/CBOR behavior, request IDs, OpenAPI discovery, and graceful shutdown.
 
 Deploy the already-built image:
 
@@ -233,6 +259,8 @@ Do not combine this image deployment with `--base-image` or `--automatic-updates
 ```text
 .agents/skills/                 portable project workflows with Codex UI metadata
 .github/agents/                 evidence-based security review profile for GitHub Copilot
+documentation.go               explicitly embedded root usage guides
+llms*.txt                      API usage index and complete guide
 cmd/server/                     typed config, composition, lifecycle
 internal/http/health/           unversioned liveness transport
 internal/http/v1/               Huma operations grouped by resource
