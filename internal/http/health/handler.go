@@ -24,8 +24,10 @@ func Register(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/health",
 		Summary:     "Get application liveness",
-		Tags:        []string{"Health"},
-		Security:    []map[string][]string{},
+		Description: "Returns process liveness without authentication or external-service calls; it does not establish Firebase readiness. " +
+			"No query parameters are accepted.",
+		Tags:     []string{"Health"},
+		Security: []map[string][]string{},
 		Errors: []int{
 			http.StatusBadRequest,
 			http.StatusNotAcceptable,

@@ -17,16 +17,21 @@ func Register(api huma.API) {
 	huma.Get(api, "/hello", getHandler, func(operation *huma.Operation) {
 		operation.OperationID = "getHello"
 		operation.Summary = "Get the default greeting"
+		operation.Description = "Returns the fixed public greeting without authentication or persisted side effects. " +
+			"No query parameters are accepted."
 		operation.Tags = []string{"Hello"}
 		operation.Security = []map[string][]string{}
 		operation.Errors = []int{http.StatusBadRequest, http.StatusNotAcceptable, http.StatusInternalServerError}
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID:  "createHello",
-		Method:       http.MethodPost,
-		Path:         "/hello",
-		Summary:      "Generate a personalized greeting",
+		OperationID: "createHello",
+		Method:      http.MethodPost,
+		Path:        "/hello",
+		Summary:     "Generate a personalized greeting",
+		Description: "Computes a public personalized greeting from one validated JSON or CBOR object and returns 200. " +
+			"No resource is stored, so repeating valid input has no persisted side effect. " +
+			"No query parameters are accepted.",
 		Tags:         []string{"Hello"},
 		Security:     []map[string][]string{},
 		MaxBodyBytes: portable.MaxRequestBodyBytes,

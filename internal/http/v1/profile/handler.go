@@ -18,11 +18,15 @@ import (
 // Register registers profile endpoints.
 func Register(api huma.API, prefix string, store profilesvc.Store) {
 	huma.Register(api, huma.Operation{
-		OperationID:   "createProfile",
-		Method:        http.MethodPost,
-		Path:          "/profile",
-		Summary:       "Create user profile",
-		Description:   "Creates a profile for the authenticated user.",
+		OperationID: "createProfile",
+		Method:      http.MethodPost,
+		Path:        "/profile",
+		Summary:     "Create user profile",
+		Description: "Atomically creates a profile owned exclusively by the verified Firebase principal; callers cannot select an owner. " +
+			"Success returns 201 with Location; 409 profile_exists preserves the existing profile. " +
+			"After an uncertain outcome, read and reconcile current state before another write. " +
+			"A conflict does not prove success. " +
+			"No query parameters are accepted.",
 		Tags:          []string{"Profile"},
 		DefaultStatus: http.StatusCreated,
 		Security:      auth.RequireAuth(),
@@ -60,9 +64,11 @@ func Register(api huma.API, prefix string, store profilesvc.Store) {
 		Method:      http.MethodGet,
 		Path:        "/profile",
 		Summary:     "Get current user's profile",
-		Description: "Retrieves the profile for the authenticated user.",
-		Tags:        []string{"Profile"},
-		Security:    auth.RequireAuth(),
+		Description: "Reads only the profile owned by the verified Firebase principal; an absent profile returns 404 profile_not_found. " +
+			"A read after an uncertain write shows current state, not which request produced it. " +
+			"No query parameters are accepted.",
+		Tags:     []string{"Profile"},
+		Security: auth.RequireAuth(),
 		Errors: []int{
 			http.StatusBadRequest,
 			http.StatusUnauthorized,
@@ -84,11 +90,15 @@ func Register(api huma.API, prefix string, store profilesvc.Store) {
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID:  "updateProfile",
-		Method:       http.MethodPatch,
-		Path:         "/profile",
-		Summary:      "Update current user's profile",
-		Description:  "Updates fields on the authenticated user's profile. Only provided fields are updated.",
+		OperationID: "updateProfile",
+		Method:      http.MethodPatch,
+		Path:        "/profile",
+		Summary:     "Update current user's profile",
+		Description: "Atomically updates supplied mutable fields on the verified principal profile; the patch must be non-empty. " +
+			"Omitted fields stay unchanged and explicit null is rejected. " +
+			"A no-op preserves updatedAt and performs no write. " +
+			"Read and reassess an uncertain outcome: repeating a patch can overwrite intervening changes. " +
+			"No query parameters are accepted.",
 		Tags:         []string{"Profile"},
 		Security:     auth.RequireAuth(),
 		MaxBodyBytes: portable.MaxRequestBodyBytes,
@@ -120,11 +130,14 @@ func Register(api huma.API, prefix string, store profilesvc.Store) {
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID:   "deleteProfile",
-		Method:        http.MethodDelete,
-		Path:          "/profile",
-		Summary:       "Delete current user's profile",
-		Description:   "Permanently deletes the authenticated user's profile.",
+		OperationID: "deleteProfile",
+		Method:      http.MethodDelete,
+		Path:        "/profile",
+		Summary:     "Delete current user's profile",
+		Description: "Atomically deletes only the verified principal profile, returning 204 if it existed or 404 profile_not_found otherwise. " +
+			"Repeated deletion has idempotent effects, without response replay or protection for a later profile recreation. " +
+			"Consider that recreation risk before repeating an uncertain deletion. " +
+			"No query parameters are accepted.",
 		Tags:          []string{"Profile"},
 		DefaultStatus: http.StatusNoContent,
 		Security:      auth.RequireAuth(),

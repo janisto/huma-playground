@@ -36,9 +36,13 @@ func Register(api huma.API, service githubsvc.Service, prefix string) {
 		Method:      http.MethodGet,
 		Path:        "/github/owners/{owner}",
 		Summary:     "Get a public GitHub owner",
-		Tags:        []string{"GitHub"},
-		Security:    []map[string][]string{},
-		Errors:      githubErrors,
+		Description: "Reads one public GitHub user or organization projection anonymously from the fixed upstream origin. " +
+			"Caller credentials are never forwarded. " +
+			"Missing or inaccessible owners return controlled 404 errors. " +
+			"No query parameters are accepted.",
+		Tags:     []string{"GitHub"},
+		Security: []map[string][]string{},
+		Errors:   githubErrors,
 	}, func(ctx context.Context, input *OwnerGetInput) (*OwnerGetOutput, error) {
 		owner, err := service.GetOwner(ctx, input.Owner)
 		if err != nil {
@@ -52,10 +56,13 @@ func Register(api huma.API, service githubsvc.Service, prefix string) {
 		Method:      http.MethodGet,
 		Path:        "/github/owners/{owner}/repos",
 		Summary:     "List a public GitHub owner's repositories",
-		Description: "Accepts only limit and cursor; unknown or repeated query parameters are rejected.",
-		Tags:        []string{"GitHub"},
-		Security:    []map[string][]string{},
-		Errors:      githubErrors,
+		Description: "Reads only public repositories for the selected GitHub owner without an upstream credential. " +
+			"Follow Link URLs; cursors are opaque and scoped to the owner and limit. " +
+			"Only limit and cursor are accepted. " +
+			"Shared upstream quota failures return 429 with Retry-After; the server does not retry the upstream operation.",
+		Tags:     []string{"GitHub"},
+		Security: []map[string][]string{},
+		Errors:   githubErrors,
 	}, func(ctx context.Context, input *OwnerRepositoriesListInput) (*OwnerRepositoriesListOutput, error) {
 		limit := input.DefaultLimit()
 		scope := pagination.Scope{Operation: "listGitHubOwnerRepositories", Owner: input.Owner, Limit: limit}
@@ -83,9 +90,12 @@ func Register(api huma.API, service githubsvc.Service, prefix string) {
 		Method:      http.MethodGet,
 		Path:        "/github/repos/{owner}/{repo}",
 		Summary:     "Get a public GitHub repository",
-		Tags:        []string{"GitHub"},
-		Security:    []map[string][]string{},
-		Errors:      githubErrors,
+		Description: "Reads one strictly public GitHub repository projection anonymously; private or inaccessible repositories are not exposed. " +
+			"Missing or inaccessible repositories return controlled 404 errors. " +
+			"No query parameters are accepted.",
+		Tags:     []string{"GitHub"},
+		Security: []map[string][]string{},
+		Errors:   githubErrors,
 	}, func(ctx context.Context, input *RepositoryGetInput) (*RepositoryGetOutput, error) {
 		repository, err := service.GetRepository(ctx, input.Owner, input.Repo)
 		if err != nil {
@@ -99,10 +109,13 @@ func Register(api huma.API, service githubsvc.Service, prefix string) {
 		Method:      http.MethodGet,
 		Path:        "/github/repos/{owner}/{repo}/activity",
 		Summary:     "List public GitHub repository activity",
-		Description: "Accepts only limit and cursor; unknown or repeated query parameters are rejected.",
-		Tags:        []string{"GitHub"},
-		Security:    []map[string][]string{},
-		Errors:      githubErrors,
+		Description: "Reads a newest-first page of activity for the selected public GitHub repository, without forwarding credentials. " +
+			"Follow Link URLs; cursors are opaque and scoped to the repository and limit. " +
+			"Only limit and cursor are accepted. " +
+			"This live view does not promise a snapshot.",
+		Tags:     []string{"GitHub"},
+		Security: []map[string][]string{},
+		Errors:   githubErrors,
 	}, func(ctx context.Context, input *RepositoryPageListInput) (*RepositoryActivityListOutput, error) {
 		limit := input.DefaultLimit()
 		scope := pagination.Scope{
@@ -130,9 +143,12 @@ func Register(api huma.API, service githubsvc.Service, prefix string) {
 		Method:      http.MethodGet,
 		Path:        "/github/repos/{owner}/{repo}/languages",
 		Summary:     "List public GitHub repository languages",
-		Tags:        []string{"GitHub"},
-		Security:    []map[string][]string{},
-		Errors:      githubErrors,
+		Description: "Reads language byte totals for a public GitHub repository anonymously and returns deterministic language ordering. " +
+			"Missing or inaccessible repositories return controlled 404 errors. " +
+			"No query parameters are accepted.",
+		Tags:     []string{"GitHub"},
+		Security: []map[string][]string{},
+		Errors:   githubErrors,
 	}, func(ctx context.Context, input *RepositoryGetInput) (*RepositoryLanguagesListOutput, error) {
 		languages, err := service.ListRepositoryLanguages(ctx, input.Owner, input.Repo)
 		if err != nil {
@@ -146,10 +162,13 @@ func Register(api huma.API, service githubsvc.Service, prefix string) {
 		Method:      http.MethodGet,
 		Path:        "/github/repos/{owner}/{repo}/tags",
 		Summary:     "List public GitHub repository tags",
-		Description: "Accepts only limit and cursor; unknown or repeated query parameters are rejected.",
-		Tags:        []string{"GitHub"},
-		Security:    []map[string][]string{},
-		Errors:      githubErrors,
+		Description: "Reads a page of tags and commit identifiers for the selected public GitHub repository without an upstream credential. " +
+			"Follow Link URLs; cursors are opaque and scoped to the repository and limit. " +
+			"Only limit and cursor are accepted. " +
+			"This is a live view, not a snapshot or a promise that tag names cannot change.",
+		Tags:     []string{"GitHub"},
+		Security: []map[string][]string{},
+		Errors:   githubErrors,
 	}, func(ctx context.Context, input *RepositoryPageListInput) (*RepositoryTagsListOutput, error) {
 		limit := input.DefaultLimit()
 		scope := pagination.Scope{
