@@ -16,7 +16,7 @@ Do not apply this skill to `functions/`. That module is intentionally a separate
 - Keep business and persistence behavior behind focused interfaces under `internal/service/` when needed.
 - Reuse `internal/platform/`; do not introduce a generic controller, response envelope, or service container.
 - Register operations on the versioned Huma API in `internal/http/v1/routes/routes.go`.
-- Keep `/health` as a dependency-free Chi liveness handler outside Huma.
+- Keep `/health` as an unversioned, dependency-free Huma liveness operation.
 
 The router installs `auth.NewAuthMiddleware` once. Protected operations declare `Security: auth.RequireAuth()`; the
 middleware rejects missing, invalid, unavailable, or identity-less authentication before the handler runs. Read the
@@ -53,15 +53,16 @@ func Register(api huma.API, service Service) {
 }
 ```
 
-Use plain `Body` outputs, a typed header field for `Location` or `Link`, and `DefaultStatus` for 201 or 204. Construct
+Use plain `Body` outputs, typed header fields for `Location` or `Link`, and `DefaultStatus` for 201 or 204.
+Use a header slice when Link values must append without replacing unrelated links. Construct
 resource URLs from the explicit API prefix passed to registration; do not derive them from OpenAPI server metadata.
 
 Huma validates typed path, query, header, and body fields. Use `doc`, representative `example`, and appropriate
 validation tags. Keep JSON names camelCase, map storage names in the service layer, and use `timeutil.Time` for the
-repository's UTC millisecond response contract. The application accepts JSON and CBOR bodies and applies a global 1
-MiB body limit.
+repository's UTC millisecond response contract. The application accepts JSON and CBOR bodies and applies an exact
+1,000,000-byte body limit.
 
-Map expected service errors to Huma's RFC 9457 helpers, including 400, 401, 403, 404, 409, 422, and 503. Return a
+Map expected service errors through `portable.ErrorForContext`, including 400, 401, 403, 404, 409, 422, and 503. Return a
 generic 500 for unexpected failures; log the underlying error once without secrets or PII.
 
 Use `obs.Logger(ctx)` only for useful request-scoped events. The access logger already records every request. Startup,

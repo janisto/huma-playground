@@ -60,9 +60,23 @@ and its tests rather than patching a serialized document.
 - Request bodies and successful responses advertise JSON and CBOR where implemented.
 - Documented errors use both Problem Details media types.
 - Every documented error is reachable; bodyless GET operations do not advertise request-body-only 413 or 415 errors.
-- 201 responses document `Location`; paginated 200 responses document `Link`.
+- 201 responses document `Location`; paginated responses and health document their successful `Link` headers.
+  Use typed header slices when values must append without replacing unrelated links.
 - Every reachable `$ref` is local to `/openapi.json` and resolves within that document.
-- `/openapi.json` is the only required discovery route. Do not restore `/v1/api-docs`, versioned JSON/YAML aliases,
-  or standalone schema routes as compatibility surfaces; any future optional documentation UI needs its own reviewed
-  route, security policy, and tests.
+- Keep `/openapi.json` as the canonical runtime schema route, alongside the public API catalog and root usage guides.
+  Do not restore `/v1/api-docs`, versioned JSON/YAML aliases, or standalone schema routes as compatibility surfaces;
+  any future optional documentation UI needs its own reviewed route, security policy, and tests.
 - Untrusted forwarding headers cannot change document content or introduce external schema references.
+
+## Consumer discovery
+
+Root `llms.txt` and `llms-full.txt` own the usage index and complete API guide; `documentation.go` embeds only those
+named assets. `internal/http/docs/` registers native Chi routes for both guides and the RFC 9727 catalog. The catalog
+supports GET/HEAD; guides and schema remain GET-only. Update usage guidance alongside API changes, without copying
+contributor instructions into the guides or committing a generated schema.
+
+Use existing native tests to parse the catalog, resolve typed targets against its retrieval URL, compare exact guide
+bytes after changing directory, and exercise closed queries, fixed media parameters, JSON Problem Details errors,
+bodyless HEAD, and truthful Allow. Parse health/catalog links and index advertisements; preserve unrelated links,
+including another `describedby` target. Prove discovery does not read request content or invoke authentication,
+persistence, GitHub, DNS, or runtime filesystem access. Do not add a directory server, generator, or dedicated CI job.

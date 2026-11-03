@@ -144,6 +144,10 @@ func policyFor(method, path string) (routePolicy, bool) {
 	switch {
 	case method == http.MethodGet && path == "/health":
 		return routePolicy{query: queryNone, successMedia: true}, true
+	case (method == http.MethodGet || method == http.MethodHead) && path == "/.well-known/api-catalog":
+		return routePolicy{query: queryNone}, true
+	case method == http.MethodGet && (path == "/llms.txt" || path == "/llms-full.txt"):
+		return routePolicy{query: queryNone}, true
 	case method == http.MethodGet && path == "/openapi.json":
 		return routePolicy{query: queryNone, jsonOnly: true, successMedia: true}, true
 	case path == "/v1/hello" && method == http.MethodGet:
@@ -392,8 +396,16 @@ func WriteProblem(writer http.ResponseWriter, request *http.Request, code Code, 
 		accept = AcceptHeader(request.Header)
 	}
 	mediaType := NegotiateProblem(accept)
+	// Documentation failures remain JSON even when route selection rejects the method.
+	switch request.URL.Path {
+	case "/openapi.json", "/.well-known/api-catalog", "/llms.txt", "/llms-full.txt":
+		mediaType = MediaTypeProblemJSON
+	}
 	writer.Header().Set("Content-Type", mediaType)
 	writer.WriteHeader(problem.Status)
+	if request.Method == http.MethodHead {
+		return
+	}
 	var err error
 	if strings.HasPrefix(mediaType, MediaTypeCBOR) {
 		err = marshalCBOR(writer, problem)

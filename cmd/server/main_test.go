@@ -2291,6 +2291,7 @@ func TestOpenAPIContractInvariantsMatchRuntime(t *testing.T) {
 		status string
 		header string
 	}{
+		{path: "/health", method: "get", status: "200", header: "Link"},
 		{path: "/v1/profile", method: "post", status: "201", header: "Location"},
 		{path: "/v1/profile", method: "get", status: "401", header: "WWW-Authenticate"},
 		{path: "/v1/items", method: "get", status: "200", header: "Link"},
