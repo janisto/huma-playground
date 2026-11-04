@@ -50,6 +50,11 @@ func InstallOpenAPIHook(api huma.API) {
 					}
 				}
 				addPortableResponseHeaders(response)
+				if operation.OperationID == "getHealth" && status == strconv.Itoa(http.StatusOK) {
+					if link := response.Headers["Link"]; link != nil {
+						link.Required = true
+					}
+				}
 				if status == strconv.Itoa(http.StatusUnauthorized) && protected(operation.Security) {
 					addStringHeader(response, "WWW-Authenticate", "Bearer authentication challenge")
 				}
