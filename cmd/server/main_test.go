@@ -2071,6 +2071,18 @@ func TestOpenAPIContractInvariantsMatchRuntime(t *testing.T) {
 		t.Errorf("OpenAPI info = %#v, want non-empty title and version", document.Info)
 	}
 
+	for path, required := range map[string]bool{"/health": true, "/v1/items": false} {
+		var link struct {
+			Required bool `json:"required"`
+		}
+		if err := json.Unmarshal(document.Paths[path]["get"].Responses["200"].Headers["Link"], &link); err != nil {
+			t.Fatalf("%s discovery or pagination Link: %v", path, err)
+		}
+		if link.Required != required {
+			t.Errorf("%s Link required = %v, want %v", path, link.Required, required)
+		}
+	}
+
 	updateSchema := document.Paths["/v1/profile"]["patch"].RequestBody.Content["application/json"].Schema
 	if updateSchema.MinProperties == nil || *updateSchema.MinProperties != 1 {
 		t.Fatalf("PATCH /v1/profile minProperties = %v, want 1", updateSchema.MinProperties)
